@@ -46,6 +46,7 @@ GoRouter goRouter(Ref ref) {
         return location == HomePageWidget.routePath ||
                 location == PhonePageWidget.routePath ||
                 location == ChatsPageWidget.routePath ||
+                location == EmailPageWidget.routePath ||
                 location == ChangePasswordPageWidget.routePath
             ? null
             : HomePageWidget.routePath;
@@ -110,6 +111,13 @@ GoRouter goRouter(Ref ref) {
         path: ChatsPageWidget.routePath,
         builder: (_, __) => const NavBarPage(
           initialPage: ChatsPageWidget.routeName,
+        ),
+      ),
+      GoRoute(
+        name: EmailPageWidget.routeName,
+        path: EmailPageWidget.routePath,
+        builder: (_, __) => const NavBarPage(
+          initialPage: EmailPageWidget.routeName,
         ),
       ),
       GoRoute(

@@ -1,6 +1,7 @@
 // ── Page exports ─────────────────────────────────────────────────────────────
 export '/pages/change_password_page/change_password_page_widget.dart';
 export '/pages/chats_page/chats_page_widget.dart';
+export '/pages/email_page/email_page_widget.dart';
 export '/pages/forgot_password_page/forgot_password_page_widget.dart';
 export '/pages/home_page/home_page_widget.dart';
 export '/pages/login_page/login_page_widget.dart';

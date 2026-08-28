@@ -15,6 +15,7 @@ import 'flutter_flow/nav/nav.dart';
 import 'pages/home_page/home_page_widget.dart';
 import 'pages/phone_page/phone_page_widget.dart';
 import 'pages/chats_page/chats_page_widget.dart';
+import 'pages/email_page/email_page_widget.dart';
 import 'services/auth_session_controller.dart';
 import 'services/fcm_service.dart';
 import 'services/onboarding_controller.dart';
@@ -146,13 +147,14 @@ class _NavBarPageState extends State<NavBarPage> {
     HomePageWidget.routePath,
     PhonePageWidget.routePath,
     ChatsPageWidget.routePath,
-    HomePageWidget.routePath,
+    EmailPageWidget.routePath,
     HomePageWidget.routePath,
   ];
 
   static int _indexForPage(String? page) {
     if (page == PhonePageWidget.routeName) return 1;
     if (page == ChatsPageWidget.routeName) return 2;
+    if (page == EmailPageWidget.routeName) return 3;
     return 0;
   }
 
@@ -206,6 +208,8 @@ class _NavBarPageState extends State<NavBarPage> {
         return const PhonePageWidget();
       case 2:
         return const ChatsPageWidget();
+      case 3:
+        return const EmailPageWidget();
       default:
         return const HomePageWidget();
     }
