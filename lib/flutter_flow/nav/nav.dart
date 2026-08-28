@@ -44,6 +44,7 @@ GoRouter goRouter(Ref ref) {
 
       if (auth.isAuthenticated) {
         return location == HomePageWidget.routePath ||
+                location == PhonePageWidget.routePath ||
                 location == ChangePasswordPageWidget.routePath
             ? null
             : HomePageWidget.routePath;
@@ -94,6 +95,13 @@ GoRouter goRouter(Ref ref) {
         path: HomePageWidget.routePath,
         builder: (_, __) => const NavBarPage(
           initialPage: HomePageWidget.routeName,
+        ),
+      ),
+      GoRoute(
+        name: PhonePageWidget.routeName,
+        path: PhonePageWidget.routePath,
+        builder: (_, __) => const NavBarPage(
+          initialPage: PhonePageWidget.routeName,
         ),
       ),
       GoRoute(

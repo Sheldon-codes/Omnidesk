@@ -13,6 +13,7 @@ import 'firebase_options.dart';
 import 'flutter_flow/flutter_flow_theme.dart';
 import 'flutter_flow/nav/nav.dart';
 import 'pages/home_page/home_page_widget.dart';
+import 'pages/phone_page/phone_page_widget.dart';
 import 'services/auth_session_controller.dart';
 import 'services/fcm_service.dart';
 import 'services/onboarding_controller.dart';
@@ -126,8 +127,8 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp> {
 
 /// Root-owned authenticated navigation, following OPDP's NavBarPage pattern.
 ///
-/// Feature pages intentionally remain unaware of the bottom dock. Until the
-/// remaining destinations exist, every tab renders the Home page body.
+/// Feature pages intentionally remain unaware of the bottom dock. Destinations
+/// are selected by route while the dock remains owned by the app root.
 class NavBarPage extends StatefulWidget {
   const NavBarPage({super.key, this.initialPage});
 
@@ -138,7 +139,25 @@ class NavBarPage extends StatefulWidget {
 }
 
 class _NavBarPageState extends State<NavBarPage> {
-  int _currentIndex = 0;
+  late int _currentIndex;
+
+  static const _routePaths = <String>[
+    HomePageWidget.routePath,
+    PhonePageWidget.routePath,
+    HomePageWidget.routePath,
+    HomePageWidget.routePath,
+    HomePageWidget.routePath,
+  ];
+
+  static int _indexForPage(String? page) {
+    return page == PhonePageWidget.routeName ? 1 : 0;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = _indexForPage(widget.initialPage);
+  }
 
   static const _items = <DigiStemBottomNavItem>[
     DigiStemBottomNavItem(
@@ -180,6 +199,8 @@ class _NavBarPageState extends State<NavBarPage> {
 
   static Widget _pageForIndex(int index) {
     switch (index) {
+      case 1:
+        return const PhonePageWidget();
       default:
         return const HomePageWidget();
     }
@@ -189,7 +210,7 @@ class _NavBarPageState extends State<NavBarPage> {
   Widget build(BuildContext context) => DigiStemBottomNav(
         items: _items,
         initialIndex: _currentIndex,
-        onSelected: (index) => setState(() => _currentIndex = index),
+        onSelected: (index) => context.go(_routePaths[index]),
         body: _pageForIndex(_currentIndex),
       );
 }
