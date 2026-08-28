@@ -1,0 +1,29 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - build/**
+    # Historical FlutterFlow scaffold retained only as reference. The active
+    # app theme and generated router remain analyzed.
+    - lib/flutter_flow/flutter_flow_animations.dart
+    - lib/flutter_flow/flutter_flow_calendar.dart
+    - lib/flutter_flow/flutter_flow_icon_button.dart
+    - lib/flutter_flow/flutter_flow_model.dart
+    - lib/flutter_flow/flutter_flow_util.dart
+    - lib/flutter_flow/flutter_flow_widgets.dart
+    - lib/flutter_flow/form_field_controller.dart
+    - lib/flutter_flow/lat_lng.dart
+    - lib/flutter_flow/nav/serialization_util.dart
+    - lib/flutter_flow/place.dart
+    - lib/flutter_flow/uploaded_file.dart
+    - lib/firebase_options.dart
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
+
+linter:
+  rules:
+    unnecessary_string_escapes: false
