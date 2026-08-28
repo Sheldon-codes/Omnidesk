@@ -13,6 +13,7 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.showTapToSet = false,
     this.unreadCount = 0,
     this.onAvatarTap,
+    this.leadingAction,
     this.onNotificationTap,
   });
 
@@ -23,6 +24,7 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
   final bool showTapToSet;
   final int unreadCount;
   final VoidCallback? onAvatarTap;
+  final Widget? leadingAction;
   final VoidCallback? onNotificationTap;
 
   @override
@@ -40,7 +42,7 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
     final initials = user?.initials ?? '?';
 
     return Container(
-      color: theme.primaryBackground,
+      color: theme.secondaryBackground,
       padding: EdgeInsets.only(
         top: includeTopInset ? MediaQuery.of(context).padding.top : 0,
         left: 16,
@@ -83,6 +85,10 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
               ],
             ),
           ),
+          if (leadingAction != null) ...[
+            leadingAction!,
+            const SizedBox(width: 8),
+          ],
           _NotificationBell(
             theme: theme,
             unreadCount: unreadCount,
