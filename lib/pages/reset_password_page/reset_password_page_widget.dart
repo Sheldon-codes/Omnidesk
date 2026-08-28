@@ -50,90 +50,155 @@ class _ResetPasswordPageWidgetState
     final notifier = ref.read(resetPasswordPageProvider.notifier);
     notifier
         .prefillEmail(GoRouterState.of(context).uri.queryParameters['email']);
-    return AuthPageScaffold(
-      onBack: () => context.go('/forgot-password'),
-      progress: const _ProgressDots(current: 2),
-      child: FadeTransition(
-        opacity: _fade,
-        child: SlideTransition(
-            position: _slide,
-            child: Form(
-              key: notifier.formKey,
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const AuthPageHeading(
-                        title: 'Create a new\npassword',
-                        subtitle:
-                            'Use the reset code from your email, then choose a strong new password.'),
-                    const SizedBox(height: 30),
-                    AuthTextField(
-                        label: 'Email address',
-                        hint: 'agent@company.com',
-                        controller: notifier.emailController,
-                        focusNode: notifier.emailFocusNode,
-                        validator: notifier.validateEmail,
-                        prefixIcon: Icons.email_outlined,
-                        keyboardType: TextInputType.emailAddress,
-                        textInputAction: TextInputAction.next,
-                        onChanged: (_) => notifier.clearError(),
-                        onFieldSubmitted: (_) =>
-                            notifier.tokenFocusNode.requestFocus()),
-                    const SizedBox(height: 16),
-                    AuthTextField(
-                        label: 'Reset code',
-                        hint: 'Paste the code or token',
-                        controller: notifier.tokenController,
-                        focusNode: notifier.tokenFocusNode,
-                        validator: notifier.validateToken,
-                        prefixIcon: Icons.key_outlined,
-                        textInputAction: TextInputAction.next,
-                        onChanged: (_) => notifier.clearError(),
-                        onFieldSubmitted: (_) =>
-                            notifier.passwordFocusNode.requestFocus()),
-                    const SizedBox(height: 16),
-                    AuthTextField(
-                        label: 'New password',
-                        hint: 'At least 8 characters',
-                        controller: notifier.passwordController,
-                        focusNode: notifier.passwordFocusNode,
-                        validator: notifier.validatePassword,
-                        prefixIcon: Icons.lock_outline_rounded,
-                        obscureText: !state.newPasswordVisible,
-                        textInputAction: TextInputAction.next,
-                        onChanged: (_) => notifier.clearError(),
-                        onFieldSubmitted: (_) =>
-                            notifier.confirmationFocusNode.requestFocus(),
-                        suffixIcon: _VisibilityButton(
-                            visible: state.newPasswordVisible,
-                            onPressed: notifier.toggleNewPasswordVisibility)),
-                    const SizedBox(height: 16),
-                    AuthTextField(
-                        label: 'Confirm new password',
-                        hint: 'Re-enter your password',
-                        controller: notifier.confirmationController,
-                        focusNode: notifier.confirmationFocusNode,
-                        validator: notifier.validateConfirmation,
-                        prefixIcon: Icons.lock_outline_rounded,
-                        obscureText: !state.confirmPasswordVisible,
-                        textInputAction: TextInputAction.done,
-                        onChanged: (_) => notifier.clearError(),
-                        onFieldSubmitted: (_) => _submit(notifier),
-                        suffixIcon: _VisibilityButton(
-                            visible: state.confirmPasswordVisible,
-                            onPressed:
-                                notifier.toggleConfirmPasswordVisibility)),
-                    if (state.errorMessage != null) ...[
-                      const SizedBox(height: 18),
-                      AuthErrorBanner(state.errorMessage!)
-                    ],
-                    const SizedBox(height: 30),
-                    AuthPrimaryButton(
+    final theme = FlutterFlowTheme.of(context);
+    return Scaffold(
+      backgroundColor: theme.primaryBackground,
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        backgroundColor: theme.primaryBackground,
+        foregroundColor: theme.primaryText,
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
+        elevation: 0,
+        leading: IconButton(
+          onPressed: () => context.go('/forgot-password'),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          tooltip: 'Back to forgot password',
+        ),
+        actions: const [
+          Padding(
+            padding: EdgeInsets.only(right: 24),
+            child: _ProgressDots(current: 2),
+          ),
+        ],
+      ),
+      body: GestureDetector(
+        onTap: FocusScope.of(context).unfocus,
+        child: SafeArea(
+          top: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 430),
+                      child: FadeTransition(
+                        opacity: _fade,
+                        child: SlideTransition(
+                          position: _slide,
+                          child: Form(
+                            key: notifier.formKey,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                const AuthPageHeading(
+                                  title: 'Create a new\npassword',
+                                  subtitle:
+                                      'Use the reset code from your email, then choose a strong new password.',
+                                ),
+                                const SizedBox(height: 30),
+                                AuthTextField(
+                                  label: 'Email address',
+                                  hint: 'agent@company.com',
+                                  controller: notifier.emailController,
+                                  focusNode: notifier.emailFocusNode,
+                                  validator: notifier.validateEmail,
+                                  prefixIcon: Icons.email_outlined,
+                                  keyboardType: TextInputType.emailAddress,
+                                  textInputAction: TextInputAction.next,
+                                  onChanged: (_) => notifier.clearError(),
+                                  onFieldSubmitted: (_) =>
+                                      notifier.tokenFocusNode.requestFocus(),
+                                ),
+                                const SizedBox(height: 16),
+                                AuthTextField(
+                                  label: 'Reset code',
+                                  hint: 'Paste the code or token',
+                                  controller: notifier.tokenController,
+                                  focusNode: notifier.tokenFocusNode,
+                                  validator: notifier.validateToken,
+                                  prefixIcon: Icons.key_outlined,
+                                  textInputAction: TextInputAction.next,
+                                  onChanged: (_) => notifier.clearError(),
+                                  onFieldSubmitted: (_) =>
+                                      notifier.passwordFocusNode.requestFocus(),
+                                ),
+                                const SizedBox(height: 16),
+                                AuthTextField(
+                                  label: 'New password',
+                                  hint: 'At least 8 characters',
+                                  controller: notifier.passwordController,
+                                  focusNode: notifier.passwordFocusNode,
+                                  validator: notifier.validatePassword,
+                                  prefixIcon: Icons.lock_outline_rounded,
+                                  obscureText: !state.newPasswordVisible,
+                                  textInputAction: TextInputAction.next,
+                                  onChanged: (_) => notifier.clearError(),
+                                  onFieldSubmitted: (_) => notifier
+                                      .confirmationFocusNode
+                                      .requestFocus(),
+                                  suffixIcon: _VisibilityButton(
+                                    visible: state.newPasswordVisible,
+                                    onPressed:
+                                        notifier.toggleNewPasswordVisibility,
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                AuthTextField(
+                                  label: 'Confirm new password',
+                                  hint: 'Re-enter your password',
+                                  controller: notifier.confirmationController,
+                                  focusNode: notifier.confirmationFocusNode,
+                                  validator: notifier.validateConfirmation,
+                                  prefixIcon: Icons.lock_outline_rounded,
+                                  obscureText: !state.confirmPasswordVisible,
+                                  textInputAction: TextInputAction.done,
+                                  onChanged: (_) => notifier.clearError(),
+                                  onFieldSubmitted: (_) => _submit(notifier),
+                                  suffixIcon: _VisibilityButton(
+                                    visible: state.confirmPasswordVisible,
+                                    onPressed: notifier
+                                        .toggleConfirmPasswordVisibility,
+                                  ),
+                                ),
+                                if (state.errorMessage != null) ...[
+                                  const SizedBox(height: 18),
+                                  AuthErrorBanner(state.errorMessage!),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              SafeArea(
+                top: false,
+                minimum: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 430),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: AuthPrimaryButton(
                         label: 'Reset password',
                         isLoading: state.isSubmitting,
-                        onPressed: () => _submit(notifier)),
-                  ]),
-            )),
+                        onPressed: () => _submit(notifier),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

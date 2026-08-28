@@ -27,13 +27,14 @@ GoRouter goRouter(Ref ref) {
 
       developer.log(
         'redirect location=$location auth=${auth.status} '
+        'bootstrapComplete=${auth.bootstrapComplete} '
         'onboardingInitialized=${onboarding.initialized} '
         'onboardingCompleted=${onboarding.completed}',
         name: 'Router',
       );
 
       if (auth.status == AuthStatus.bootstrapping ||
-          auth.status == AuthStatus.loading ||
+          (auth.status == AuthStatus.loading && !auth.bootstrapComplete) ||
           !onboarding.initialized) {
         return location == SplashScreenWidget.routePath
             ? null

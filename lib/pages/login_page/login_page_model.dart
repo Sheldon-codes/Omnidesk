@@ -70,6 +70,7 @@ class LoginPageNotifier extends _$LoginPageNotifier {
         .login(
             email: emailController.text.trim(),
             password: passwordController.text);
+    if (!ref.mounted) return failure == null;
     if (failure != null) {
       state = state.copyWith(
           isSubmitting: false, errorMessage: failure.displayMessage);

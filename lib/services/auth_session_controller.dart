@@ -17,10 +17,14 @@ enum AuthStatus {
 
 class AuthState {
   const AuthState(
-      {this.status = AuthStatus.bootstrapping, this.session, this.failure});
+      {this.status = AuthStatus.bootstrapping,
+      this.session,
+      this.failure,
+      this.bootstrapComplete = false});
   final AuthStatus status;
   final AuthSession? session;
   final AuthFailure? failure;
+  final bool bootstrapComplete;
   String? get accessToken => session?.accessToken;
   bool get isAuthenticated =>
       status == AuthStatus.authenticated && session != null;
@@ -29,11 +33,13 @@ class AuthState {
           AuthSession? session,
           AuthFailure? failure,
           bool clearSession = false,
-          bool clearFailure = false}) =>
+          bool clearFailure = false,
+          bool? bootstrapComplete}) =>
       AuthState(
         status: status ?? this.status,
         session: clearSession ? null : (session ?? this.session),
         failure: clearFailure ? null : (failure ?? this.failure),
+        bootstrapComplete: bootstrapComplete ?? this.bootstrapComplete,
       );
 }
 
@@ -51,13 +57,17 @@ class AuthSessionController extends _$AuthSessionController {
     state = const AuthState(status: AuthStatus.bootstrapping);
     final token = await ref.read(authTokenStoreProvider).readAccessToken();
     if (token == null || token.isEmpty) {
-      state = const AuthState(status: AuthStatus.unauthenticated);
+      state = const AuthState(
+        status: AuthStatus.unauthenticated,
+        bootstrapComplete: true,
+      );
       return;
     }
     if (uiOnlyMode) {
       state = AuthState(
         status: AuthStatus.authenticated,
         session: _demoSession,
+        bootstrapComplete: true,
       );
       return;
     }
@@ -72,30 +82,45 @@ class AuthSessionController extends _$AuthSessionController {
                 email: '',
                 role: 'agent',
                 isSuperAdmin: false,
-                status: 'active')));
+                status: 'active')),
+        bootstrapComplete: false);
     final result = await ref.read(authRepositoryProvider).fetchMe();
     switch (result) {
       case AuthSuccess<AuthUser>(value: final user):
         state = AuthState(
             status: AuthStatus.authenticated,
-            session: state.session!.withUser(user));
+            session: state.session!.withUser(user),
+            bootstrapComplete: true);
       case AuthFailureResult<AuthUser>(failure: final failure):
         if (failure.statusCode == 401 || failure.statusCode == 403) {
           await ref.read(authTokenStoreProvider).clear();
-          state = const AuthState(status: AuthStatus.unauthenticated);
+          state = const AuthState(
+            status: AuthStatus.unauthenticated,
+            bootstrapComplete: true,
+          );
         } else {
-          state = AuthState(status: AuthStatus.error, failure: failure);
+          state = AuthState(
+            status: AuthStatus.error,
+            failure: failure,
+            bootstrapComplete: true,
+          );
         }
     }
   }
 
   Future<AuthFailure?> login(
       {required String email, required String password}) async {
-    state = const AuthState(status: AuthStatus.loading);
+    state = state.copyWith(
+      status: AuthStatus.loading,
+      clearFailure: true,
+    );
     if (uiOnlyMode) {
       await ref.read(authTokenStoreProvider).saveAccessToken(_demoAccessToken);
-      state =
-          AuthState(status: AuthStatus.authenticated, session: _demoSession);
+      state = AuthState(
+        status: AuthStatus.authenticated,
+        session: _demoSession,
+        bootstrapComplete: true,
+      );
       return null;
     }
     final result = await ref
@@ -110,12 +135,20 @@ class AuthSessionController extends _$AuthSessionController {
 
   Future<AuthFailure?> _completeLogin(AuthSession session) async {
     await ref.read(authTokenStoreProvider).saveAccessToken(session.accessToken);
-    state = AuthState(status: AuthStatus.authenticated, session: session);
+    state = AuthState(
+      status: AuthStatus.authenticated,
+      session: session,
+      bootstrapComplete: true,
+    );
     return null;
   }
 
   AuthFailure _fail(AuthFailure failure) {
-    state = AuthState(status: AuthStatus.error, failure: failure);
+    state = AuthState(
+      status: AuthStatus.error,
+      failure: failure,
+      bootstrapComplete: true,
+    );
     return failure;
   }
 
@@ -137,12 +170,18 @@ class AuthSessionController extends _$AuthSessionController {
       await ref.read(authRepositoryProvider).logout(everywhere: everywhere);
     }
     await ref.read(authTokenStoreProvider).clear();
-    state = const AuthState(status: AuthStatus.unauthenticated);
+    state = const AuthState(
+      status: AuthStatus.unauthenticated,
+      bootstrapComplete: true,
+    );
   }
 
   Future<void> invalidateSession() async {
     if (state.status == AuthStatus.unauthenticated) return;
     await ref.read(authTokenStoreProvider).clear();
-    state = const AuthState(status: AuthStatus.unauthenticated);
+    state = const AuthState(
+      status: AuthStatus.unauthenticated,
+      bootstrapComplete: true,
+    );
   }
 }

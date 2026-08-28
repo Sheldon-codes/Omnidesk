@@ -55,6 +55,31 @@ void main() {
         OnBoardingScreenWidget.routePath);
   });
 
+  testWidgets('interactive login loading does not route to splash',
+      (tester) async {
+    final router = _router(
+      auth: const AuthState(
+        status: AuthStatus.loading,
+        bootstrapComplete: true,
+      ),
+      onboarding: const OnboardingState(initialized: true, completed: true),
+    );
+    await _attachRouter(
+      tester,
+      router,
+      auth: const AuthState(
+        status: AuthStatus.loading,
+        bootstrapComplete: true,
+      ),
+      onboarding: const OnboardingState(initialized: true, completed: true),
+    );
+    router.go(LoginPageWidget.routePath);
+    await _pumpRoute(tester);
+
+    expect(router.routerDelegate.currentConfiguration.uri.path,
+        LoginPageWidget.routePath);
+  });
+
   testWidgets('completed onboarding routes unauthenticated users to login',
       (tester) async {
     final router = _router(

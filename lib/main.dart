@@ -56,7 +56,9 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp> {
       authSessionControllerProvider,
       (previous, next) {
         developer.log(
-          'Auth state: ${next.status}, hasSession=${next.session != null}',
+          'Auth state: ${next.status}, '
+          'bootstrapComplete=${next.bootstrapComplete}, '
+          'hasSession=${next.session != null}',
           name: 'MainApp',
         );
       },
