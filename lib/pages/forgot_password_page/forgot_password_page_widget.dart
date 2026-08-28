@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
-import '../shared/auth_page_scaffold.dart';
+import '../../components/auth/auth_components.dart';
 import 'forgot_password_page_model.dart';
 
 export 'forgot_password_page_model.dart';

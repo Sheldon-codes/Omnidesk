@@ -3,7 +3,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../models/auth/auth_models.dart';
 import '../../services/auth_repository.dart';
-import '../shared/auth_page_scaffold.dart';
+import '../../components/auth/auth_components.dart';
 
 part 'reset_password_page_model.g.dart';
 
