@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:omnidesk_agent/components/digistem_bottom_nav/digistem_bottom_nav.dart';
 
 void main() {
@@ -21,7 +22,7 @@ void main() {
     expect(find.text('Chats'), findsOneWidget);
     expect(find.text('Email'), findsOneWidget);
     expect(find.text('Tickets'), findsOneWidget);
-    expect(find.byIcon(Icons.home), findsOneWidget);
+    expect(find.byIcon(IconsaxPlusBold.home_1), findsOneWidget);
     expect(
       find.byWidgetPredicate(
         (widget) => widget is Semantics && widget.properties.label == 'Home',
@@ -56,28 +57,28 @@ class _TestPage extends StatelessWidget {
   static const items = <DigiStemBottomNavItem>[
     DigiStemBottomNavItem(
       label: 'Home',
-      icon: Icons.home_outlined,
-      selectedIcon: Icons.home,
+      icon: IconsaxPlusBroken.home_1,
+      selectedIcon: IconsaxPlusBold.home_1,
     ),
     DigiStemBottomNavItem(
       label: 'Phone',
-      icon: Icons.phone_outlined,
-      selectedIcon: Icons.phone,
+      icon: IconsaxPlusBroken.call,
+      selectedIcon: IconsaxPlusBold.call,
     ),
     DigiStemBottomNavItem(
       label: 'Chats',
-      icon: Icons.chat_bubble_outline_rounded,
-      selectedIcon: Icons.chat_bubble_rounded,
+      icon: IconsaxPlusBroken.messages,
+      selectedIcon: IconsaxPlusBold.messages,
     ),
     DigiStemBottomNavItem(
       label: 'Email',
-      icon: Icons.mail_outline_rounded,
-      selectedIcon: Icons.mail_rounded,
+      icon: IconsaxPlusBroken.sms,
+      selectedIcon: IconsaxPlusBold.sms,
     ),
     DigiStemBottomNavItem(
       label: 'Tickets',
-      icon: Icons.confirmation_number_outlined,
-      selectedIcon: Icons.confirmation_number_rounded,
+      icon: IconsaxPlusBroken.ticket,
+      selectedIcon: IconsaxPlusBold.ticket,
     ),
   ];
 

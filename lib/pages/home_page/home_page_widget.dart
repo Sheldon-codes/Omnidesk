@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
 
 import '../../components/digistem_bottom_nav/digistem_bottom_nav.dart';
 import '../../components/home_app_bar/home_app_bar.dart';
@@ -20,36 +21,36 @@ class HomePageWidget extends ConsumerWidget {
       id: 'home',
       label: 'Home',
       semanticLabel: 'Home',
-      icon: Icons.home_outlined,
-      selectedIcon: Icons.home,
+      icon: IconsaxPlusBroken.home_1,
+      selectedIcon: IconsaxPlusBold.home_1,
     ),
     DigiStemBottomNavItem(
       id: 'phone',
       label: 'Phone',
       semanticLabel: 'Phone',
-      icon: Icons.phone_outlined,
-      selectedIcon: Icons.phone,
+      icon: IconsaxPlusBroken.call,
+      selectedIcon: IconsaxPlusBold.call,
     ),
     DigiStemBottomNavItem(
       id: 'chats',
       label: 'Chats',
       semanticLabel: 'Chats',
-      icon: Icons.chat_bubble_outline_rounded,
-      selectedIcon: Icons.chat_bubble_rounded,
+      icon: IconsaxPlusBroken.messages,
+      selectedIcon: IconsaxPlusBold.messages,
     ),
     DigiStemBottomNavItem(
       id: 'email',
       label: 'Email',
       semanticLabel: 'Email',
-      icon: Icons.mail_outline_rounded,
-      selectedIcon: Icons.mail_rounded,
+      icon: IconsaxPlusBroken.sms,
+      selectedIcon: IconsaxPlusBold.sms,
     ),
     DigiStemBottomNavItem(
       id: 'tickets',
       label: 'Tickets',
       semanticLabel: 'Tickets',
-      icon: Icons.confirmation_number_outlined,
-      selectedIcon: Icons.confirmation_number_rounded,
+      icon: IconsaxPlusBroken.ticket,
+      selectedIcon: IconsaxPlusBold.ticket,
     ),
   ];
 
