@@ -6,10 +6,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
 
+import 'components/digistem_bottom_nav/digistem_bottom_nav.dart';
 import 'firebase_options.dart';
 import 'flutter_flow/flutter_flow_theme.dart';
 import 'flutter_flow/nav/nav.dart';
+import 'pages/home_page/home_page_widget.dart';
 import 'services/auth_session_controller.dart';
 import 'services/fcm_service.dart';
 import 'services/onboarding_controller.dart';
@@ -119,4 +122,74 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp> {
       routerConfig: ref.watch(goRouterProvider),
     );
   }
+}
+
+/// Root-owned authenticated navigation, following OPDP's NavBarPage pattern.
+///
+/// Feature pages intentionally remain unaware of the bottom dock. Until the
+/// remaining destinations exist, every tab renders the Home page body.
+class NavBarPage extends StatefulWidget {
+  const NavBarPage({super.key, this.initialPage});
+
+  final String? initialPage;
+
+  @override
+  State<NavBarPage> createState() => _NavBarPageState();
+}
+
+class _NavBarPageState extends State<NavBarPage> {
+  int _currentIndex = 0;
+
+  static const _items = <DigiStemBottomNavItem>[
+    DigiStemBottomNavItem(
+      id: 'home',
+      label: 'Home',
+      semanticLabel: 'Home',
+      icon: IconsaxPlusBroken.home_1,
+      selectedIcon: IconsaxPlusBold.home_1,
+    ),
+    DigiStemBottomNavItem(
+      id: 'phone',
+      label: 'Phone',
+      semanticLabel: 'Phone',
+      icon: IconsaxPlusBroken.call,
+      selectedIcon: IconsaxPlusBold.call,
+    ),
+    DigiStemBottomNavItem(
+      id: 'chats',
+      label: 'Chats',
+      semanticLabel: 'Chats',
+      icon: IconsaxPlusBroken.messages,
+      selectedIcon: IconsaxPlusBold.messages,
+    ),
+    DigiStemBottomNavItem(
+      id: 'email',
+      label: 'Email',
+      semanticLabel: 'Email',
+      icon: IconsaxPlusBroken.sms,
+      selectedIcon: IconsaxPlusBold.sms,
+    ),
+    DigiStemBottomNavItem(
+      id: 'tickets',
+      label: 'Tickets',
+      semanticLabel: 'Tickets',
+      icon: IconsaxPlusBroken.ticket,
+      selectedIcon: IconsaxPlusBold.ticket,
+    ),
+  ];
+
+  static Widget _pageForIndex(int index) {
+    switch (index) {
+      default:
+        return const HomePageWidget();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => DigiStemBottomNav(
+        items: _items,
+        initialIndex: _currentIndex,
+        onSelected: (index) => setState(() => _currentIndex = index),
+        body: _pageForIndex(_currentIndex),
+      );
 }

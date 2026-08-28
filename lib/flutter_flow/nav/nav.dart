@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../index.dart';
+import '../../main.dart';
 import '../../services/auth_session_controller.dart';
 import '../../services/onboarding_controller.dart';
 
@@ -91,7 +92,9 @@ GoRouter goRouter(Ref ref) {
       GoRoute(
         name: HomePageWidget.routeName,
         path: HomePageWidget.routePath,
-        builder: (_, __) => const HomePageWidget(),
+        builder: (_, __) => const NavBarPage(
+          initialPage: HomePageWidget.routeName,
+        ),
       ),
       GoRoute(
         name: ChangePasswordPageWidget.routeName,
