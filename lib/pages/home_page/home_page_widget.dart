@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../components/digistem_bottom_nav/digistem_bottom_nav.dart';
+import '../../components/home_app_bar/home_app_bar.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../services/auth_session_controller.dart';
 import 'home_page_model.dart';
@@ -62,31 +63,19 @@ class HomePageWidget extends ConsumerWidget {
       onSelected: (_) => context.go(routePath),
       body: Scaffold(
         appBar: AppBar(
-          title: const Text('Omnidesk Agent'),
-          actions: [
-            PopupMenuButton<String>(
-              onSelected: (value) async {
-                if (value == 'password') {
-                  context.go('/change-password');
-                } else {
-                  await ref
-                      .read(authSessionControllerProvider.notifier)
-                      .logout(everywhere: value == 'logoutAll');
-                }
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: 'password',
-                  child: Text('Change password'),
-                ),
-                PopupMenuItem(value: 'logout', child: Text('Log out')),
-                PopupMenuItem(
-                  value: 'logoutAll',
-                  child: Text('Log out everywhere'),
-                ),
-              ],
-            ),
-          ],
+          backgroundColor: theme.primaryBackground,
+          surfaceTintColor: theme.primaryBackground,
+          elevation: 0,
+          titleSpacing: 0,
+          toolbarHeight: 84,
+          title: HomeAppBar(
+            user: user,
+            includeTopInset: false,
+            locationLabel: user.activeWorkspace?.name ?? 'Your workspace',
+            onAvatarTap: () => _showAccountMenu(context, ref),
+            onNotificationTap: () {},
+          ),
+          actions: const [],
         ),
         body: ListView(
           padding: const EdgeInsets.all(20),
@@ -132,5 +121,25 @@ class HomePageWidget extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _showAccountMenu(BuildContext context, WidgetRef ref) async {
+    final selection = await showMenu<String>(
+      context: context,
+      position: const RelativeRect.fromLTRB(16, 90, 0, 0),
+      items: const [
+        PopupMenuItem(value: 'password', child: Text('Change password')),
+        PopupMenuItem(value: 'logout', child: Text('Log out')),
+        PopupMenuItem(value: 'logoutAll', child: Text('Log out everywhere')),
+      ],
+    );
+    if (selection == null || !context.mounted) return;
+    if (selection == 'password') {
+      context.go('/change-password');
+      return;
+    }
+    await ref
+        .read(authSessionControllerProvider.notifier)
+        .logout(everywhere: selection == 'logoutAll');
   }
 }
