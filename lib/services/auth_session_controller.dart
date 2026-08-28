@@ -3,6 +3,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../models/auth/auth_models.dart';
 import 'auth_repository.dart';
 import 'auth_token_store.dart';
+import 'app_runtime_config.dart';
 
 part 'auth_session_controller.g.dart';
 
@@ -38,6 +39,8 @@ class AuthState {
 
 @Riverpod(keepAlive: true)
 class AuthSessionController extends _$AuthSessionController {
+  static const _demoAccessToken = 'ui-only-demo-token';
+
   @override
   AuthState build() {
     Future.microtask(bootstrap);
@@ -49,6 +52,13 @@ class AuthSessionController extends _$AuthSessionController {
     final token = await ref.read(authTokenStoreProvider).readAccessToken();
     if (token == null || token.isEmpty) {
       state = const AuthState(status: AuthStatus.unauthenticated);
+      return;
+    }
+    if (uiOnlyMode) {
+      state = AuthState(
+        status: AuthStatus.authenticated,
+        session: _demoSession,
+      );
       return;
     }
     state = AuthState(
@@ -82,6 +92,12 @@ class AuthSessionController extends _$AuthSessionController {
   Future<AuthFailure?> login(
       {required String email, required String password}) async {
     state = const AuthState(status: AuthStatus.loading);
+    if (uiOnlyMode) {
+      await ref.read(authTokenStoreProvider).saveAccessToken(_demoAccessToken);
+      state =
+          AuthState(status: AuthStatus.authenticated, session: _demoSession);
+      return null;
+    }
     final result = await ref
         .read(authRepositoryProvider)
         .login(email: email, password: password);
@@ -103,8 +119,23 @@ class AuthSessionController extends _$AuthSessionController {
     return failure;
   }
 
+  static final _demoSession = AuthSession(
+    accessToken: _demoAccessToken,
+    tokenType: 'Bearer',
+    user: const AuthUser(
+      id: 'demo-user',
+      name: 'Demo Agent',
+      email: 'demo@omnidesk.local',
+      role: 'agent',
+      isSuperAdmin: false,
+      status: 'active',
+    ),
+  );
+
   Future<void> logout({bool everywhere = false}) async {
-    await ref.read(authRepositoryProvider).logout(everywhere: everywhere);
+    if (!uiOnlyMode) {
+      await ref.read(authRepositoryProvider).logout(everywhere: everywhere);
+    }
     await ref.read(authTokenStoreProvider).clear();
     state = const AuthState(status: AuthStatus.unauthenticated);
   }
