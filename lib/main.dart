@@ -14,6 +14,7 @@ import 'flutter_flow/flutter_flow_theme.dart';
 import 'flutter_flow/nav/nav.dart';
 import 'pages/home_page/home_page_widget.dart';
 import 'pages/phone_page/phone_page_widget.dart';
+import 'pages/chats_page/chats_page_widget.dart';
 import 'services/auth_session_controller.dart';
 import 'services/fcm_service.dart';
 import 'services/onboarding_controller.dart';
@@ -144,13 +145,15 @@ class _NavBarPageState extends State<NavBarPage> {
   static const _routePaths = <String>[
     HomePageWidget.routePath,
     PhonePageWidget.routePath,
-    HomePageWidget.routePath,
+    ChatsPageWidget.routePath,
     HomePageWidget.routePath,
     HomePageWidget.routePath,
   ];
 
   static int _indexForPage(String? page) {
-    return page == PhonePageWidget.routeName ? 1 : 0;
+    if (page == PhonePageWidget.routeName) return 1;
+    if (page == ChatsPageWidget.routeName) return 2;
+    return 0;
   }
 
   @override
@@ -201,6 +204,8 @@ class _NavBarPageState extends State<NavBarPage> {
     switch (index) {
       case 1:
         return const PhonePageWidget();
+      case 2:
+        return const ChatsPageWidget();
       default:
         return const HomePageWidget();
     }
