@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
 import 'components/digistem_bottom_nav/digistem_bottom_nav.dart';
+import 'components/call_experience/call_experience_host.dart';
 import 'firebase_options.dart';
 import 'flutter_flow/flutter_flow_theme.dart';
 import 'flutter_flow/nav/nav.dart';
@@ -124,6 +125,8 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp> {
         ),
       ),
       routerConfig: ref.watch(goRouterProvider),
+      builder: (context, child) =>
+          CallExperienceHost(child: child ?? const SizedBox.shrink()),
     );
   }
 }

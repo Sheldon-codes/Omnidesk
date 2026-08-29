@@ -5,7 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
+import '../../components/call_experience/call_session_controller.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
+import '../../services/app_runtime_config.dart';
 import 'phone_dial_pad_widget.dart';
 import 'phone_page_model.dart';
 
@@ -68,7 +70,7 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
               onDigit: ref.read(phonePageProvider.notifier).appendDigit,
               onDelete: ref.read(phonePageProvider.notifier).deleteLastDigit,
               onClear: ref.read(phonePageProvider.notifier).clearDialedNumber,
-              onCall: () => _handleDialCall(context, state),
+              onCall: () => _handleDialCall(context),
             )
           : CustomScrollView(
               slivers: [
@@ -81,6 +83,8 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
                     searchActive: state.searchActive,
                     onSearch: state.searchActive ? _closeSearch : _openSearch,
                     onAddContact: () => context.push('/customers/new'),
+                    onDemoIncoming:
+                        uiOnlyMode ? () => _startDemoIncoming(context) : null,
                   ),
                 ),
                 SliverPersistentHeader(
@@ -128,12 +132,41 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
     );
   }
 
-  void _handleDialCall(BuildContext context, PhonePageState state) {
+  void _handleDialCall(BuildContext context) {
+    final state = ref.read(phonePageProvider);
     if (state.dialedNumber.isEmpty) {
       _showSnack(context, 'Enter a phone number');
-    } else {
-      _showComingSoon(context);
+      return;
     }
+    final contact = state.matchedContact;
+    final started = _startOutgoing(
+      context,
+      CallParty(
+        customerId: contact?.id,
+        displayName: contact?.title ?? state.dialedNumber,
+        phoneNumber: state.dialedNumber,
+        avatar: contact?.avatar,
+      ),
+    );
+    if (started) ref.read(phonePageProvider.notifier).closeDialPad();
+  }
+
+  bool _startOutgoing(BuildContext context, CallParty party) {
+    final started =
+        ref.read(callSessionControllerProvider.notifier).startOutgoing(party);
+    if (!started) _showSnack(context, 'Call already in progress');
+    return started;
+  }
+
+  void _startDemoIncoming(BuildContext context) {
+    final started = ref
+        .read(callSessionControllerProvider.notifier)
+        .startIncoming(const CallParty(
+          customerId: 'aloise-obaga',
+          displayName: 'Aloise Obaga Kaizen School',
+          phoneNumber: '+254723506031',
+        ));
+    if (!started) _showSnack(context, 'Call already in progress');
   }
 
   void _showSnack(BuildContext context, String message) {
@@ -178,6 +211,11 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
               semanticsLabel: '${recent.name}, ${recent.phone}, '
                   '${recent.time}, ${recent.detail}',
               onAction: () => _showComingSoon(context),
+              onCall: () => _startOutgoing(
+                context,
+                CallParty(displayName: recent.name, phoneNumber: recent.phone),
+              ),
+              onPlay: () => _showComingSoon(context),
               showCallAction: true,
               showPlayAction: recent.isAnswered,
               child: _RecentRow(
@@ -212,6 +250,15 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
               theme: theme,
               semanticsLabel: '${contact.title}, ${contact.subtitle}',
               onAction: () => _showComingSoon(context),
+              onCall: () => _startOutgoing(
+                context,
+                CallParty(
+                  customerId: contact.id,
+                  displayName: contact.title,
+                  phoneNumber: contact.identifier,
+                  avatar: contact.avatar,
+                ),
+              ),
               onEdit: () => context
                   .push('/customers/${contact.id ?? contact.identifier}/edit'),
               onTap: () => context
@@ -219,7 +266,15 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
               child: _ContactRow(
                 contact: contact,
                 theme: theme,
-                onCall: () => _showComingSoon(context),
+                onCall: () => _startOutgoing(
+                  context,
+                  CallParty(
+                    customerId: contact.id,
+                    displayName: contact.title,
+                    phoneNumber: contact.identifier,
+                    avatar: contact.avatar,
+                  ),
+                ),
               ),
             );
           },
@@ -243,6 +298,7 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
     required this.searchActive,
     required this.onSearch,
     required this.onAddContact,
+    this.onDemoIncoming,
   });
 
   static const _toolbarHeight = 56.0;
@@ -254,6 +310,7 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
   final bool searchActive;
   final VoidCallback onSearch;
   final VoidCallback onAddContact;
+  final VoidCallback? onDemoIncoming;
 
   @override
   double get minExtent => topPadding + _toolbarHeight;
@@ -291,6 +348,15 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
             height: _toolbarHeight,
             child: Row(
               children: [
+                if (onDemoIncoming != null)
+                  IconButton(
+                    tooltip: 'Demo incoming call',
+                    constraints:
+                        const BoxConstraints(minWidth: 44, minHeight: 44),
+                    onPressed: onDemoIncoming,
+                    icon: Icon(IconsaxPlusBroken.call_incoming,
+                        color: theme.primaryText, size: 22),
+                  ),
                 IconButton(
                   tooltip: searchActive ? 'Close search' : 'Search',
                   constraints:
@@ -318,7 +384,7 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
           Positioned(
             top: titleTop,
             left: 20,
-            right: 108,
+            right: onDemoIncoming == null ? 108 : 152,
             child: Transform.scale(
               scale: titleScale,
               alignment: Alignment.topLeft,
@@ -382,7 +448,8 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
       oldDelegate.subtitle != subtitle ||
       oldDelegate.searchActive != searchActive ||
       oldDelegate.onSearch != onSearch ||
-      oldDelegate.onAddContact != onAddContact;
+      oldDelegate.onAddContact != onAddContact ||
+      oldDelegate.onDemoIncoming != onDemoIncoming;
 }
 
 class _PhoneTabsDelegate extends SliverPersistentHeaderDelegate {
@@ -777,6 +844,8 @@ class _PhoneSwipeRow extends StatefulWidget {
     required this.semanticsLabel,
     this.onTap,
     this.onEdit,
+    this.onCall,
+    this.onPlay,
     this.showCallAction = false,
     this.showPlayAction = false,
   });
@@ -787,6 +856,8 @@ class _PhoneSwipeRow extends StatefulWidget {
   final String semanticsLabel;
   final VoidCallback? onTap;
   final VoidCallback? onEdit;
+  final VoidCallback? onCall;
+  final VoidCallback? onPlay;
   final bool showCallAction;
   final bool showPlayAction;
 
@@ -839,7 +910,7 @@ class _PhoneSwipeRowState extends State<_PhoneSwipeRow> {
                     onTap: () {
                       _reset();
                       if (widget.showCallAction) {
-                        widget.onAction();
+                        (widget.onCall ?? widget.onAction)();
                       } else {
                         widget.onEdit?.call();
                         if (widget.onEdit == null) widget.onAction();
@@ -854,7 +925,9 @@ class _PhoneSwipeRowState extends State<_PhoneSwipeRow> {
                     color: widget.theme.secondary,
                     onTap: () {
                       _reset();
-                      widget.onAction();
+                      (widget.showPlayAction
+                          ? widget.onPlay ?? widget.onAction
+                          : widget.onAction)();
                     },
                   ),
                   const Spacer(),
@@ -866,7 +939,9 @@ class _PhoneSwipeRowState extends State<_PhoneSwipeRow> {
                     color: widget.theme.secondary,
                     onTap: () {
                       _reset();
-                      widget.onAction();
+                      (widget.showPlayAction
+                          ? widget.onPlay ?? widget.onAction
+                          : widget.onAction)();
                     },
                   ),
                   _SwipeAction(
@@ -888,7 +963,7 @@ class _PhoneSwipeRowState extends State<_PhoneSwipeRow> {
                     onTap: () {
                       _reset();
                       if (widget.showCallAction) {
-                        widget.onAction();
+                        (widget.onCall ?? widget.onAction)();
                       } else {
                         widget.onEdit?.call();
                         if (widget.onEdit == null) widget.onAction();

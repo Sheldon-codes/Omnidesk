@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
+import '../../components/call_experience/call_session_controller.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../customer_editor_page/customer_editor_page_model.dart';
 import '../tickets_page/tickets_page_model.dart';
@@ -72,7 +73,25 @@ class CustomerDetailsPageWidget extends ConsumerWidget {
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: _QuickActions(theme: theme),
+                child: _QuickActions(
+                  theme: theme,
+                  onCall: () {
+                    if (customer.phone.trim().isEmpty) {
+                      _showMessage(context, 'No phone number available');
+                      return;
+                    }
+                    final started = ref
+                        .read(callSessionControllerProvider.notifier)
+                        .startOutgoing(CallParty(
+                          customerId: customer.id,
+                          displayName: customer.name,
+                          phoneNumber: customer.phone,
+                        ));
+                    if (!started) {
+                      _showMessage(context, 'Call already in progress');
+                    }
+                  },
+                ),
               ),
             ),
             SliverToBoxAdapter(
@@ -226,6 +245,10 @@ class _DetailsHeaderDelegate extends SliverPersistentHeaderDelegate {
 void _showComingSoon(BuildContext context) => ScaffoldMessenger.of(context)
     .showSnackBar(const SnackBar(content: Text('Coming soon')));
 
+void _showMessage(BuildContext context, String message) =>
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+
 class _Avatar extends StatelessWidget {
   const _Avatar({required this.customer, required this.theme});
   final CustomerRecord customer;
@@ -249,8 +272,9 @@ class _Avatar extends StatelessWidget {
 }
 
 class _QuickActions extends StatelessWidget {
-  const _QuickActions({required this.theme});
+  const _QuickActions({required this.theme, required this.onCall});
   final FlutterFlowTheme theme;
+  final VoidCallback onCall;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -260,7 +284,7 @@ class _QuickActions extends StatelessWidget {
               label: 'Call',
               icon: IconsaxPlusBroken.call,
               theme: theme,
-              onTap: () => _showComingSoon(context)),
+              onTap: onCall),
           _QuickAction(
               label: 'Message',
               icon: IconsaxPlusBroken.messages,

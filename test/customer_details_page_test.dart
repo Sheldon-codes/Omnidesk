@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omnidesk_agent/components/call_experience/call_session_controller.dart';
 import 'package:omnidesk_agent/pages/customer_details_page/customer_details_page_widget.dart';
 
 void main() {
@@ -85,5 +86,24 @@ void main() {
     await tester.tap(find.byTooltip('Download customer report'));
     await tester.pump();
     expect(find.text('Coming soon'), findsOneWidget);
+  });
+
+  testWidgets('customer Call starts an outgoing session', (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(
+        home: CustomerDetailsPageWidget(customerId: 'aloise-obaga'),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Call'));
+    await tester.pump();
+    final call = container.read(callSessionControllerProvider);
+    expect(call.lifecycle, CallLifecycle.outgoingRinging);
+    expect(call.party?.customerId, 'aloise-obaga');
+    container.read(callSessionControllerProvider.notifier).end();
   });
 }

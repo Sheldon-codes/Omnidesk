@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omnidesk_agent/components/call_experience/call_session_controller.dart';
 import 'package:omnidesk_agent/pages/phone_page/phone_page_widget.dart';
 
 void main() {
@@ -20,7 +21,7 @@ void main() {
     notifier.selectTab(PhoneTab.contacts);
     expect(container.read(phonePageProvider).subtitle, '192 contacts');
     expect(container.read(phonePageProvider).query, isEmpty);
-    expect(container.read(phonePageProvider).filteredContacts, hasLength(6));
+    expect(container.read(phonePageProvider).filteredContacts, hasLength(7));
   });
 
   test('Phone keypad state supports entry, deletion, matching, and reset', () {
@@ -110,9 +111,36 @@ void main() {
     expect(find.byTooltip('Add contact'), findsOneWidget);
   });
 
-  testWidgets('swipe actions reveal Coming soon feedback', (tester) async {
+  testWidgets('dial pad Call starts an outgoing session', (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(home: PhonePageWidget()),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Open keypad'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('7'));
+    await tester.tap(find.text('1'));
+    await tester.tap(find.byTooltip('Call'));
+    await tester.pump();
+
+    final call = container.read(callSessionControllerProvider);
+    expect(call.lifecycle, CallLifecycle.outgoingRinging);
+    expect(call.party?.phoneNumber, '71');
+    expect(container.read(phonePageProvider).viewMode, PhoneViewMode.list);
+    container.read(callSessionControllerProvider.notifier).end();
+  });
+
+  testWidgets('recent swipe Call starts outgoing from both directions',
+      (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
     await tester.pumpWidget(
-      const ProviderScope(
+      UncontrolledProviderScope(
+        container: container,
         child: MaterialApp(home: PhonePageWidget()),
       ),
     );
@@ -120,10 +148,12 @@ void main() {
 
     await tester.drag(find.text('Caller 1967'), const Offset(-180, 0));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Call').last);
+    await tester.tap(find.text('Call').at(1));
     await tester.pump();
 
-    expect(find.text('Coming soon'), findsOneWidget);
+    expect(container.read(callSessionControllerProvider).lifecycle,
+        CallLifecycle.outgoingRinging);
+    container.read(callSessionControllerProvider.notifier).end();
     await tester.pumpAndSettle();
 
     await tester.drag(find.text('Caller 1967'), const Offset(180, 0));
@@ -131,6 +161,8 @@ void main() {
     await tester.tap(find.text('Call').first);
     await tester.pump();
 
-    expect(find.text('Coming soon'), findsOneWidget);
+    expect(container.read(callSessionControllerProvider).lifecycle,
+        CallLifecycle.outgoingRinging);
+    container.read(callSessionControllerProvider.notifier).end();
   });
 }
