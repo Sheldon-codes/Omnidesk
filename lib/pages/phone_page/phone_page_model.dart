@@ -6,6 +6,8 @@ enum PhoneTab { recents, contacts }
 
 enum PhoneCallDirection { missed, inbound, outbound }
 
+enum PhoneViewMode { list, dialPad }
+
 class PhoneRecent {
   const PhoneRecent({
     required this.name,
@@ -50,20 +52,37 @@ class PhoneContact {
 class PhonePageState {
   const PhonePageState({
     this.tab = PhoneTab.recents,
+    this.viewMode = PhoneViewMode.list,
     this.searchActive = false,
     this.query = '',
+    this.dialedNumber = '',
     this.recents = _defaultRecents,
     this.contacts = _defaultContacts,
   });
 
   final PhoneTab tab;
+  final PhoneViewMode viewMode;
   final bool searchActive;
   final String query;
+  final String dialedNumber;
   final List<PhoneRecent> recents;
   final List<PhoneContact> contacts;
 
   String get subtitle =>
       tab == PhoneTab.recents ? '9 calls today · 3 missed' : '192 contacts';
+
+  PhoneContact? get matchedContact {
+    final normalized = _digitsOnly(dialedNumber);
+    if (normalized.isEmpty) return null;
+    for (final contact in contacts) {
+      final candidate = _digitsOnly(contact.identifier);
+      if (candidate.isNotEmpty &&
+          (candidate.contains(normalized) || normalized.contains(candidate))) {
+        return contact;
+      }
+    }
+    return null;
+  }
 
   List<PhoneRecent> get filteredRecents {
     final query = this.query.trim().toLowerCase();
@@ -92,19 +111,26 @@ class PhonePageState {
 
   PhonePageState copyWith({
     PhoneTab? tab,
+    PhoneViewMode? viewMode,
     bool? searchActive,
     String? query,
+    String? dialedNumber,
   }) =>
       PhonePageState(
         tab: tab ?? this.tab,
+        viewMode: viewMode ?? this.viewMode,
         searchActive: searchActive ?? this.searchActive,
         query: query ?? this.query,
+        dialedNumber: dialedNumber ?? this.dialedNumber,
         recents: recents,
         contacts: contacts,
       );
 
   static bool _matches(String query, Iterable<String> values) =>
       values.any((value) => value.toLowerCase().contains(query));
+
+  static String _digitsOnly(String value) =>
+      value.replaceAll(RegExp(r'[^0-9]'), '');
 }
 
 const _defaultRecents = <PhoneRecent>[
@@ -180,6 +206,31 @@ class PhonePageNotifier extends _$PhonePageNotifier {
   void selectTab(PhoneTab tab) {
     state = state.copyWith(tab: tab, searchActive: false, query: '');
   }
+
+  void openDialPad() => state = state.copyWith(
+        viewMode: PhoneViewMode.dialPad,
+        searchActive: false,
+        query: '',
+      );
+
+  void closeDialPad() => state = state.copyWith(
+        viewMode: PhoneViewMode.list,
+        dialedNumber: '',
+      );
+
+  void appendDigit(String digit) {
+    if (!RegExp(r'^[0-9*#]$').hasMatch(digit)) return;
+    state = state.copyWith(dialedNumber: '${state.dialedNumber}$digit');
+  }
+
+  void deleteLastDigit() {
+    if (state.dialedNumber.isEmpty) return;
+    state = state.copyWith(
+        dialedNumber:
+            state.dialedNumber.substring(0, state.dialedNumber.length - 1));
+  }
+
+  void clearDialedNumber() => state = state.copyWith(dialedNumber: '');
 
   void openSearch() => state = state.copyWith(searchActive: true);
 

@@ -5,9 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
+import 'phone_dial_pad_widget.dart';
 import 'phone_page_model.dart';
 
 export 'phone_page_model.dart';
+export 'phone_dial_pad_widget.dart';
 
 class PhonePageWidget extends ConsumerStatefulWidget {
   const PhonePageWidget({super.key});
@@ -57,59 +59,86 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
 
     return Scaffold(
       backgroundColor: theme.primaryBackground,
-      body: CustomScrollView(
-        slivers: [
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _PhoneHeaderDelegate(
+      body: state.viewMode == PhoneViewMode.dialPad
+          ? PhoneDialPadWidget(
+              state: state,
               theme: theme,
-              topPadding: topPadding,
-              subtitle: state.subtitle,
-              searchActive: state.searchActive,
-              onSearch: state.searchActive ? _closeSearch : _openSearch,
-              onAddContact: () => _showComingSoon(context),
-            ),
-          ),
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _PhoneTabsDelegate(
-              theme: theme,
-              selected: state.tab,
-              onSelected: _selectTab,
-            ),
-          ),
-          if (state.searchActive)
-            SliverToBoxAdapter(
-              child: _SearchField(
-                controller: _searchController,
-                focusNode: _searchFocusNode,
-                hintText: state.tab == PhoneTab.contacts
-                    ? 'Search contacts'
-                    : 'Search recent calls',
-                onChanged: ref.read(phonePageProvider.notifier).setSearchQuery,
-                onClose: _closeSearch,
-                theme: theme,
-              ),
-            ),
-          if (state.tab == PhoneTab.recents)
-            ..._recentsSlivers(state, theme)
-          else
-            ..._contactSlivers(state, theme),
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
-        ],
-      ),
-      floatingActionButton: state.tab == PhoneTab.recents
-          ? FloatingActionButton(
-              tooltip: 'Open keypad',
-              onPressed: () => _showComingSoon(context),
-              backgroundColor: theme.primary,
-              foregroundColor: Colors.white,
-              shape: const CircleBorder(),
-              child: const Icon(Icons.dialpad_rounded),
+              onBack: ref.read(phonePageProvider.notifier).closeDialPad,
+              onDigit: ref.read(phonePageProvider.notifier).appendDigit,
+              onDelete: ref.read(phonePageProvider.notifier).deleteLastDigit,
+              onClear: ref.read(phonePageProvider.notifier).clearDialedNumber,
+              onCall: () => _handleDialCall(context, state),
             )
-          : null,
+          : CustomScrollView(
+              slivers: [
+                SliverPersistentHeader(
+                  pinned: true,
+                  delegate: _PhoneHeaderDelegate(
+                    theme: theme,
+                    topPadding: topPadding,
+                    subtitle: state.subtitle,
+                    searchActive: state.searchActive,
+                    onSearch: state.searchActive ? _closeSearch : _openSearch,
+                    onAddContact: () => _showComingSoon(context),
+                  ),
+                ),
+                SliverPersistentHeader(
+                  pinned: true,
+                  delegate: _PhoneTabsDelegate(
+                    theme: theme,
+                    selected: state.tab,
+                    onSelected: _selectTab,
+                  ),
+                ),
+                if (state.searchActive)
+                  SliverToBoxAdapter(
+                    child: _SearchField(
+                      controller: _searchController,
+                      focusNode: _searchFocusNode,
+                      hintText: state.tab == PhoneTab.contacts
+                          ? 'Search contacts'
+                          : 'Search recent calls',
+                      onChanged:
+                          ref.read(phonePageProvider.notifier).setSearchQuery,
+                      onClose: _closeSearch,
+                      theme: theme,
+                    ),
+                  ),
+                if (state.tab == PhoneTab.recents)
+                  ..._recentsSlivers(state, theme)
+                else
+                  ..._contactSlivers(state, theme),
+                const SliverToBoxAdapter(child: SizedBox(height: 24)),
+              ],
+            ),
+      floatingActionButton:
+          state.viewMode == PhoneViewMode.list && state.tab == PhoneTab.recents
+              ? FloatingActionButton(
+                  tooltip: 'Open keypad',
+                  onPressed: () =>
+                      ref.read(phonePageProvider.notifier).openDialPad(),
+                  backgroundColor: theme.primary,
+                  foregroundColor: Colors.white,
+                  shape: const CircleBorder(),
+                  child: const Icon(Icons.dialpad_rounded),
+                )
+              : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
+  }
+
+  void _handleDialCall(BuildContext context, PhonePageState state) {
+    if (state.dialedNumber.isEmpty) {
+      _showSnack(context, 'Enter a phone number');
+    } else {
+      _showComingSoon(context);
+    }
+  }
+
+  void _showSnack(BuildContext context, String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   List<Widget> _recentsSlivers(
@@ -660,10 +689,9 @@ class _ContactAvatar extends StatelessWidget {
         height: 44,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: theme.accent1,
-          shape: BoxShape.circle,
-          border: Border.all(color: theme.alternate)
-        ),
+            color: theme.accent1,
+            shape: BoxShape.circle,
+            border: Border.all(color: theme.alternate)),
         child: Text(
           contact.avatar ?? contact.initials,
           style: theme.bodyMedium.override(

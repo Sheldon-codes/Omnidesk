@@ -23,6 +23,27 @@ void main() {
     expect(container.read(phonePageProvider).filteredContacts, hasLength(6));
   });
 
+  test('Phone keypad state supports entry, deletion, matching, and reset', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(phonePageProvider.notifier);
+
+    notifier.openDialPad();
+    expect(container.read(phonePageProvider).viewMode, PhoneViewMode.dialPad);
+    notifier.appendDigit('+'); // Unsupported symbols are ignored.
+    notifier.appendDigit('7');
+    notifier.appendDigit('1');
+    notifier.appendDigit('9');
+    expect(container.read(phonePageProvider).dialedNumber, '719');
+    expect(container.read(phonePageProvider).matchedContact?.title, 'Nana');
+    notifier.deleteLastDigit();
+    expect(container.read(phonePageProvider).dialedNumber, '71');
+    notifier.clearDialedNumber();
+    expect(container.read(phonePageProvider).dialedNumber, isEmpty);
+    notifier.closeDialPad();
+    expect(container.read(phonePageProvider).viewMode, PhoneViewMode.list);
+  });
+
   testWidgets('Phone search appears below tabs and filters contacts',
       (tester) async {
     await tester.pumpWidget(
@@ -69,6 +90,19 @@ void main() {
 
     expect(find.byTooltip('Add contact'), findsOneWidget);
     expect(find.byTooltip('Open keypad'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Open keypad'));
+    await tester.pumpAndSettle();
+    expect(find.text('Enter number'), findsOneWidget);
+    expect(find.text('Recents'), findsNothing);
+    expect(find.bySemanticsLabel('Digit 2, ABC'), findsOneWidget);
+    await tester.tap(find.bySemanticsLabel('Digit 7, PQRS'));
+    await tester.tap(find.bySemanticsLabel('Digit 1'));
+    await tester.pump();
+    expect(find.text('71'), findsOneWidget);
+    await tester.tap(find.byTooltip('Back to Phone'));
+    await tester.pumpAndSettle();
+    expect(find.text('Recents'), findsOneWidget);
 
     await tester.tap(find.text('Contacts'));
     await tester.pumpAndSettle();
