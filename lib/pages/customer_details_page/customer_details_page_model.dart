@@ -79,6 +79,24 @@ class CustomerDetailNotifier extends _$CustomerDetailNotifier {
 }
 
 const _ticketFixtures = <String, List<CustomerDetailTicket>>{
+  'aloise-obaga': [
+    CustomerDetailTicket(
+      id: 'DGKSL-103',
+      subject: 'Technical support follow-up',
+      status: TicketStatus.inProgress,
+      priority: TicketPriority.medium,
+      department: 'Technical support',
+      category: 'Technical support',
+    ),
+    CustomerDetailTicket(
+      id: 'DGKSL-088',
+      subject: 'School account setup',
+      status: TicketStatus.resolved,
+      priority: TicketPriority.low,
+      department: 'General',
+      category: 'Accounting',
+    ),
+  ],
   'nana': [
     CustomerDetailTicket(
       id: 'DGKSL-376',
@@ -102,6 +120,27 @@ const _ticketFixtures = <String, List<CustomerDetailTicket>>{
 };
 
 const _activityFixtures = <String, List<CustomerActivity>>{
+  'aloise-obaga': [
+    CustomerActivity(
+      channel: CustomerActivityChannel.chat,
+      title: 'WhatsApp',
+      preview: 'Technical support follow-up',
+      timestamp: 'Today · 11:27',
+      ticketId: 'DGKSL-103',
+    ),
+    CustomerActivity(
+      channel: CustomerActivityChannel.email,
+      title: 'School account setup',
+      timestamp: 'Yesterday · 15:08',
+      ticketId: 'DGKSL-088',
+    ),
+    CustomerActivity(
+      channel: CustomerActivityChannel.call,
+      title: 'Incoming call',
+      timestamp: 'Yesterday · 14:42',
+      duration: '4m 12s',
+    ),
+  ],
   'nana': [
     CustomerActivity(
       channel: CustomerActivityChannel.call,

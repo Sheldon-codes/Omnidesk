@@ -180,6 +180,15 @@ class CustomerEditorNotifier extends _$CustomerEditorNotifier {
 
 const _initialCustomers = <CustomerRecord>[
   CustomerRecord(
+    id: 'aloise-obaga',
+    name: 'Aloise Obaga Kaizen School',
+    email: 'aloise.obaga@example.com',
+    phone: '+254723506031',
+    company: 'Kaizen School',
+    notes:
+        'Primary school contact for technical support and billing follow-up.',
+  ),
+  CustomerRecord(
       id: 'caller-1967', name: 'Caller 1967', phone: '+254720261967'),
   CustomerRecord(id: 'cool-customer', name: '😎', phone: '+254721161652'),
   CustomerRecord(id: 'contact-2945', name: '', phone: '+29454885757108'),

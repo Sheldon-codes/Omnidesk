@@ -66,6 +66,7 @@ class CustomerDetailsPageWidget extends ConsumerWidget {
                 customer: customer,
                 onBack: context.pop,
                 onEdit: () => context.push('/customers/$customerId/edit'),
+                onDownload: () => _showComingSoon(context),
               ),
             ),
             SliverToBoxAdapter(
@@ -105,12 +106,14 @@ class _DetailsHeaderDelegate extends SliverPersistentHeaderDelegate {
     required this.customer,
     required this.onBack,
     required this.onEdit,
+    required this.onDownload,
   });
 
   final FlutterFlowTheme theme;
   final CustomerRecord customer;
   final VoidCallback onBack;
   final VoidCallback onEdit;
+  final VoidCallback onDownload;
 
   static const _expanded = 184.0;
 
@@ -156,12 +159,22 @@ class _DetailsHeaderDelegate extends SliverPersistentHeaderDelegate {
             ),
           ),
           Positioned(
-            right: 8,
+            right: 52,
             top: 0,
             child: IconButton(
               tooltip: 'Edit customer',
               onPressed: onEdit,
               icon: Icon(IconsaxPlusBroken.edit,
+                  color: theme.primaryText, size: 20),
+            ),
+          ),
+          Positioned(
+            right: 8,
+            top: 0,
+            child: IconButton(
+              tooltip: 'Download customer report',
+              onPressed: onDownload,
+              icon: Icon(IconsaxPlusBroken.document_download,
                   color: theme.primaryText, size: 20),
             ),
           ),
@@ -192,7 +205,7 @@ class _DetailsHeaderDelegate extends SliverPersistentHeaderDelegate {
                   Text(identifier,
                       style: theme.bodyMedium.override(
                           fontFamily: theme.bodyMediumFamily,
-                          color: theme.secondaryText,
+                          color: theme.primaryText,
                           fontSize: 14)),
                   if (customer.phone.isNotEmpty && customer.email.isNotEmpty)
                     Text(customer.email,
@@ -210,6 +223,9 @@ class _DetailsHeaderDelegate extends SliverPersistentHeaderDelegate {
   }
 }
 
+void _showComingSoon(BuildContext context) => ScaffoldMessenger.of(context)
+    .showSnackBar(const SnackBar(content: Text('Coming soon')));
+
 class _Avatar extends StatelessWidget {
   const _Avatar({required this.customer, required this.theme});
   final CustomerRecord customer;
@@ -222,11 +238,11 @@ class _Avatar extends StatelessWidget {
         : String.fromCharCode(customer.name.trim().runes.first).toUpperCase();
     return CircleAvatar(
       radius: 32,
-      backgroundColor: theme.secondaryBackground,
+      backgroundColor: theme.accent1,
       child: Text(value,
           style: theme.titleLarge.override(
               fontFamily: theme.titleLargeFamily,
-              color: theme.primaryText,
+              color: theme.primary,
               fontWeight: FontWeight.w600)),
     );
   }
@@ -236,9 +252,6 @@ class _QuickActions extends StatelessWidget {
   const _QuickActions({required this.theme});
   final FlutterFlowTheme theme;
 
-  void _comingSoon(BuildContext context) => ScaffoldMessenger.of(context)
-      .showSnackBar(const SnackBar(content: Text('Coming soon')));
-
   @override
   Widget build(BuildContext context) => Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -247,17 +260,17 @@ class _QuickActions extends StatelessWidget {
               label: 'Call',
               icon: IconsaxPlusBroken.call,
               theme: theme,
-              onTap: () => _comingSoon(context)),
+              onTap: () => _showComingSoon(context)),
           _QuickAction(
               label: 'Message',
               icon: IconsaxPlusBroken.messages,
               theme: theme,
-              onTap: () => _comingSoon(context)),
+              onTap: () => _showComingSoon(context)),
           _QuickAction(
               label: 'Email',
               icon: IconsaxPlusBroken.sms,
               theme: theme,
-              onTap: () => _comingSoon(context)),
+              onTap: () => _showComingSoon(context)),
         ],
       );
 }
@@ -398,14 +411,11 @@ class _TicketsSection extends StatelessWidget {
                 '${_statusLabel(ticket.status)} · ${_priorityLabel(ticket.priority)} · ${ticket.department}',
             trailing: _statusLabel(ticket.status),
             trailingColor: _statusColor(ticket.status, theme),
-            onTap: () => _comingSoon(context),
+            onTap: () => _showComingSoon(context),
           ),
       ],
     );
   }
-
-  void _comingSoon(BuildContext context) => ScaffoldMessenger.of(context)
-      .showSnackBar(const SnackBar(content: Text('Coming soon')));
 }
 
 class _ActivitySection extends StatelessWidget {
