@@ -149,6 +149,13 @@ GoRouter goRouter(Ref ref) {
         builder: (_, __) => const CustomerEditorPageWidget(),
       ),
       GoRoute(
+        name: 'CustomerDetails',
+        path: '/customers/:id',
+        builder: (_, state) => CustomerDetailsPageWidget(
+          customerId: state.pathParameters['id']!,
+        ),
+      ),
+      GoRoute(
         name: 'CustomerEdit',
         path: '/customers/:id/edit',
         builder: (_, state) => CustomerEditorPageWidget(

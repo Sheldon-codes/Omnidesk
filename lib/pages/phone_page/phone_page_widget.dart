@@ -215,7 +215,7 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
               onEdit: () => context
                   .push('/customers/${contact.id ?? contact.identifier}/edit'),
               onTap: () => context
-                  .push('/customers/${contact.id ?? contact.identifier}/edit'),
+                  .push('/customers/${contact.id ?? contact.identifier}'),
               child: _ContactRow(
                 contact: contact,
                 theme: theme,
