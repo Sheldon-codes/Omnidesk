@@ -1,5 +1,7 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../customer_editor_page/customer_editor_page_model.dart' as customers;
+
 part 'phone_page_model.g.dart';
 
 enum PhoneTab { recents, contacts }
@@ -24,6 +26,11 @@ class PhoneRecent {
   final String detail;
   final PhoneCallDirection direction;
   final String? ticket;
+
+  /// A recording is available only for calls that were answered.
+  bool get isAnswered =>
+      direction != PhoneCallDirection.missed &&
+      RegExp(r'^\d+:\d{2}$').hasMatch(detail.trim());
 }
 
 class PhoneContact {
@@ -32,12 +39,21 @@ class PhoneContact {
     required this.identifier,
     this.avatar,
     this.ticketCount,
+    this.id,
   });
 
   final String? name;
   final String identifier;
   final String? avatar;
   final int? ticketCount;
+  final String? id;
+
+  factory PhoneContact.fromCustomer(customers.CustomerRecord customer) =>
+      PhoneContact(
+        id: customer.id,
+        name: customer.name.isEmpty ? null : customer.name,
+        identifier: customer.phone.isNotEmpty ? customer.phone : customer.email,
+      );
 
   String get title =>
       name?.trim().isNotEmpty == true ? name!.trim() : identifier;
@@ -46,7 +62,9 @@ class PhoneContact {
       : ticketCount == null
           ? 'No tickets yet'
           : identifier;
-  String get initials => title.substring(0, 1).toUpperCase();
+  String get initials => title.runes.isEmpty
+      ? '?'
+      : String.fromCharCode(title.runes.first).toUpperCase();
 }
 
 class PhonePageState {
@@ -201,7 +219,12 @@ const _defaultContacts = <PhoneContact>[
 @riverpod
 class PhonePageNotifier extends _$PhonePageNotifier {
   @override
-  PhonePageState build() => const PhonePageState();
+  PhonePageState build() => PhonePageState(
+        contacts: ref
+            .watch(customers.customersStoreProvider)
+            .map(PhoneContact.fromCustomer)
+            .toList(growable: false),
+      );
 
   void selectTab(PhoneTab tab) {
     state = state.copyWith(tab: tab, searchActive: false, query: '');

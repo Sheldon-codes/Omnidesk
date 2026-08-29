@@ -2,6 +2,7 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
@@ -79,7 +80,7 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
                     subtitle: state.subtitle,
                     searchActive: state.searchActive,
                     onSearch: state.searchActive ? _closeSearch : _openSearch,
-                    onAddContact: () => _showComingSoon(context),
+                    onAddContact: () => context.push('/customers/new'),
                   ),
                 ),
                 SliverPersistentHeader(
@@ -177,7 +178,12 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
               semanticsLabel: '${recent.name}, ${recent.phone}, '
                   '${recent.time}, ${recent.detail}',
               onAction: () => _showComingSoon(context),
-              child: _RecentRow(recent: recent, theme: theme),
+              showCallAction: true,
+              showPlayAction: recent.isAnswered,
+              child: _RecentRow(
+                recent: recent,
+                theme: theme,
+              ),
             );
           },
         ),
@@ -206,7 +212,15 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
               theme: theme,
               semanticsLabel: '${contact.title}, ${contact.subtitle}',
               onAction: () => _showComingSoon(context),
-              child: _ContactRow(contact: contact, theme: theme),
+              onEdit: () => context
+                  .push('/customers/${contact.id ?? contact.identifier}/edit'),
+              onTap: () => context
+                  .push('/customers/${contact.id ?? contact.identifier}/edit'),
+              child: _ContactRow(
+                contact: contact,
+                theme: theme,
+                onCall: () => _showComingSoon(context),
+              ),
             );
           },
         ),
@@ -594,10 +608,12 @@ class _RecentRow extends StatelessWidget {
 }
 
 class _ContactRow extends StatelessWidget {
-  const _ContactRow({required this.contact, required this.theme});
+  const _ContactRow(
+      {required this.contact, required this.theme, required this.onCall});
 
   final PhoneContact contact;
   final FlutterFlowTheme theme;
+  final VoidCallback onCall;
 
   @override
   Widget build(BuildContext context) => _RowSurface(
@@ -605,9 +621,30 @@ class _ContactRow extends StatelessWidget {
         leading: _ContactAvatar(contact: contact, theme: theme),
         title: contact.title,
         subtitle: contact.subtitle,
-        trailing: contact.ticketCount == null
-            ? null
-            : _TicketCount(count: contact.ticketCount!, theme: theme),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _CallButton(theme: theme, onTap: onCall),
+            if (contact.ticketCount != null)
+              _TicketCount(count: contact.ticketCount!, theme: theme),
+          ],
+        ),
+      );
+}
+
+class _CallButton extends StatelessWidget {
+  const _CallButton({required this.theme, required this.onTap});
+
+  final FlutterFlowTheme theme;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+        tooltip: 'Call',
+        onPressed: onTap,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+        icon: Icon(IconsaxPlusBroken.call, color: theme.primaryText, size: 19),
       );
 }
 
@@ -738,12 +775,20 @@ class _PhoneSwipeRow extends StatefulWidget {
     required this.child,
     required this.onAction,
     required this.semanticsLabel,
+    this.onTap,
+    this.onEdit,
+    this.showCallAction = false,
+    this.showPlayAction = false,
   });
 
   final FlutterFlowTheme theme;
   final Widget child;
   final VoidCallback onAction;
   final String semanticsLabel;
+  final VoidCallback? onTap;
+  final VoidCallback? onEdit;
+  final bool showCallAction;
+  final bool showPlayAction;
 
   @override
   State<_PhoneSwipeRow> createState() => _PhoneSwipeRowState();
@@ -776,17 +821,36 @@ class _PhoneSwipeRowState extends State<_PhoneSwipeRow> {
               child: Row(
                 children: [
                   _SwipeAction(
-                    label: 'Call',
-                    icon: IconsaxPlusBroken.call,
-                    color: widget.theme.primary,
+                    label: widget.showCallAction
+                        ? 'Call'
+                        : widget.onEdit == null
+                            ? 'Message'
+                            : 'Edit',
+                    icon: widget.showCallAction
+                        ? IconsaxPlusBroken.call
+                        : widget.onEdit == null
+                            ? IconsaxPlusBroken.messages
+                            : IconsaxPlusBroken.edit,
+                    color: widget.showCallAction
+                        ? widget.theme.primary
+                        : widget.onEdit == null
+                            ? widget.theme.secondary
+                            : widget.theme.primary,
                     onTap: () {
                       _reset();
-                      widget.onAction();
+                      if (widget.showCallAction) {
+                        widget.onAction();
+                      } else {
+                        widget.onEdit?.call();
+                        if (widget.onEdit == null) widget.onAction();
+                      }
                     },
                   ),
                   _SwipeAction(
-                    label: 'Message',
-                    icon: IconsaxPlusBroken.messages,
+                    label: widget.showPlayAction ? 'Play' : 'Message',
+                    icon: widget.showPlayAction
+                        ? IconsaxPlusBroken.play
+                        : IconsaxPlusBroken.messages,
                     color: widget.theme.secondary,
                     onTap: () {
                       _reset();
@@ -795,8 +859,10 @@ class _PhoneSwipeRowState extends State<_PhoneSwipeRow> {
                   ),
                   const Spacer(),
                   _SwipeAction(
-                    label: 'Message',
-                    icon: IconsaxPlusBroken.messages,
+                    label: widget.showPlayAction ? 'Play' : 'Message',
+                    icon: widget.showPlayAction
+                        ? IconsaxPlusBroken.play
+                        : IconsaxPlusBroken.messages,
                     color: widget.theme.secondary,
                     onTap: () {
                       _reset();
@@ -804,12 +870,29 @@ class _PhoneSwipeRowState extends State<_PhoneSwipeRow> {
                     },
                   ),
                   _SwipeAction(
-                    label: 'Call',
-                    icon: IconsaxPlusBroken.call,
-                    color: widget.theme.primary,
+                    label: widget.showCallAction
+                        ? 'Call'
+                        : widget.onEdit == null
+                            ? 'Message'
+                            : 'Edit',
+                    icon: widget.showCallAction
+                        ? IconsaxPlusBroken.call
+                        : widget.onEdit == null
+                            ? IconsaxPlusBroken.messages
+                            : IconsaxPlusBroken.edit,
+                    color: widget.showCallAction
+                        ? widget.theme.primary
+                        : widget.onEdit == null
+                            ? widget.theme.secondary
+                            : widget.theme.primary,
                     onTap: () {
                       _reset();
-                      widget.onAction();
+                      if (widget.showCallAction) {
+                        widget.onAction();
+                      } else {
+                        widget.onEdit?.call();
+                        if (widget.onEdit == null) widget.onAction();
+                      }
                     },
                   ),
                 ],
@@ -818,11 +901,14 @@ class _PhoneSwipeRowState extends State<_PhoneSwipeRow> {
             AnimatedContainer(
               duration: duration,
               transform: Matrix4.translationValues(_offset, 0, 0),
-              child: Material(
-                color: widget.theme.primaryBackground,
-                child: InkWell(
-                  onTap: _offset == 0 ? null : _reset,
-                  child: widget.child,
+              child: IgnorePointer(
+                ignoring: _offset != 0,
+                child: Material(
+                  color: widget.theme.primaryBackground,
+                  child: InkWell(
+                    onTap: _offset == 0 ? widget.onTap : _reset,
+                    child: widget.child,
+                  ),
                 ),
               ),
             ),

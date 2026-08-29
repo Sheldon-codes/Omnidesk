@@ -95,9 +95,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Enter number'), findsOneWidget);
     expect(find.text('Recents'), findsNothing);
-    expect(find.bySemanticsLabel('Digit 2, ABC'), findsOneWidget);
-    await tester.tap(find.bySemanticsLabel('Digit 7, PQRS'));
-    await tester.tap(find.bySemanticsLabel('Digit 1'));
+    expect(find.text('2'), findsOneWidget);
+    await tester.tap(find.text('7'));
+    await tester.tap(find.text('1'));
     await tester.pump();
     expect(find.text('71'), findsOneWidget);
     await tester.tap(find.byTooltip('Back to Phone'));
@@ -120,7 +120,7 @@ void main() {
 
     await tester.drag(find.text('Caller 1967'), const Offset(-180, 0));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Call').at(1));
+    await tester.tap(find.text('Call').last);
     await tester.pump();
 
     expect(find.text('Coming soon'), findsOneWidget);

@@ -48,7 +48,9 @@ GoRouter goRouter(Ref ref) {
                 location == ChatsPageWidget.routePath ||
                 location == EmailPageWidget.routePath ||
                 location == TicketsPageWidget.routePath ||
-                location == ChangePasswordPageWidget.routePath
+                location == ChangePasswordPageWidget.routePath ||
+                location == '/customers/new' ||
+                location.startsWith('/customers/')
             ? null
             : HomePageWidget.routePath;
       }
@@ -140,6 +142,18 @@ GoRouter goRouter(Ref ref) {
         name: ChangePasswordPageWidget.routeName,
         path: ChangePasswordPageWidget.routePath,
         builder: (_, __) => const ChangePasswordPageWidget(),
+      ),
+      GoRoute(
+        name: 'CustomerCreate',
+        path: '/customers/new',
+        builder: (_, __) => const CustomerEditorPageWidget(),
+      ),
+      GoRoute(
+        name: 'CustomerEdit',
+        path: '/customers/:id/edit',
+        builder: (_, state) => CustomerEditorPageWidget(
+          customerId: state.pathParameters['id'],
+        ),
       ),
     ],
   );
