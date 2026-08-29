@@ -22,11 +22,30 @@ class EmailPageWidget extends ConsumerStatefulWidget {
 class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
+  final _scrollController = ScrollController();
+  bool _fabExtended = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_handleScroll);
+  }
+
+  void _handleScroll() {
+    final extended =
+        _scrollController.hasClients && _scrollController.offset < 20;
+    if (extended != _fabExtended && mounted) {
+      setState(() => _fabExtended = extended);
+    }
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _scrollController
+      ..removeListener(_handleScroll)
+      ..dispose();
     super.dispose();
   }
 
@@ -57,15 +76,34 @@ class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
 
     return Scaffold(
       backgroundColor: theme.primaryBackground,
-      floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
-      floatingActionButton: FloatingActionButton(
-        tooltip: 'Compose email',
-        onPressed: () => _showComingSoon(context),
-        backgroundColor: theme.primary,
-        foregroundColor: Colors.white,
-        child: const Icon(Icons.edit_outlined),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      floatingActionButton: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 180),
+        transitionBuilder: (child, animation) => FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(scale: animation, child: child),
+        ),
+        child: _fabExtended
+            ? FloatingActionButton.extended(
+                key: const ValueKey('compose-extended'),
+                tooltip: 'Compose email',
+                onPressed: () => _showComingSoon(context),
+                backgroundColor: theme.primary,
+                foregroundColor: Colors.white,
+                icon: const Icon(IconsaxPlusBroken.edit_2),
+                label: const Text('Compose'),
+              )
+            : FloatingActionButton(
+                key: const ValueKey('compose-collapsed'),
+                tooltip: 'Compose email',
+                onPressed: () => _showComingSoon(context),
+                backgroundColor: theme.primary,
+                foregroundColor: Colors.white,
+                child: const Icon(IconsaxPlusBroken.edit_2),
+              ),
       ),
       body: CustomScrollView(
+        controller: _scrollController,
         slivers: [
           SliverPersistentHeader(
             pinned: true,
@@ -296,11 +334,14 @@ class _EmailTabsDelegate extends SliverPersistentHeaderDelegate {
           mainAxisSize: MainAxisSize.min,
           children: [
             for (final item in items)
-              _EmailTab(
-                label: item.$2,
-                selected: selected == item.$1,
-                theme: theme,
-                onTap: () => onSelected(item.$1),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: _EmailTab(
+                  label: item.$2,
+                  selected: selected == item.$1,
+                  theme: theme,
+                  onTap: () => onSelected(item.$1),
+                ),
               ),
           ],
         ),

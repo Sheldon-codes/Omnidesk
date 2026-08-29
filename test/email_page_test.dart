@@ -66,5 +66,12 @@ void main() {
     await tester.tap(find.byTooltip('Close search').last);
     await tester.pumpAndSettle();
     expect(find.byType(TextField), findsNothing);
+
+    await tester.tap(find.text('Inbox'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -500));
+    await tester.pumpAndSettle();
+    expect(find.text('Compose'), findsNothing);
+    expect(find.byTooltip('Compose email'), findsNWidgets(2));
   });
 }
