@@ -47,6 +47,7 @@ GoRouter goRouter(Ref ref) {
                 location == PhonePageWidget.routePath ||
                 location == ChatsPageWidget.routePath ||
                 location == EmailPageWidget.routePath ||
+                location == TicketsPageWidget.routePath ||
                 location == ChangePasswordPageWidget.routePath
             ? null
             : HomePageWidget.routePath;
@@ -118,6 +119,21 @@ GoRouter goRouter(Ref ref) {
         path: EmailPageWidget.routePath,
         builder: (_, __) => const NavBarPage(
           initialPage: EmailPageWidget.routeName,
+        ),
+      ),
+      GoRoute(
+        name: TicketsPageWidget.routeName,
+        path: TicketsPageWidget.routePath,
+        builder: (_, state) => NavBarPage(
+          initialPage: TicketsPageWidget.routeName,
+          initialTicketStatus: switch (state.uri.queryParameters['filter']) {
+            'overdue' => TicketStatus.overdue,
+            'escalated' => TicketStatus.escalated,
+            'resolved' => TicketStatus.resolved,
+            'in_progress' => TicketStatus.inProgress,
+            'open' => TicketStatus.open,
+            _ => null,
+          },
         ),
       ),
       GoRoute(

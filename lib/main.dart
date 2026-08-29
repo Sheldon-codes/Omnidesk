@@ -16,6 +16,7 @@ import 'pages/home_page/home_page_widget.dart';
 import 'pages/phone_page/phone_page_widget.dart';
 import 'pages/chats_page/chats_page_widget.dart';
 import 'pages/email_page/email_page_widget.dart';
+import 'pages/tickets_page/tickets_page_widget.dart';
 import 'services/auth_session_controller.dart';
 import 'services/fcm_service.dart';
 import 'services/onboarding_controller.dart';
@@ -132,9 +133,10 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp> {
 /// Feature pages intentionally remain unaware of the bottom dock. Destinations
 /// are selected by route while the dock remains owned by the app root.
 class NavBarPage extends StatefulWidget {
-  const NavBarPage({super.key, this.initialPage});
+  const NavBarPage({super.key, this.initialPage, this.initialTicketStatus});
 
   final String? initialPage;
+  final TicketStatus? initialTicketStatus;
 
   @override
   State<NavBarPage> createState() => _NavBarPageState();
@@ -148,13 +150,14 @@ class _NavBarPageState extends State<NavBarPage> {
     PhonePageWidget.routePath,
     ChatsPageWidget.routePath,
     EmailPageWidget.routePath,
-    HomePageWidget.routePath,
+    TicketsPageWidget.routePath,
   ];
 
   static int _indexForPage(String? page) {
     if (page == PhonePageWidget.routeName) return 1;
     if (page == ChatsPageWidget.routeName) return 2;
     if (page == EmailPageWidget.routeName) return 3;
+    if (page == TicketsPageWidget.routeName) return 4;
     return 0;
   }
 
@@ -202,7 +205,7 @@ class _NavBarPageState extends State<NavBarPage> {
     ),
   ];
 
-  static Widget _pageForIndex(int index) {
+  Widget _pageForIndex(int index) {
     switch (index) {
       case 1:
         return const PhonePageWidget();
@@ -210,6 +213,8 @@ class _NavBarPageState extends State<NavBarPage> {
         return const ChatsPageWidget();
       case 3:
         return const EmailPageWidget();
+      case 4:
+        return TicketsPageWidget(initialStatus: widget.initialTicketStatus);
       default:
         return const HomePageWidget();
     }

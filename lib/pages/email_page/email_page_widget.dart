@@ -310,10 +310,10 @@ class _EmailTabsDelegate extends SliverPersistentHeaderDelegate {
   final ValueChanged<EmailFolder> onSelected;
 
   @override
-  double get minExtent => 54;
+  double get minExtent => 46;
 
   @override
-  double get maxExtent => 54;
+  double get maxExtent => 46;
 
   @override
   Widget build(
@@ -334,8 +334,8 @@ class _EmailTabsDelegate extends SliverPersistentHeaderDelegate {
           mainAxisSize: MainAxisSize.min,
           children: [
             for (final item in items)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
+              SizedBox(
+                width: 110,
                 child: _EmailTab(
                   label: item.$2,
                   selected: selected == item.$1,
@@ -374,29 +374,28 @@ class _EmailTab extends StatelessWidget {
         label: label,
         child: InkWell(
           onTap: onTap,
+          overlayColor: const WidgetStatePropertyAll(Colors.transparent),
           child: SizedBox(
-            height: 54,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    label,
-                    style: theme.bodyMedium.override(
-                      fontFamily: theme.bodyMediumFamily,
-                      color: selected ? theme.primary : theme.secondaryText,
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                    ),
+            height: 46,
+            child: Container(
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: selected ? theme.primary : Colors.transparent,
+                    width: 2,
                   ),
                 ),
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  height: 2,
-                  width: selected ? 42 : 0,
-                  color: theme.primary,
+              ),
+              child: Text(
+                label,
+                style: theme.bodyMedium.override(
+                  fontFamily: theme.bodyMediumFamily,
+                  color: selected ? theme.primary : theme.secondaryText,
+                  fontSize: 13,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                 ),
-              ],
+              ),
             ),
           ),
         ),
