@@ -735,8 +735,7 @@ class _RowSurface extends StatelessWidget {
         constraints: const BoxConstraints(minHeight: 74),
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
-          color: theme.primaryBackground,
-          border: Border(bottom: BorderSide(color: theme.alternate)),
+          color: theme.primaryBackground
         ),
         child: Row(
           children: [

@@ -505,7 +505,6 @@ class _ConversationRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
           color: theme.primaryBackground,
-          border: Border(bottom: BorderSide(color: theme.alternate)),
         ),
         child: Row(
           children: [

@@ -48,6 +48,7 @@ GoRouter goRouter(Ref ref) {
                 location == ChatsPageWidget.routePath ||
                 location.startsWith('/chats/') ||
                 location == EmailPageWidget.routePath ||
+                location.startsWith('/email/') ||
                 location == TicketsPageWidget.routePath ||
                 location == ChangePasswordPageWidget.routePath ||
                 location == '/customers/new' ||
@@ -132,6 +133,28 @@ GoRouter goRouter(Ref ref) {
         ),
       ),
       GoRoute(
+        name: EmailComposerPageWidget.routeName,
+        path: '/email/compose',
+        builder: (_, state) => EmailComposerPageWidget(
+          initialTo: state.uri.queryParameters['to'],
+        ),
+      ),
+      GoRoute(
+        name: 'EmailThreadComposer',
+        path: '/email/:threadId/compose/:mode',
+        builder: (_, state) => EmailComposerPageWidget(
+          threadId: state.pathParameters['threadId'],
+          mode: EmailComposerMode.values.byName(state.pathParameters['mode']!),
+        ),
+      ),
+      GoRoute(
+        name: EmailThreadPageWidget.routeName,
+        path: EmailThreadPageWidget.routePath,
+        builder: (_, state) => EmailThreadPageWidget(
+          threadId: state.pathParameters['threadId']!,
+        ),
+      ),
+      GoRoute(
         name: TicketsPageWidget.routeName,
         path: TicketsPageWidget.routePath,
         builder: (_, state) => NavBarPage(
@@ -154,7 +177,10 @@ GoRouter goRouter(Ref ref) {
       GoRoute(
         name: 'CustomerCreate',
         path: '/customers/new',
-        builder: (_, __) => const CustomerEditorPageWidget(),
+        builder: (_, state) => CustomerEditorPageWidget(
+          initialEmail: state.uri.queryParameters['email'],
+          initialName: state.uri.queryParameters['name'],
+        ),
       ),
       GoRoute(
         name: 'CustomerDetails',

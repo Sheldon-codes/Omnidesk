@@ -92,6 +92,15 @@ dependencies:
   riverpod_annotation: ^4.0.0
   flutter_staggered_grid_view: ^0.7.0
   flutter_svg: ^2.0.10+1
+  file_picker: ^12.1.2
+  flutter_html: ^3.0.0
+  flutter_html_table: ^3.0.0
+  flutter_quill: ^11.5.1
+  # flutter_html 3.0.0 currently relies on html's selector helper removed in
+  # 0.15.7; keep the compatible patch release until flutter_html updates.
+  html: 0.15.6
+  mime: ^2.0.0
+  vsc_quill_delta_to_html: ^1.0.5
 dependency_overrides:
   uuid: ^4.0.0
 

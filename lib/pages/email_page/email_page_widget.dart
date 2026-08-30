@@ -2,6 +2,7 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
@@ -87,19 +88,19 @@ class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
             ? FloatingActionButton.extended(
                 key: const ValueKey('compose-extended'),
                 tooltip: 'Compose email',
-                onPressed: () => _showComingSoon(context),
+                onPressed: () => context.push('/email/compose'),
                 backgroundColor: theme.primary,
                 foregroundColor: Colors.white,
-                icon: const Icon(IconsaxPlusBroken.edit_2),
+                icon: const Icon(IconsaxPlusLinear.edit),
                 label: const Text('Compose'),
               )
             : FloatingActionButton(
                 key: const ValueKey('compose-collapsed'),
                 tooltip: 'Compose email',
-                onPressed: () => _showComingSoon(context),
+                onPressed: () => context.push('/email/compose'),
                 backgroundColor: theme.primary,
                 foregroundColor: Colors.white,
-                child: const Icon(IconsaxPlusBroken.edit_2),
+                child: const Icon(IconsaxPlusLinear.edit),
               ),
       ),
       body: CustomScrollView(
@@ -113,7 +114,7 @@ class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
               subtitle: state.subtitle,
               searchActive: state.searchActive,
               onSearch: state.searchActive ? _closeSearch : _openSearch,
-              onCompose: () => _showComingSoon(context),
+              onCompose: () => context.push('/email/compose'),
             ),
           ),
           SliverPersistentHeader(
@@ -134,7 +135,10 @@ class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
                 theme: theme,
               ),
             ),
-          _emailList(state, theme),
+          _emailList(
+            state.copyWith(threads: ref.watch(emailStoreProvider).threads),
+            theme,
+          ),
           const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ],
       ),
@@ -168,21 +172,26 @@ class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
         itemBuilder: (context, index) {
           final message = messages[index];
           return _EmailSwipeRow(
-            key: ValueKey(
-                '${message.sender}-${message.subject}-${message.time}'),
+            key: ValueKey(message.id),
             theme: theme,
-            onAction: () => _showComingSoon(context),
-            child: _EmailRow(message: message, theme: theme),
+            markReadLabel: message.unread ? 'Mark read' : 'Mark unread',
+            onToggleRead: () {
+              final store = ref.read(emailStoreProvider.notifier);
+              message.unread
+                  ? store.openThread(message.id)
+                  : store.markUnread(message.id);
+            },
+            onArchive: () =>
+                ref.read(emailStoreProvider.notifier).archive(message.id),
+            child: _EmailRow(
+              message: message,
+              theme: theme,
+              onTap: () => context.push('/email/${message.id}'),
+            ),
           );
         },
       ),
     );
-  }
-
-  void _showComingSoon(BuildContext context) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(content: Text('Coming soon')));
   }
 }
 
@@ -266,7 +275,7 @@ class _EmailHeaderDelegate extends SliverPersistentHeaderDelegate {
               tooltip: 'Compose email',
               onPressed: onCompose,
               icon: Icon(
-                Icons.edit_outlined,
+                IconsaxPlusLinear.edit,
                 color: theme.primaryText,
                 size: 21,
               ),
@@ -455,85 +464,77 @@ class _EmailSearchField extends StatelessWidget {
 }
 
 class _EmailRow extends StatelessWidget {
-  const _EmailRow({required this.message, required this.theme});
+  const _EmailRow({
+    required this.message,
+    required this.theme,
+    required this.onTap,
+  });
 
-  final EmailMessage message;
+  final EmailThread message;
   final FlutterFlowTheme theme;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final textColor = message.isRead ? theme.secondaryText : theme.primaryText;
-    final weight = message.isRead ? FontWeight.w400 : FontWeight.w600;
+    final textColor = message.unread ? theme.primaryText : theme.secondaryText;
+    final weight = message.unread ? FontWeight.w600 : FontWeight.w400;
     return Semantics(
-      label: '${message.sender}, ${message.subject}, ${message.time}',
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(message.sender,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.bodyMedium.override(
-                        fontFamily: theme.bodyMediumFamily,
-                        color: textColor,
-                        fontWeight: weight,
-                      )),
-                  const SizedBox(height: 3),
-                  Text(message.subject,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.bodyMedium.override(
-                        fontFamily: theme.bodyMediumFamily,
-                        color: textColor,
-                        fontWeight: weight,
-                      )),
-                  const SizedBox(height: 3),
-                  Text(message.preview,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.bodySmall.override(
-                        fontFamily: theme.bodySmallFamily,
-                        color: theme.secondaryText,
-                      )),
-                  if (message.ticketId != null || message.label != null) ...[
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        if (message.ticketId != null)
-                          Text(message.ticketId!,
-                              style: theme.labelSmall.override(
-                                fontFamily: theme.labelSmallFamily,
-                                color: theme.primary,
-                                fontWeight: FontWeight.w600,
-                              )),
-                        if (message.ticketId != null && message.label != null)
-                          const SizedBox(width: 8),
-                        if (message.label != null)
-                          Text(message.label!,
-                              style: theme.labelSmall.override(
-                                fontFamily: theme.labelSmallFamily,
-                                color: theme.secondaryText,
-                              )),
-                      ],
-                    ),
+      button: true,
+      label: '${message.sender}, ${message.subject}, ${message.timeLabel}',
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(message.sender,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.bodyMedium.override(
+                            fontFamily: theme.bodyMediumFamily,
+                            color: textColor,
+                            fontWeight: weight)),
+                    const SizedBox(height: 3),
+                    Text(message.subject,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.bodyMedium.override(
+                            fontFamily: theme.bodyMediumFamily,
+                            color: textColor,
+                            fontWeight: weight)),
+                    const SizedBox(height: 3),
+                    Text(message.preview,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.bodySmall.override(
+                            fontFamily: theme.bodySmallFamily,
+                            color: theme.secondaryText)),
+                    if (message.ticketId != null) ...[
+                      const SizedBox(height: 6),
+                      Text(message.ticketId!,
+                          style: theme.labelSmall.override(
+                              fontFamily: theme.labelSmallFamily,
+                              color: theme.primary,
+                              fontWeight: FontWeight.w600)),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Text(message.time,
-                style: theme.labelSmall.override(
-                  fontFamily: theme.labelSmallFamily,
-                  color: message.isRead ? theme.secondaryText : theme.primary,
-                  fontWeight:
-                      message.isRead ? FontWeight.w400 : FontWeight.w600,
-                )),
-          ],
+              const SizedBox(width: 12),
+              Text(message.timeLabel,
+                  style: theme.labelSmall.override(
+                      fontFamily: theme.labelSmallFamily,
+                      color:
+                          message.unread ? theme.primary : theme.secondaryText,
+                      fontWeight:
+                          message.unread ? FontWeight.w600 : FontWeight.w400)),
+            ],
+          ),
         ),
       ),
     );
@@ -544,11 +545,15 @@ class _EmailSwipeRow extends StatefulWidget {
   const _EmailSwipeRow(
       {super.key,
       required this.theme,
-      required this.onAction,
+      required this.markReadLabel,
+      required this.onToggleRead,
+      required this.onArchive,
       required this.child});
 
   final FlutterFlowTheme theme;
-  final VoidCallback onAction;
+  final String markReadLabel;
+  final VoidCallback onToggleRead;
+  final VoidCallback onArchive;
   final Widget child;
 
   @override
@@ -591,12 +596,12 @@ class _EmailSwipeRowState extends State<_EmailSwipeRow>
                   SizedBox(
                     width: _actionWidth,
                     child: _SwipeAction(
-                      label: 'Mark read',
+                      label: widget.markReadLabel,
                       icon: Icons.mark_email_read_outlined,
                       color: widget.theme.primary,
                       onTap: () {
                         _reset();
-                        widget.onAction();
+                        widget.onToggleRead();
                       },
                     ),
                   ),
@@ -608,7 +613,7 @@ class _EmailSwipeRowState extends State<_EmailSwipeRow>
                       color: widget.theme.secondaryText,
                       onTap: () {
                         _reset();
-                        widget.onAction();
+                        widget.onArchive();
                       },
                     ),
                   ),
@@ -623,19 +628,19 @@ class _EmailSwipeRowState extends State<_EmailSwipeRow>
                       color: widget.theme.secondaryText,
                       onTap: () {
                         _reset();
-                        widget.onAction();
+                        widget.onArchive();
                       },
                     ),
                   ),
                   SizedBox(
                     width: _actionWidth,
                     child: _SwipeAction(
-                      label: 'Mark read',
+                      label: widget.markReadLabel,
                       icon: Icons.mark_email_read_outlined,
                       color: widget.theme.primary,
                       onTap: () {
                         _reset();
-                        widget.onAction();
+                        widget.onToggleRead();
                       },
                     ),
                   ),
@@ -659,12 +664,7 @@ class _EmailSwipeRowState extends State<_EmailSwipeRow>
               offset: Offset(_offset, 0),
               child: ColoredBox(
                 color: widget.theme.primaryBackground,
-                child: Column(
-                  children: [
-                    widget.child,
-                    Divider(height: 1, color: widget.theme.alternate)
-                  ],
-                ),
+                child: widget.child,
               ),
             ),
           ),

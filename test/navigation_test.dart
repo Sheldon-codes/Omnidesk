@@ -175,6 +175,35 @@ void main() {
     expect(find.text('Aloise Obaga Kaizen School'), findsOneWidget);
     expect(find.text('Home'), findsNothing);
   });
+
+  testWidgets('authenticated users can open a standalone email reader',
+      (tester) async {
+    final auth = AuthState(
+      status: AuthStatus.authenticated,
+      session: AuthSession(
+        accessToken: 'test-token',
+        tokenType: 'Bearer',
+        user: const AuthUser(
+          id: 'user-1',
+          name: 'Test User',
+          email: 'test@example.com',
+          role: 'agent',
+          isSuperAdmin: false,
+          status: 'active',
+        ),
+      ),
+    );
+    const onboarding = OnboardingState(initialized: true, completed: true);
+    final router = _router(auth: auth, onboarding: onboarding);
+    await _attachRouter(tester, router, auth: auth, onboarding: onboarding);
+    router.go('/email/shipping-rates');
+    await _pumpRoute(tester);
+
+    expect(router.routerDelegate.currentConfiguration.uri.path,
+        '/email/shipping-rates');
+    expect(find.text("From China to Mombasa USD 4300/40'HQ"), findsWidgets);
+    expect(find.text('Home'), findsNothing);
+  });
 }
 
 Future<void> _attachRouter(

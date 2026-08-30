@@ -11,9 +11,16 @@ import 'customer_editor_page_model.dart';
 export 'customer_editor_page_model.dart';
 
 class CustomerEditorPageWidget extends ConsumerStatefulWidget {
-  const CustomerEditorPageWidget({super.key, this.customerId});
+  const CustomerEditorPageWidget({
+    super.key,
+    this.customerId,
+    this.initialEmail,
+    this.initialName,
+  });
 
   final String? customerId;
+  final String? initialEmail;
+  final String? initialName;
   static const routeName = 'CustomerEditorPage';
 
   @override
@@ -29,6 +36,7 @@ class _CustomerEditorPageWidgetState
   late final TextEditingController _phone;
   late final TextEditingController _company;
   late final TextEditingController _notes;
+  var _appliedInitialValues = false;
 
   bool get _isEditing => widget.customerId != null;
 
@@ -59,6 +67,21 @@ class _CustomerEditorPageWidgetState
         customerEditorNotifierProvider(customerId: widget.customerId);
     final state = ref.watch(provider);
     final notifier = ref.read(provider.notifier);
+    if (!_isEditing &&
+        !_appliedInitialValues &&
+        ((widget.initialEmail?.isNotEmpty ?? false) ||
+            (widget.initialName?.isNotEmpty ?? false))) {
+      _appliedInitialValues = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (widget.initialEmail?.isNotEmpty ?? false) {
+          notifier.setEmail(widget.initialEmail!);
+        }
+        if (widget.initialName?.isNotEmpty ?? false) {
+          notifier.setName(widget.initialName!);
+        }
+      });
+    }
     _sync(_name, state.name);
     _sync(_email, state.email);
     _sync(_phone, state.phone);
