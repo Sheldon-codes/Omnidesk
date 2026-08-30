@@ -285,18 +285,9 @@ class _ProfileHeaderDelegate extends SliverPersistentHeaderDelegate {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.network(
-                    'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=1200',
+                  Image.asset(
+                    'assets/images/profile_header_cover.png',
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [theme.secondary, theme.primary],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                      ),
-                    ),
                   ),
                   // Deliberately shade only the status-bar edge. The lower
                   // edge remains true to the image and meets the avatar at
@@ -425,13 +416,15 @@ class _GlassIconButton extends StatelessWidget {
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
           child: Material(
-            color: Colors.white.withValues(alpha: .72),
+            color: FlutterFlowTheme.of(context)
+                .primaryBackground
+                .withValues(alpha: .00),
             child: SizedBox(
               width: 44,
               height: 44,
               child: IconButton(
                 tooltip: tooltip,
-                icon: Icon(icon, size: 21),
+                icon: Icon(icon, size: 24),
                 onPressed: onPressed,
               ),
             ),
