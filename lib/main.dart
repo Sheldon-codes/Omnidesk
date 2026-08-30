@@ -15,6 +15,7 @@ import 'flutter_flow/flutter_flow_theme.dart';
 import 'flutter_flow/nav/nav.dart';
 import 'pages/home_page/home_page_widget.dart';
 import 'pages/phone_page/phone_page_widget.dart';
+import 'pages/profile_page/profile_page_model.dart';
 import 'pages/chats_page/chats_page_widget.dart';
 import 'pages/email_page/email_page_widget.dart';
 import 'pages/tickets_page/tickets_page_widget.dart';
@@ -97,22 +98,44 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp> {
 
   @override
   Widget build(BuildContext context) {
-    final flowTheme = FlutterFlowTheme.of(context);
+    final themeMode = ref.watch(appThemeModeProvider);
     return MaterialApp.router(
       title: 'Omnidesk Agent',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
+      theme: _themeData(LightModeTheme(), Brightness.light),
+      darkTheme: _themeData(DarkModeTheme(), Brightness.dark),
+      themeMode: themeMode,
+      routerConfig: ref.watch(goRouterProvider),
+      builder: (context, child) =>
+          CallExperienceHost(child: child ?? const SizedBox.shrink()),
+    );
+  }
+
+  ThemeData _themeData(FlutterFlowTheme flowTheme, Brightness brightness) =>
+      ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.light(
-          primary: flowTheme.primary,
-          onPrimary: flowTheme.primaryBackground,
-          secondary: flowTheme.secondary,
-          onSecondary: flowTheme.primaryBackground,
-          error: flowTheme.error,
-          onError: flowTheme.primaryBackground,
-          surface: flowTheme.secondaryBackground,
-          onSurface: flowTheme.primaryText,
-        ),
+        brightness: brightness,
+        colorScheme: brightness == Brightness.dark
+            ? ColorScheme.dark(
+                primary: flowTheme.primary,
+                onPrimary: flowTheme.primaryBackground,
+                secondary: flowTheme.secondary,
+                onSecondary: flowTheme.primaryBackground,
+                error: flowTheme.error,
+                onError: flowTheme.primaryBackground,
+                surface: flowTheme.secondaryBackground,
+                onSurface: flowTheme.primaryText,
+              )
+            : ColorScheme.light(
+                primary: flowTheme.primary,
+                onPrimary: flowTheme.primaryBackground,
+                secondary: flowTheme.secondary,
+                onSecondary: flowTheme.primaryBackground,
+                error: flowTheme.error,
+                onError: flowTheme.primaryBackground,
+                surface: flowTheme.secondaryBackground,
+                onSurface: flowTheme.primaryText,
+              ),
         scaffoldBackgroundColor: flowTheme.primaryBackground,
         textTheme: TextTheme(
           headlineSmall: flowTheme.headlineSmall,
@@ -123,12 +146,7 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp> {
           bodySmall: flowTheme.bodySmall,
           labelLarge: flowTheme.labelLarge,
         ),
-      ),
-      routerConfig: ref.watch(goRouterProvider),
-      builder: (context, child) =>
-          CallExperienceHost(child: child ?? const SizedBox.shrink()),
-    );
-  }
+      );
 }
 
 /// Root-owned authenticated navigation, following OPDP's NavBarPage pattern.

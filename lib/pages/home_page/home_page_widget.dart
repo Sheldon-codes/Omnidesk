@@ -9,20 +9,6 @@ import '../../services/auth_session_controller.dart';
 
 export 'home_page_model.dart';
 
-/// Local placeholder for the agent's availability status.
-/// TODO: replace with the real availability provider once one exists.
-final _agentAvailabilityProvider =
-    NotifierProvider<_AgentAvailabilityController, bool>(
-  _AgentAvailabilityController.new,
-);
-
-class _AgentAvailabilityController extends Notifier<bool> {
-  @override
-  bool build() => true;
-
-  void toggle() => state = !state;
-}
-
 class HomePageWidget extends ConsumerWidget {
   const HomePageWidget({super.key});
   static const routeName = 'HomePage';
@@ -32,7 +18,6 @@ class HomePageWidget extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authSessionControllerProvider).session!.user;
     final theme = FlutterFlowTheme.of(context);
-    final isAvailable = ref.watch(_agentAvailabilityProvider);
     return Scaffold(
       backgroundColor: theme.secondaryBackground,
       appBar: AppBar(
@@ -45,12 +30,7 @@ class HomePageWidget extends ConsumerWidget {
           user: user,
           includeTopInset: false,
           locationLabel: user.activeWorkspace?.name ?? 'Your workspace',
-          onAvatarTap: () => _showAccountMenu(context, ref),
-          leadingAction: _AvailabilityButton(
-            isAvailable: isAvailable,
-            onPressed: () =>
-                ref.read(_agentAvailabilityProvider.notifier).toggle(),
-          ),
+          onAvatarTap: () => context.push('/profile'),
           onNotificationTap: () {},
         ),
         actions: const [],
@@ -76,6 +56,7 @@ class HomePageWidget extends ConsumerWidget {
                       _AttentionRow(
                         theme: theme,
                         icon: IconsaxPlusBroken.danger,
+                        iconColor: theme.warning,
                         title: 'Escalated',
                         count: 7,
                         onTap: () => context.go('/tickets?filter=escalated'),
@@ -86,6 +67,7 @@ class HomePageWidget extends ConsumerWidget {
                       _AttentionRow(
                         theme: theme,
                         icon: IconsaxPlusBroken.clock,
+                        iconColor: theme.error,
                         title: 'Overdue',
                         count: 7,
                         onTap: () => context.go('/tickets?filter=overdue'),
@@ -271,87 +253,6 @@ class HomePageWidget extends ConsumerWidget {
       ),
     );
   }
-
-  Future<void> _showAccountMenu(BuildContext context, WidgetRef ref) async {
-    final selection = await showMenu<String>(
-      context: context,
-      position: const RelativeRect.fromLTRB(16, 90, 0, 0),
-      items: const [
-        PopupMenuItem(value: 'password', child: Text('Change password')),
-        PopupMenuItem(value: 'logout', child: Text('Log out')),
-        PopupMenuItem(value: 'logoutAll', child: Text('Log out everywhere')),
-      ],
-    );
-    if (selection == null || !context.mounted) return;
-    if (selection == 'password') {
-      context.go('/change-password');
-      return;
-    }
-    await ref
-        .read(authSessionControllerProvider.notifier)
-        .logout(everywhere: selection == 'logoutAll');
-  }
-}
-
-class _AvailabilityButton extends StatelessWidget {
-  const _AvailabilityButton(
-      {required this.isAvailable, required this.onPressed});
-
-  final bool isAvailable;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = FlutterFlowTheme.of(context);
-    return Semantics(
-      button: true,
-      toggled: isAvailable,
-      label: isAvailable ? 'Agent available' : 'Agent unavailable',
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: theme.secondaryBackground,
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: theme.alternate, width: 1),
-            ),
-            child: IconButton(
-              tooltip: isAvailable
-                  ? 'Available — tap to go unavailable'
-                  : 'Unavailable — tap to go available',
-              onPressed: onPressed,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              icon: Icon(
-                IconsaxPlusBroken.headphone,
-                size: 22,
-                color: theme.primaryText,
-              ),
-            ),
-          ),
-          Positioned(
-            top: 8,
-            right: 8,
-            child: Container(
-              width: 9,
-              height: 9,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: isAvailable ? theme.success : theme.secondaryText,
-                border: Border.all(
-                  color: theme.primaryBackground,
-                  width: 1.5,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _SectionLabel extends StatelessWidget {
@@ -407,6 +308,7 @@ class _AttentionRow extends StatelessWidget {
   const _AttentionRow({
     required this.theme,
     required this.icon,
+    required this.iconColor,
     required this.title,
     required this.count,
     required this.onTap,
@@ -414,6 +316,7 @@ class _AttentionRow extends StatelessWidget {
 
   final FlutterFlowTheme theme;
   final IconData icon;
+  final Color iconColor;
   final String title;
   final int count;
   final VoidCallback onTap;
@@ -424,7 +327,7 @@ class _AttentionRow extends StatelessWidget {
       onTap: onTap,
       child: Row(
         children: [
-          Icon(icon, size: 18, color: theme.error),
+          Icon(icon, size: 18, color: iconColor),
           const SizedBox(width: 12),
           Expanded(
             child: Text(

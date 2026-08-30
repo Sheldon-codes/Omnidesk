@@ -8,6 +8,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import '../../components/call_experience/call_session_controller.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../services/app_runtime_config.dart';
+import '../profile_page/profile_page_model.dart';
 import 'phone_dial_pad_widget.dart';
 import 'phone_page_model.dart';
 
@@ -159,6 +160,10 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
   }
 
   void _startDemoIncoming(BuildContext context) {
+    if (!ref.read(agentPresenceProvider).receiveIncomingCalls) {
+      _showSnack(context, 'Incoming calls are disabled in Profile');
+      return;
+    }
     final started = ref
         .read(callSessionControllerProvider.notifier)
         .startIncoming(const CallParty(
@@ -734,9 +739,7 @@ class _RowSurface extends StatelessWidget {
   Widget build(BuildContext context) => Container(
         constraints: const BoxConstraints(minHeight: 74),
         padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: theme.primaryBackground
-        ),
+        decoration: BoxDecoration(color: theme.primaryBackground),
         child: Row(
           children: [
             SizedBox(width: 38, child: Center(child: leading)),

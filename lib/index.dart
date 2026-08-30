@@ -10,6 +10,7 @@ export '/pages/home_page/home_page_widget.dart';
 export '/pages/login_page/login_page_widget.dart';
 export '/pages/on_boarding_screen/on_boarding_screen_widget.dart';
 export '/pages/phone_page/phone_page_widget.dart';
+export '/pages/profile_page/profile_page_widget.dart';
 export '/pages/customer_editor_page/customer_editor_page_widget.dart';
 export '/pages/customer_details_page/customer_details_page_widget.dart';
 export '/pages/reset_password_page/reset_password_page_widget.dart';

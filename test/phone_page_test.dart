@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omnidesk_agent/components/call_experience/call_session_controller.dart';
 import 'package:omnidesk_agent/pages/phone_page/phone_page_widget.dart';
+import 'package:omnidesk_agent/pages/profile_page/profile_page_model.dart';
 
 void main() {
   test('Phone provider starts on Recents and filters local fixtures', () {
@@ -132,6 +133,25 @@ void main() {
     expect(call.party?.phoneNumber, '71');
     expect(container.read(phonePageProvider).viewMode, PhoneViewMode.list);
     container.read(callSessionControllerProvider.notifier).end();
+  });
+
+  testWidgets('demo incoming call respects Profile call availability',
+      (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await container
+        .read(agentPresenceProvider.notifier)
+        .setReceiveIncomingCalls(false);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(home: PhonePageWidget()),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Demo incoming call'));
+    await tester.pump();
+    expect(find.text('Incoming calls are disabled in Profile'), findsOneWidget);
+    expect(container.read(callSessionControllerProvider).hasCall, isFalse);
   });
 
   testWidgets('recent swipe Call starts outgoing from both directions',

@@ -204,6 +204,36 @@ void main() {
     expect(find.text("From China to Mombasa USD 4300/40'HQ"), findsWidgets);
     expect(find.text('Home'), findsNothing);
   });
+
+  testWidgets('authenticated users can open the standalone Profile page',
+      (tester) async {
+    final auth = AuthState(
+      status: AuthStatus.authenticated,
+      session: AuthSession(
+        accessToken: 'test-token',
+        tokenType: 'Bearer',
+        user: const AuthUser(
+          id: 'user-1',
+          name: 'Test User',
+          email: 'test@example.com',
+          role: 'agent',
+          isSuperAdmin: false,
+          status: 'active',
+        ),
+      ),
+    );
+    const onboarding = OnboardingState(initialized: true, completed: true);
+    final router = _router(auth: auth, onboarding: onboarding);
+    await _attachRouter(tester, router, auth: auth, onboarding: onboarding);
+    router.go(ProfilePageWidget.routePath);
+    await _pumpRoute(tester);
+
+    expect(router.routerDelegate.currentConfiguration.uri.path,
+        ProfilePageWidget.routePath);
+    expect(find.byTooltip('Back'), findsOneWidget);
+    expect(find.text('Test User'), findsOneWidget);
+    expect(find.text('Home'), findsNothing);
+  });
 }
 
 Future<void> _attachRouter(

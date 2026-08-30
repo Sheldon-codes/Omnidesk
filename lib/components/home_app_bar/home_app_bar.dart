@@ -42,7 +42,6 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
     final initials = user?.initials ?? '?';
 
     return Container(
-      color: theme.secondaryBackground,
       padding: EdgeInsets.only(
         top: includeTopInset ? MediaQuery.of(context).padding.top : 0,
         left: 16,
@@ -220,7 +219,7 @@ class _NotificationBell extends StatelessWidget {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: theme.secondaryBackground,
+              color: theme.primaryBackground,
               borderRadius: BorderRadius.circular(22),
               border: Border.all(color: theme.alternate, width: 1),
             ),
@@ -231,6 +230,7 @@ class _NotificationBell extends StatelessWidget {
                 'assets/images/notification.png',
                 width: 22,
                 height: 22,
+                color: theme.primaryText,
                 errorBuilder: (_, __, ___) => Icon(
                   Icons.notifications_none_rounded,
                   color: theme.primaryText,

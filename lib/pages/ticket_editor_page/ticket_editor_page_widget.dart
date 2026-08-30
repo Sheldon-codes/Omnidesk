@@ -660,7 +660,10 @@ class _CustomerPickerState extends ConsumerState<_CustomerPicker> {
             .contains(query.toLowerCase()))
         .toList();
     return Scaffold(
-        appBar: AppBar(title: const Text('Select customer')),
+        appBar: AppBar(
+          title: const Text('Select customer'),
+          backgroundColor: FlutterFlowTheme.of(context).primaryBackground,
+        ),
         body: Column(children: [
           Padding(
               padding: const EdgeInsets.all(16),

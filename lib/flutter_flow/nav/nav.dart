@@ -51,6 +51,7 @@ GoRouter goRouter(Ref ref) {
                 location.startsWith('/email/') ||
                 location == TicketsPageWidget.routePath ||
                 location.startsWith('/tickets/') ||
+                location == ProfilePageWidget.routePath ||
                 location == ChangePasswordPageWidget.routePath ||
                 location == '/customers/new' ||
                 location.startsWith('/customers/')
@@ -188,6 +189,11 @@ GoRouter goRouter(Ref ref) {
         builder: (_, state) => TicketDetailsPageWidget(
           ticketId: state.pathParameters['ticketId']!,
         ),
+      ),
+      GoRoute(
+        name: ProfilePageWidget.routeName,
+        path: ProfilePageWidget.routePath,
+        builder: (_, __) => const ProfilePageWidget(),
       ),
       GoRoute(
         name: ChangePasswordPageWidget.routeName,

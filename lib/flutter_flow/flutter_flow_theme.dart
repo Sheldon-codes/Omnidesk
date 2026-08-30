@@ -56,6 +56,14 @@ abstract class FlutterFlowTheme {
   late Color error;
   late Color info;
 
+  /// Brand gradient (violet -> pink) matching the omnidesk.africa logo mark,
+  /// "AI Intelligence" headline, and primary CTAs ("Start Free Trial",
+  /// "Book a Demo"). Colors are not gradient-capable, so this lives
+  /// alongside them for use in a LinearGradient wherever the web brand
+  /// gradient should be reproduced (primary buttons, the logo mark, hero
+  /// accents).
+  List<Color> get brandGradient => [primary, secondary];
+
   @Deprecated('Use displaySmallFamily instead')
   String get title1Family => displaySmallFamily;
   @Deprecated('Use displaySmall instead')
@@ -142,25 +150,39 @@ class LightModeTheme extends FlutterFlowTheme {
   @Deprecated('Use tertiary instead')
   Color get tertiaryColor => tertiary;
 
-  // Light Mode — extracted from Sign In screen design
-  late Color primary = const Color(0xFFF0354A);          // Vivid red-pink — CTA button, links ("Forgot Password?", "Sign Up")
-  late Color secondary = const Color(0xFF1A1A2E);        // Deep navy — secondary actions / dark accents
-  late Color tertiary = const Color(0xFFFFB3BB);         // Soft pink — highlights / subtle tints
-  late Color alternate = const Color(0xFFE8E8E8);        // Light gray — borders, dividers, icon circles
-  late Color primaryText = const Color(0xFF1A1A1A);      // Near-black — headings ("Welcome Back!")
-  late Color secondaryText = const Color(0xFF9E9E9E);    // Medium gray — placeholders, "OR Continue with"
-  late Color primaryBackground = const Color(0xFFFFFFFF); // Pure white — screen background
-  late Color secondaryBackground = const Color(0xFFF5F5F5); // Soft gray — text field fill colour
-  late Color accent1 = const Color(0x1FF0354A);          // Primary at 12 % — pressed states / ripples
-  late Color accent2 = const Color(0x331A1A2E);          // Secondary at 20 % — subtle overlays
-  late Color accent3 = const Color(0x33FFB3BB);          // Tertiary at 20 % — chip backgrounds
-  late Color accent4 = const Color(0xFFF0F0F0);          // Very light gray — card / surface backgrounds
-  late Color success = const Color(0xFF4CAF50);          // Standard green — success states
-  late Color warning = const Color(0xFFFFC107);          // Amber — warning states
-  late Color error = const Color(0xFFF0354A);            // Matches primary — validation errors
-  late Color info = const Color(0xFF2196F3);             // Blue — informational messages
+  // Light Mode — extracted from omnidesk.africa (hero, nav, unified-inbox
+  // mockup); pink set as primary per request
+  late Color primary = const Color(
+      0xFFEC4899); // Pink — gradient end on CTAs, "AI Intelligence" headline, agent reply bubble
+  late Color secondary = const Color(
+      0xFF7C3AED); // Violet — gradient start on CTAs ("Start Free Trial"), logo mark, nav "Book a Demo"
+  late Color tertiary = const Color(
+      0xFFA78BFA); // Light violet — "OMNICHANNEL CRM · BUILT FOR AFRICA" chip text, AI First Responder bubble
+  late Color alternate = const Color(
+      0xFFE9E4F5); // Soft lavender-gray — borders, dividers, mockup panel lines
+  late Color primaryText = const Color(
+      0xFF1A1625); // Near-black plum — headings ("Unified Support & AI Intelligence")
+  late Color secondaryText =
+      const Color(0xFF6B6779); // Muted gray-purple — body copy, timestamps
+  late Color primaryBackground =
+      const Color(0xFFFFFFFF); // Pure white — page background
+  late Color secondaryBackground = const Color(
+      0xFFFAF7FD); // Soft lavender wash — hero background, section surfaces
+  late Color accent1 =
+      const Color(0x1FEC4899); // Primary at 12 % — pressed states / ripples
+  late Color accent2 =
+      const Color(0x337C3AED); // Secondary at 20 % — subtle overlays
+  late Color accent3 = const Color(
+      0x33A78BFA); // Tertiary at 20 % — chip backgrounds, "URGENT"/"HIGH" tag containers
+  late Color accent4 =
+      const Color(0xFFF3EEFB); // Light lavender — card / surface backgrounds
+  late Color success = const Color(0xFF22C55E); // Green — success states
+  late Color warning =
+      const Color(0xFFF59E0B); // Amber — matches "HIGH" priority tag
+  late Color error =
+      const Color(0xFFEF4444); // Red — matches "URGENT" priority tag
+  late Color info = const Color(0xFF3B82F6); // Blue — informational messages
 }
-
 
 abstract class Typography {
   String get displayLargeFamily;
@@ -215,6 +237,11 @@ class ThemeTypography extends Typography {
 
   final FlutterFlowTheme theme;
 
+  // NOTE: the site's headline face reads as a tight-tracking geometric sans
+  // (something like Inter / Sora / a similar grotesque), not Poppins. I
+  // couldn't confirm the exact family without the site's CSS, so I've kept
+  // Poppins (matching the rest of your app) rather than guess wrong — swap
+  // this if you confirm the actual web font and want pixel-parity.
   String get displayLargeFamily => 'Poppins';
   bool get displayLargeIsCustom => false;
   TextStyle get displayLarge => GoogleFonts.poppins(
@@ -330,23 +357,31 @@ class DarkModeTheme extends FlutterFlowTheme {
   @Deprecated('Use tertiary instead')
   Color get tertiaryColor => tertiary;
 
-  // Dark Mode — complementary to the red-pink light brand
-  late Color primary = const Color(0xFFFF6B7A);          // Lighter red-pink — readable on dark
-  late Color secondary = const Color(0xFF7B8CDE);        // Soft periwinkle — secondary actions
-  late Color tertiary = const Color(0xFFFFB3BB);         // Pastel pink — highlights
-  late Color alternate = const Color(0xFF2E2E2E);        // Dark gray — borders / dividers
-  late Color primaryText = const Color(0xFFFFFFFF);      // Pure white — headings
-  late Color secondaryText = const Color(0xFF8E8E93);    // iOS-style gray — hints / secondary copy
-  late Color primaryBackground = const Color.fromARGB(255, 0, 0, 0); // True dark background
-  late Color secondaryBackground = const Color(0xFF1E1E1E); // Slightly lighter — cards / inputs
-  late Color accent1 = const Color(0x33FF6B7A);          // Primary at 20 % — ripples
-  late Color accent2 = const Color(0x337B8CDE);          // Secondary at 20 % — overlays
-  late Color accent3 = const Color(0x33FFB3BB);          // Tertiary at 20 % — chips
-  late Color accent4 = const Color(0xFF2A2A2A);          // Surface / card background
-  late Color success = const Color(0xFF34C759);          // iOS green
-  late Color warning = const Color(0xFFFFD60A);          // Bright yellow
-  late Color error = const Color(0xFFFF6B7A);            // Matches primary — errors
-  late Color info = const Color(0xFF0A84FF);             // iOS blue
+  // Dark Mode — true-black background per request, with the pink/violet
+  // brand gradient brightened for contrast on dark surfaces
+  late Color primary = const Color.fromARGB(255, 248, 63, 159); // Lighter pink — readable on black, CTAs, agent reply bubble
+  late Color secondary =
+      const Color(0xFFA78BFA); // Lighter violet — CTA gradient partner
+  late Color tertiary =
+      const Color(0xFFC4B5FD); // Pale violet — highlights, badges
+  late Color alternate =
+      const Color(0xFF211E26); // Dark gray — borders / dividers, just off black
+  late Color primaryText = const Color(0xFFFFFFFF); // White — headings
+  late Color secondaryText =
+      const Color(0xFF9C96AC); // Muted lavender-gray — hints / secondary copy
+  late Color primaryBackground =
+      const Color.fromARGB(255, 7, 6, 9); // Near-black plum — page background, just a touch lifted off pure black
+  late Color secondaryBackground = const Color(
+      0xFF000000); // True black — cards / inputs.
+  late Color accent1 = const Color(0x33F472B6); // Primary at 20 % — ripples
+  late Color accent2 = const Color(0x33A78BFA); // Secondary at 20 % — overlays
+  late Color accent3 = const Color(0x33C4B5FD); // Tertiary at 20 % — chips
+  late Color accent4 = const Color(
+      0xFF181418); // Surface / card background — dark charcoal, one step off black
+  late Color success = const Color.fromARGB(255, 6, 130, 47); // Green — success states
+  late Color warning = const Color(0xFFFBBF24); // Amber — matches "HIGH" tag
+  late Color error = const Color.fromARGB(255, 201, 24, 24); // Red — matches "URGENT" tag
+  late Color info = const Color(0xFF60A5FA); // Blue — informational messages
 }
 
 extension TextStyleHelper on TextStyle {

@@ -28,7 +28,9 @@ class FlutterFlowCalendar extends StatefulWidget {
     this.selectedDateStyle,
     this.titleStyle,
     this.rowHeight,
-    this.locale, required Container Function(dynamic context, dynamic date) dayBuilder, required Null Function(dynamic focusedMonth) onPageChange,
+    this.locale,
+    required Container Function(dynamic context, dynamic date) dayBuilder,
+    required Null Function(dynamic focusedMonth) onPageChange,
   });
 
   final bool weekFormat;
