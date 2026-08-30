@@ -10,21 +10,25 @@ void main() {
 
     final notifier = container.read(chatsPageProvider.notifier);
     final initial = container.read(chatsPageProvider);
+    List<ChatConversation> filtered() => filterChatConversations(
+          container
+              .read(conversationStoreProvider)
+              .map((thread) => thread.conversation),
+          container.read(chatsPageProvider),
+        );
     expect(initial.channel, ChatChannel.whatsapp);
-    expect(initial.filteredConversations, hasLength(5));
+    expect(filtered(), hasLength(4));
 
     notifier.applyFilters(
       type: ChatConversationType.groups,
       status: ChatConversationStatus.open,
     );
-    expect(
-        container.read(chatsPageProvider).filteredConversations, hasLength(2));
+    expect(filtered(), hasLength(1));
 
     notifier.setSearchQuery('wika');
-    expect(container.read(chatsPageProvider).filteredConversations.single.name,
-        'Wika School');
+    expect(filtered().single.name, 'Wika School');
 
-    notifier.selectChannel(ChatChannel.liveChat);
+    notifier.selectChannel(ChatChannel.widgetChat);
     expect(container.read(chatsPageProvider).subtitle, '1 open · 73 resolved');
     expect(container.read(chatsPageProvider).query, isEmpty);
     expect(container.read(chatsPageProvider).type, ChatConversationType.all);
@@ -41,14 +45,14 @@ void main() {
 
     expect(find.text('WhatsApp'), findsOneWidget);
     expect(find.text('kirawafinance'), findsOneWidget);
-    await tester.tap(find.text('Live Chat'));
+    await tester.tap(find.text('Widget Chat'));
     await tester.pumpAndSettle();
     expect(find.text('1 open · 73 resolved'), findsOneWidget);
     expect(find.text('Phyllis'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Search'));
     await tester.pumpAndSettle();
-    expect(find.text('Search live chats'), findsOneWidget);
+    expect(find.text('Search Widget Chats'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'David');
     await tester.pump();
     expect(find.text('David'), findsWidgets);

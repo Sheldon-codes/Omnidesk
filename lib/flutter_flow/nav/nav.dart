@@ -46,6 +46,7 @@ GoRouter goRouter(Ref ref) {
         return location == HomePageWidget.routePath ||
                 location == PhonePageWidget.routePath ||
                 location == ChatsPageWidget.routePath ||
+                location.startsWith('/chats/') ||
                 location == EmailPageWidget.routePath ||
                 location == TicketsPageWidget.routePath ||
                 location == ChangePasswordPageWidget.routePath ||
@@ -114,6 +115,13 @@ GoRouter goRouter(Ref ref) {
         path: ChatsPageWidget.routePath,
         builder: (_, __) => const NavBarPage(
           initialPage: ChatsPageWidget.routeName,
+        ),
+      ),
+      GoRoute(
+        name: ConversationRoomPageWidget.routeName,
+        path: ConversationRoomPageWidget.routePath,
+        builder: (_, state) => ConversationRoomPageWidget(
+          conversationId: state.pathParameters['conversationId']!,
         ),
       ),
       GoRoute(

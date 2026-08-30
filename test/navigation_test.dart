@@ -145,6 +145,36 @@ void main() {
     expect(router.routerDelegate.currentConfiguration.uri.path,
         HomePageWidget.routePath);
   });
+
+  testWidgets('authenticated users can open a standalone conversation room',
+      (tester) async {
+    final auth = AuthState(
+      status: AuthStatus.authenticated,
+      session: AuthSession(
+        accessToken: 'test-token',
+        tokenType: 'Bearer',
+        user: const AuthUser(
+          id: 'user-1',
+          name: 'Test User',
+          email: 'test@example.com',
+          role: 'agent',
+          isSuperAdmin: false,
+          status: 'active',
+        ),
+      ),
+    );
+    final onboarding =
+        const OnboardingState(initialized: true, completed: true);
+    final router = _router(auth: auth, onboarding: onboarding);
+    await _attachRouter(tester, router, auth: auth, onboarding: onboarding);
+    router.go('/chats/aloise-whatsapp');
+    await _pumpRoute(tester);
+
+    expect(router.routerDelegate.currentConfiguration.uri.path,
+        '/chats/aloise-whatsapp');
+    expect(find.text('Aloise Obaga Kaizen School'), findsOneWidget);
+    expect(find.text('Home'), findsNothing);
+  });
 }
 
 Future<void> _attachRouter(

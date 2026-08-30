@@ -2,6 +2,7 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
@@ -70,6 +71,7 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(chatsPageProvider);
+    final threads = ref.watch(conversationStoreProvider);
     final theme = FlutterFlowTheme.of(context);
     final topPadding = MediaQuery.paddingOf(context).top;
     final filtersActive = state.type != ChatConversationType.all ||
@@ -106,13 +108,20 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
                 focusNode: _searchFocusNode,
                 hintText: state.channel == ChatChannel.whatsapp
                     ? 'Search WhatsApp chats'
-                    : 'Search live chats',
+                    : 'Search Widget Chats',
                 onChanged: ref.read(chatsPageProvider.notifier).setSearchQuery,
                 onClose: _closeSearch,
                 theme: theme,
               ),
             ),
-          ..._conversationSliver(state, theme),
+          ..._conversationSliver(
+            filterChatConversations(
+              threads.map((thread) => thread.conversation),
+              state,
+            ),
+            state,
+            theme,
+          ),
           const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ],
       ),
@@ -120,10 +129,10 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
   }
 
   List<Widget> _conversationSliver(
+    List<ChatConversation> conversations,
     ChatsPageState state,
     FlutterFlowTheme theme,
   ) {
-    final conversations = state.filteredConversations;
     if (conversations.isEmpty) {
       return [
         _EmptyChats(
@@ -149,6 +158,7 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
               semanticsLabel:
                   '${conversation.name}, ${conversation.preview}, ${conversation.time}',
               onAction: () => _showComingSoon(context),
+              onOpen: () => context.push('/chats/${conversation.id}'),
               child: _ConversationRow(
                 conversation: conversation,
                 theme: theme,
@@ -350,9 +360,9 @@ class _ChatsTabsDelegate extends SliverPersistentHeaderDelegate {
                   theme: theme,
                 ),
                 _ChatTabButton(
-                  label: 'Live Chat',
-                  selected: selected == ChatChannel.liveChat,
-                  onTap: () => onSelected(ChatChannel.liveChat),
+                  label: 'Widget Chat',
+                  selected: selected == ChatChannel.widgetChat,
+                  onTap: () => onSelected(ChatChannel.widgetChat),
                   theme: theme,
                 ),
               ],
@@ -630,12 +640,14 @@ class _ChatSwipeRow extends StatefulWidget {
     required this.theme,
     required this.child,
     required this.onAction,
+    required this.onOpen,
     required this.semanticsLabel,
   });
 
   final FlutterFlowTheme theme;
   final Widget child;
   final VoidCallback onAction;
+  final VoidCallback onOpen;
   final String semanticsLabel;
 
   @override
@@ -696,7 +708,7 @@ class _ChatSwipeRowState extends State<_ChatSwipeRow> {
               child: Material(
                 color: widget.theme.primaryBackground,
                 child: InkWell(
-                  onTap: _offset == 0 ? null : _reset,
+                  onTap: _offset == 0 ? widget.onOpen : _reset,
                   child: widget.child,
                 ),
               ),
