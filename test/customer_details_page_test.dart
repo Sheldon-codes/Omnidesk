@@ -8,8 +8,7 @@ void main() {
   test('details provider resolves customer and local history', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);
-    final state =
-        container.read(customerDetailNotifierProvider(customerId: 'nana'));
+    final state = container.read(customerDetailProvider(customerId: 'nana'));
 
     expect(state.customer?.name, 'Nana');
     expect(state.tickets, isNotEmpty);
@@ -19,8 +18,8 @@ void main() {
   test('fully populated customer fixture exposes all detail sections', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);
-    final state = container
-        .read(customerDetailNotifierProvider(customerId: 'aloise-obaga'));
+    final state =
+        container.read(customerDetailProvider(customerId: 'aloise-obaga'));
 
     expect(state.customer?.email, 'aloise.obaga@example.com');
     expect(state.customer?.phone, '+254723506031');
@@ -33,8 +32,7 @@ void main() {
   test('details provider returns not found for unknown customer', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);
-    final state =
-        container.read(customerDetailNotifierProvider(customerId: 'missing'));
+    final state = container.read(customerDetailProvider(customerId: 'missing'));
 
     expect(state.notFound, isTrue);
     expect(state.tickets, isEmpty);

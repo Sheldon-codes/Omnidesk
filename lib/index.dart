@@ -15,3 +15,5 @@ export '/pages/customer_details_page/customer_details_page_widget.dart';
 export '/pages/reset_password_page/reset_password_page_widget.dart';
 export '/pages/splash_screen/splash_screen_widget.dart';
 export '/pages/tickets_page/tickets_page_widget.dart';
+export '/pages/ticket_details_page/ticket_details_page_widget.dart';
+export '/pages/ticket_editor_page/ticket_editor_page_widget.dart';

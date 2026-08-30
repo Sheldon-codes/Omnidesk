@@ -63,8 +63,7 @@ class _CustomerEditorPageWidgetState
   @override
   Widget build(BuildContext context) {
     final theme = FlutterFlowTheme.of(context);
-    final provider =
-        customerEditorNotifierProvider(customerId: widget.customerId);
+    final provider = customerEditorProvider(customerId: widget.customerId);
     final state = ref.watch(provider);
     final notifier = ref.read(provider.notifier);
     if (!_isEditing &&

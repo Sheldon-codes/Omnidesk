@@ -4,6 +4,7 @@ import 'dart:ui' show ImageFilter, lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
@@ -93,6 +94,7 @@ class _TicketsPageWidgetState extends ConsumerState<TicketsPageWidget> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(ticketsPageProvider);
+    final store = ref.watch(ticketStoreProvider);
     final theme = FlutterFlowTheme.of(context);
     final topPadding = MediaQuery.paddingOf(context).top;
     return Scaffold(
@@ -106,6 +108,7 @@ class _TicketsPageWidgetState extends ConsumerState<TicketsPageWidget> {
                   topPadding: topPadding,
                   searchActive: state.searchActive,
                   filtersActive: state.filtersActive,
+                  subtitle: state.subtitleFor(store.tickets),
                   onSearch: state.searchActive ? _closeSearch : _openSearch,
                   onFilter: _openFilters)),
           SliverPersistentHeader(
@@ -123,15 +126,33 @@ class _TicketsPageWidgetState extends ConsumerState<TicketsPageWidget> {
                         ref.read(ticketsPageProvider.notifier).setSearchQuery,
                     onClose: _closeSearch,
                     theme: theme)),
-          _ticketList(state, theme),
+          _ticketList(state, store, theme),
           const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'ticket-create',
+        tooltip: 'Create ticket',
+        onPressed: () => context.push('/tickets/new'),
+        backgroundColor: theme.primary,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text('Create ticket'),
       ),
     );
   }
 
-  Widget _ticketList(TicketsPageState state, FlutterFlowTheme theme) {
-    final tickets = state.filteredTickets;
+  Widget _ticketList(
+      TicketsPageState state, TicketStoreState store, FlutterFlowTheme theme) {
+    if (store.loading && store.tickets.isEmpty) {
+      return const SliverFillRemaining(
+          child: Center(child: CircularProgressIndicator()));
+    }
+    if (store.failure != null && store.tickets.isEmpty) {
+      return const SliverFillRemaining(
+          child: Center(child: Text('Unable to load tickets')));
+    }
+    final tickets = state.filteredTicketsFor(store.tickets);
     if (tickets.isEmpty) {
       return SliverToBoxAdapter(
           child: Padding(
@@ -155,7 +176,10 @@ class _TicketsPageWidgetState extends ConsumerState<TicketsPageWidget> {
                   theme: theme,
                   status: ticket.status,
                   onAction: _showComingSoon,
-                  child: _TicketRow(ticket: ticket, theme: theme));
+                  child: _TicketRow(
+                      ticket: ticket,
+                      theme: theme,
+                      onTap: () => context.push('/tickets/${ticket.id}')));
             }));
   }
 }
@@ -166,12 +190,14 @@ class _TicketHeaderDelegate extends SliverPersistentHeaderDelegate {
       required this.topPadding,
       required this.searchActive,
       required this.filtersActive,
+      required this.subtitle,
       required this.onSearch,
       required this.onFilter});
   final FlutterFlowTheme theme;
   final double topPadding;
   final bool searchActive;
   final bool filtersActive;
+  final String subtitle;
   final VoidCallback onSearch;
   final VoidCallback onFilter;
   @override
@@ -207,7 +233,7 @@ class _TicketHeaderDelegate extends SliverPersistentHeaderDelegate {
               child: IgnorePointer(
                   child: Opacity(
                       opacity: subtitleOpacity,
-                      child: Text('7 open · 2 overdue',
+                      child: Text(subtitle,
                           style: theme.bodyMedium.override(
                               fontFamily: theme.bodyMediumFamily,
                               color: theme.secondaryText,
@@ -252,6 +278,7 @@ class _TicketHeaderDelegate extends SliverPersistentHeaderDelegate {
   bool shouldRebuild(covariant _TicketHeaderDelegate oldDelegate) =>
       searchActive != oldDelegate.searchActive ||
       filtersActive != oldDelegate.filtersActive ||
+      subtitle != oldDelegate.subtitle ||
       theme != oldDelegate.theme;
 }
 
@@ -269,7 +296,6 @@ class _TicketTabsDelegate extends SliverPersistentHeaderDelegate {
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
     const items = [
-      (null, 'All'),
       (TicketStatus.open, 'Open'),
       (TicketStatus.inProgress, 'In progress'),
       (TicketStatus.overdue, 'Overdue'),
@@ -382,11 +408,14 @@ class _TicketSearchField extends StatelessWidget {
 }
 
 class _TicketRow extends StatelessWidget {
-  const _TicketRow({required this.ticket, required this.theme});
+  const _TicketRow(
+      {required this.ticket, required this.theme, required this.onTap});
   final TicketRecord ticket;
   final FlutterFlowTheme theme;
+  final VoidCallback onTap;
   String get _source => switch (ticket.source) {
-        TicketSource.widget => 'Widget',
+        TicketSource.manual => 'Manual',
+        TicketSource.widget => 'Widget Chat',
         TicketSource.call => 'Call',
         TicketSource.whatsapp => 'WhatsApp',
         TicketSource.email => 'Email'
@@ -410,56 +439,59 @@ class _TicketRow extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
       label:
           '${ticket.id}, ${ticket.subject}, ${ticket.customer}, ${_statusLabel()}',
-      child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Text(ticket.id,
-                      style: theme.bodySmall.override(
-                          fontFamily: theme.bodySmallFamily,
-                          color: theme.primary,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 4),
-                  Text(ticket.subject,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.bodyMedium.override(
-                          fontFamily: theme.bodyMediumFamily,
-                          color: theme.primaryText,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 4),
-                  Text(ticket.customer,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.bodySmall.override(
-                          fontFamily: theme.bodySmallFamily,
-                          color: theme.secondaryText)),
-                  const SizedBox(height: 5),
-                  Text(
-                      [
-                        _source,
-                        ticket.department,
-                        _priority,
-                        if (ticket.sla != null) ticket.sla!
-                      ].join(' · '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.labelSmall.override(
-                          fontFamily: theme.labelSmallFamily,
-                          color: theme.secondaryText))
-                ])),
-            const SizedBox(width: 10),
-            Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(_statusLabel(),
-                    style: theme.labelSmall.override(
-                        fontFamily: theme.labelSmallFamily,
-                        color: _statusColor(),
-                        fontWeight: FontWeight.w600)))
-          ])));
+      child: InkWell(
+          onTap: onTap,
+          child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              child:
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Text(ticket.id,
+                          style: theme.bodySmall.override(
+                              fontFamily: theme.bodySmallFamily,
+                              color: theme.primary,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 4),
+                      Text(ticket.subject,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.bodyMedium.override(
+                              fontFamily: theme.bodyMediumFamily,
+                              color: theme.primaryText,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 4),
+                      Text(ticket.customer,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.bodySmall.override(
+                              fontFamily: theme.bodySmallFamily,
+                              color: theme.secondaryText)),
+                      const SizedBox(height: 5),
+                      Text(
+                          [
+                            _source,
+                            ticket.department,
+                            _priority,
+                            if (ticket.sla != null) ticket.sla!
+                          ].join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.labelSmall.override(
+                              fontFamily: theme.labelSmallFamily,
+                              color: theme.secondaryText))
+                    ])),
+                const SizedBox(width: 10),
+                Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(_statusLabel(),
+                        style: theme.labelSmall.override(
+                            fontFamily: theme.labelSmallFamily,
+                            color: _statusColor(),
+                            fontWeight: FontWeight.w600)))
+              ]))));
 }
 
 class _TicketSwipeRow extends StatefulWidget {

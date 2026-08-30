@@ -6,10 +6,11 @@ part of 'customer_details_page_model.dart';
 // RiverpodGenerator
 // **************************************************************************
 
+// GENERATED CODE - DO NOT MODIFY BY HAND
 // ignore_for_file: type=lint, type=warning
 
 @ProviderFor(CustomerDetailNotifier)
-final customerDetailNotifierProvider = CustomerDetailNotifierFamily._();
+final customerDetailProvider = CustomerDetailNotifierFamily._();
 
 final class CustomerDetailNotifierProvider
     extends $NotifierProvider<CustomerDetailNotifier, CustomerDetailState> {
@@ -18,7 +19,7 @@ final class CustomerDetailNotifierProvider
       required String super.argument})
       : super(
           retry: null,
-          name: r'customerDetailNotifierProvider',
+          name: r'customerDetailProvider',
           isAutoDispose: true,
           dependencies: null,
           $allTransitiveDependencies: null,
@@ -28,51 +29,68 @@ final class CustomerDetailNotifierProvider
   String debugGetCreateSourceHash() => _$customerDetailNotifierHash();
 
   @override
+  String toString() {
+    return r'customerDetailProvider'
+        ''
+        '($argument)';
+  }
+
+  @$internal
+  @override
   CustomerDetailNotifier create() => CustomerDetailNotifier();
 
-  @override
-  Override overrideWithValue(CustomerDetailState value) => $ProviderOverride(
-        origin: this,
-        providerOverride: $SyncValueProvider<CustomerDetailState>(value),
-      );
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(CustomerDetailState value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<CustomerDetailState>(value),
+    );
+  }
 
   @override
-  bool operator ==(Object other) =>
-      other is CustomerDetailNotifierProvider && other.argument == argument;
+  bool operator ==(Object other) {
+    return other is CustomerDetailNotifierProvider &&
+        other.argument == argument;
+  }
 
   @override
-  int get hashCode => argument.hashCode;
+  int get hashCode {
+    return argument.hashCode;
+  }
 }
 
 String _$customerDetailNotifierHash() =>
-    r'c71a6a49b3ce46e9a7f3b0d4a1e5c8f2d6b9e0a4';
+    r'52f4918f2e242ecdf472a6753e4e4503f099a4a1';
 
 final class CustomerDetailNotifierFamily extends $Family
     with
         $ClassFamilyOverride<CustomerDetailNotifier, CustomerDetailState,
-            CustomerDetailState, String, String> {
+            CustomerDetailState, CustomerDetailState, String> {
   CustomerDetailNotifierFamily._()
       : super(
           retry: null,
-          name: r'customerDetailNotifierProvider',
+          name: r'customerDetailProvider',
           dependencies: null,
           $allTransitiveDependencies: null,
           isAutoDispose: true,
         );
 
-  CustomerDetailNotifierProvider call({required String customerId}) =>
+  CustomerDetailNotifierProvider call({
+    required String customerId,
+  }) =>
       CustomerDetailNotifierProvider._(argument: customerId, from: this);
 
   @override
-  String toString() => r'customerDetailNotifierProvider';
+  String toString() => r'customerDetailProvider';
 }
 
 abstract class _$CustomerDetailNotifier extends $Notifier<CustomerDetailState> {
   late final _$args = ref.$arg as String;
   String get customerId => _$args;
 
-  CustomerDetailState build({required String customerId});
-
+  CustomerDetailState build({
+    required String customerId,
+  });
   @$mustCallSuper
   @override
   void runBuild() {
@@ -82,6 +100,10 @@ abstract class _$CustomerDetailNotifier extends $Notifier<CustomerDetailState> {
         CustomerDetailState,
         Object?,
         Object?>;
-    element.handleCreate(ref, () => build(customerId: _$args));
+    element.handleCreate(
+        ref,
+        () => build(
+              customerId: _$args,
+            ));
   }
 }

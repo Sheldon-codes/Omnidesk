@@ -6,6 +6,7 @@ part of 'call_session_controller.dart';
 // RiverpodGenerator
 // **************************************************************************
 
+// GENERATED CODE - DO NOT MODIFY BY HAND
 // ignore_for_file: type=lint, type=warning
 
 @ProviderFor(CallSessionController)
@@ -31,19 +32,20 @@ final class CallSessionControllerProvider
   @override
   CallSessionController create() => CallSessionController();
 
-  @override
-  Override overrideWithValue(CallSessionState value) => $ProviderOverride(
-        origin: this,
-        providerOverride: $SyncValueProvider<CallSessionState>(value),
-      );
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(CallSessionState value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<CallSessionState>(value),
+    );
+  }
 }
 
 String _$callSessionControllerHash() =>
-    r'0bdc80fe5eb52c11ed198c97b63f11e8d2be675c';
+    r'163c47e9670a3a717d72bc98888f8f5ca2da8f7b';
 
 abstract class _$CallSessionController extends $Notifier<CallSessionState> {
   CallSessionState build();
-
   @$mustCallSuper
   @override
   void runBuild() {

@@ -41,7 +41,7 @@ final class ConversationStoreProvider
   }
 }
 
-String _$conversationStoreHash() => r'78cdcab9668f0422df3bcf98d06ddf55bf8e9998';
+String _$conversationStoreHash() => r'f029fabced9b51909109e251e111b72644f01a4a';
 
 abstract class _$ConversationStore extends $Notifier<List<ConversationThread>> {
   List<ConversationThread> build();

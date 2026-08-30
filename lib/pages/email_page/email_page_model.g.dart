@@ -41,7 +41,7 @@ final class EmailPageNotifierProvider
   }
 }
 
-String _$emailPageNotifierHash() => r'6c8c69d657b6607be0b6025abd645bb4d5050efd';
+String _$emailPageNotifierHash() => r'ab3c8efab6010a84423c7aa8afbd83cf39d18357';
 
 abstract class _$EmailPageNotifier extends $Notifier<EmailPageState> {
   EmailPageState build();

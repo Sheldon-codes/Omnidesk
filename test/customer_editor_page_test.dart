@@ -8,8 +8,8 @@ void main() {
   test('customer editor validates and stores a new customer', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);
-    final notifier = container
-        .read(customerEditorNotifierProvider(customerId: null).notifier);
+    final notifier =
+        container.read(customerEditorProvider(customerId: null).notifier);
     notifier.setName('New Customer');
     notifier.setEmail('customer@example.com');
     final record = notifier.submit();

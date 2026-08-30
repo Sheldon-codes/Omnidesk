@@ -48,16 +48,12 @@ void main() {
     expect(find.text('Tickets'), findsOneWidget);
     expect(find.text('7 open · 2 overdue'), findsOneWidget);
     expect(find.text('DGKSL-392'), findsOneWidget);
-    expect(find.text('All'), findsOneWidget);
+    expect(find.text('All'), findsNothing);
     expect(find.text('Open'), findsWidgets);
     expect(find.text('In progress'), findsOneWidget);
     expect(find.text('Overdue'), findsOneWidget);
     expect(find.text('Escalated'), findsOneWidget);
     expect(find.text('Resolved'), findsOneWidget);
-
-    await tester.tap(find.text('All'));
-    await tester.pumpAndSettle();
-    expect(find.text('DGKSL-378'), findsOneWidget);
 
     await tester.tap(find.text('Overdue').first);
     await tester.pumpAndSettle();
@@ -78,7 +74,6 @@ void main() {
     expect(find.text('Filter tickets'), findsOneWidget);
     expect(find.text('Priority'), findsOneWidget);
     expect(find.text('Department'), findsOneWidget);
-    expect(find.text('Category'), findsOneWidget);
     expect(find.text('Apply'), findsOneWidget);
   });
 

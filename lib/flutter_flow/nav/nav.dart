@@ -50,6 +50,7 @@ GoRouter goRouter(Ref ref) {
                 location == EmailPageWidget.routePath ||
                 location.startsWith('/email/') ||
                 location == TicketsPageWidget.routePath ||
+                location.startsWith('/tickets/') ||
                 location == ChangePasswordPageWidget.routePath ||
                 location == '/customers/new' ||
                 location.startsWith('/customers/')
@@ -167,6 +168,25 @@ GoRouter goRouter(Ref ref) {
             'open' => TicketStatus.open,
             _ => null,
           },
+        ),
+      ),
+      GoRoute(
+        name: 'TicketCreate',
+        path: '/tickets/new',
+        builder: (_, __) => const TicketEditorPageWidget(),
+      ),
+      GoRoute(
+        name: 'TicketEdit',
+        path: '/tickets/:ticketId/edit',
+        builder: (_, state) => TicketEditorPageWidget(
+          ticketId: state.pathParameters['ticketId']!,
+        ),
+      ),
+      GoRoute(
+        name: TicketDetailsPageWidget.routeName,
+        path: TicketDetailsPageWidget.routePath,
+        builder: (_, state) => TicketDetailsPageWidget(
+          ticketId: state.pathParameters['ticketId']!,
         ),
       ),
       GoRoute(

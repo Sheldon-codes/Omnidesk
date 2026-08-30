@@ -22,8 +22,7 @@ class CustomerDetailsPageWidget extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = FlutterFlowTheme.of(context);
-    final state =
-        ref.watch(customerDetailNotifierProvider(customerId: customerId));
+    final state = ref.watch(customerDetailProvider(customerId: customerId));
     if (state.notFound) {
       return Scaffold(
         backgroundColor: theme.primaryBackground,
