@@ -6,6 +6,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import '../../components/home_app_bar/home_app_bar.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../services/auth_session_controller.dart';
+import 'home_dashboard_store.dart';
 
 export 'home_page_model.dart';
 
@@ -18,6 +19,9 @@ class HomePageWidget extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authSessionControllerProvider).session!.user;
     final theme = FlutterFlowTheme.of(context);
+    final dashboard = ref.watch(homeDashboardProvider);
+    final stats = dashboard.stats;
+    final greeting = stats?.greeting;
     return Scaffold(
       backgroundColor: theme.secondaryBackground,
       appBar: AppBar(
@@ -58,7 +62,7 @@ class HomePageWidget extends ConsumerWidget {
                         icon: IconsaxPlusBroken.danger,
                         iconColor: theme.warning,
                         title: 'Escalated',
-                        count: 7,
+                        count: greeting?.urgentCount ?? 0,
                         onTap: () => context.go('/tickets?filter=escalated'),
                       ),
                       SizedBox(
@@ -69,7 +73,7 @@ class HomePageWidget extends ConsumerWidget {
                         icon: IconsaxPlusBroken.clock,
                         iconColor: theme.error,
                         title: 'Overdue',
-                        count: 7,
+                        count: stats?.overdue ?? greeting?.overdueCount ?? 0,
                         onTap: () => context.go('/tickets?filter=overdue'),
                       ),
                     ],
@@ -86,9 +90,11 @@ class HomePageWidget extends ConsumerWidget {
                     child: _ChannelCell(
                       theme: theme,
                       icon: IconsaxPlusBroken.call,
-                      value: '9',
-                      label: 'Calls · 3 missed',
-                      overdueLabel: '3 missed',
+                      value: '${stats?.channels.calls.total ?? 0}',
+                      label: 'Calls · ${stats?.channels.calls.open ?? 0} open',
+                      overdueLabel: stats == null
+                          ? null
+                          : '${stats.channels.calls.overdue} overdue',
                       onTap: () => context.go('/phone'),
                     ),
                   ),
@@ -97,9 +103,12 @@ class HomePageWidget extends ConsumerWidget {
                     child: _ChannelCell(
                       theme: theme,
                       icon: IconsaxPlusBroken.messages,
-                      value: '3',
-                      label: 'Chats · unread',
-                      overdueLabel: '3 overdue',
+                      value:
+                          '${(stats?.channels.whatsapp.total ?? 0) + (stats?.channels.widget.total ?? 0)}',
+                      label: 'Chats · ${stats?.unreadMessages ?? 0} unread',
+                      overdueLabel: stats == null
+                          ? null
+                          : '${stats.channels.whatsapp.overdue + stats.channels.widget.overdue} overdue',
                       onTap: () => context.go('/chats'),
                     ),
                   ),
@@ -113,9 +122,11 @@ class HomePageWidget extends ConsumerWidget {
                     child: _ChannelCell(
                       theme: theme,
                       icon: IconsaxPlusBroken.sms,
-                      value: '11',
-                      label: 'Email · unread',
-                      overdueLabel: '4 overdue',
+                      value: '${stats?.channels.email.total ?? 0}',
+                      label: 'Email · ${stats?.unreadMessages ?? 0} unread',
+                      overdueLabel: stats == null
+                          ? null
+                          : '${stats.channels.email.overdue} overdue',
                       onTap: () => context.go('/email'),
                     ),
                   ),
@@ -124,9 +135,10 @@ class HomePageWidget extends ConsumerWidget {
                     child: _ChannelCell(
                       theme: theme,
                       icon: IconsaxPlusBroken.ticket,
-                      value: '8',
+                      value: '${stats?.myOpen ?? 0}',
                       label: 'Tickets · open',
-                      overdueLabel: '7 overdue',
+                      overdueLabel:
+                          stats == null ? null : '${stats.overdue} overdue',
                       onTap: () => context.go('/tickets'),
                     ),
                   ),
@@ -180,33 +192,29 @@ class HomePageWidget extends ConsumerWidget {
                 ),
                 child: Column(
                   children: [
-                    _TicketRow(
-                      theme: theme,
-                      ticketId: 'DGKSL-802',
-                      status: 'Escalated',
-                      statusColor: theme.error,
-                      subject: 'Billing dispute follow-up needed',
-                      meta: 'High · SLA 2h 10m',
-                      onTap: () {},
-                    ),
-                    _TicketRow(
-                      theme: theme,
-                      ticketId: 'DGKSL-378',
-                      status: 'Overdue',
-                      statusColor: theme.error,
-                      subject: 'Technical support call from caller 1967',
-                      meta: 'Medium · SLA 23h 55m',
-                      onTap: () {},
-                    ),
-                    _TicketRow(
-                      theme: theme,
-                      ticketId: 'DGKSL-376',
-                      status: 'Open',
-                      statusColor: theme.secondaryText,
-                      subject: 'Good morning Hillary — Nana',
-                      meta: 'Low priority',
-                      onTap: () {},
-                    ),
+                    if (dashboard.loading && dashboard.tickets.isEmpty)
+                      const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: CircularProgressIndicator())
+                    else if (dashboard.tickets.isEmpty)
+                      Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text('No assigned tickets',
+                              style: theme.bodySmall
+                                  .copyWith(color: theme.secondaryText)))
+                    else
+                      ...dashboard.tickets.take(3).map((ticket) => _TicketRow(
+                            theme: theme,
+                            ticketId: ticket.displayNumber,
+                            status:
+                                ticket.isOverdue ? 'Overdue' : ticket.status,
+                            statusColor: ticket.isOverdue
+                                ? theme.error
+                                : theme.secondaryText,
+                            subject: ticket.subject,
+                            meta: '${ticket.priority} · ${ticket.customerName}',
+                            onTap: () => context.push('/tickets/${ticket.id}'),
+                          )),
                   ],
                 ),
               ),
@@ -222,28 +230,36 @@ class HomePageWidget extends ConsumerWidget {
                 ),
                 child: Column(
                   children: [
-                    _ActivityRow(
-                      theme: theme,
-                      icon: IconsaxPlusBroken.call_incoming,
-                      text: 'Ann Riena Admin · 0790584913',
-                      time: '18 min ago · 8:46',
-                      isLast: false,
-                    ),
-                    _ActivityRow(
-                      theme: theme,
-                      icon: IconsaxPlusBroken.call_slash,
-                      iconColor: theme.error,
-                      text: 'Missed call · Riena School',
-                      time: '33 min ago',
-                      isLast: false,
-                    ),
-                    _ActivityRow(
-                      theme: theme,
-                      icon: IconsaxPlusBroken.sms,
-                      text: 'New email · Fwd: School Management...',
-                      time: '1 hour ago',
-                      isLast: true,
-                    ),
+                    if ((stats?.recentCallers.isEmpty ?? true) &&
+                        (stats?.recentCalls.isEmpty ?? true))
+                      Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text('No recent activity',
+                              style: theme.bodySmall
+                                  .copyWith(color: theme.secondaryText)))
+                    else ...[
+                      ...?stats?.recentCallers
+                          .take(2)
+                          .map((caller) => _ActivityRow(
+                                theme: theme,
+                                icon: IconsaxPlusBroken.call_incoming,
+                                text: '${caller.label} · ${caller.phone}',
+                                time: caller.timestamp?.toLocal().toString() ??
+                                    'Recent',
+                                isLast: false,
+                              )),
+                      ...?stats?.recentCalls.take(1).map((call) => _ActivityRow(
+                            theme: theme,
+                            icon: call.missed
+                                ? IconsaxPlusBroken.call_slash
+                                : IconsaxPlusBroken.call_incoming,
+                            iconColor: call.missed ? theme.error : null,
+                            text: call.label,
+                            time: call.timestamp?.toLocal().toString() ??
+                                'Recent',
+                            isLast: true,
+                          )),
+                    ],
                   ],
                 ),
               ),

@@ -68,6 +68,8 @@ class LocalAgentPresenceRepository implements AgentPresenceRepository {
 }
 
 final agentPresenceRepositoryProvider = Provider<AgentPresenceRepository>(
+  // The dashboard owns the live availability endpoint. Profile keeps its
+  // richer multi-state presence controls local until that API supports them.
   (ref) => LocalAgentPresenceRepository(),
 );
 

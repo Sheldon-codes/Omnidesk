@@ -15,6 +15,7 @@ import 'firebase_options.dart';
 import 'flutter_flow/flutter_flow_theme.dart';
 import 'flutter_flow/nav/nav.dart';
 import 'pages/home_page/home_page_widget.dart';
+import 'pages/home_page/home_dashboard_store.dart';
 import 'pages/phone_page/phone_page_widget.dart';
 import 'pages/profile_page/profile_page_model.dart';
 import 'pages/chats_page/chats_page_widget.dart';
@@ -73,6 +74,11 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
           'hasSession=${next.session != null}',
           name: 'MainApp',
         );
+        if (next.isAuthenticated) {
+          ref.read(homeDashboardProvider.notifier).startHeartbeat();
+        } else {
+          ref.read(homeDashboardProvider.notifier).stopHeartbeat();
+        }
       },
       fireImmediately: true,
     );
@@ -106,6 +112,12 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
       unawaited(
         ref.read(authSessionControllerProvider.notifier).refreshSession(),
       );
+      if (ref.read(authSessionControllerProvider).isAuthenticated) {
+        ref.read(homeDashboardProvider.notifier).startHeartbeat();
+      }
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      ref.read(homeDashboardProvider.notifier).stopHeartbeat();
     }
   }
 
