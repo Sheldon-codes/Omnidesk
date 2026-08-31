@@ -76,7 +76,7 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
         );
         if (next.isAuthenticated) {
           ref.read(homeDashboardProvider.notifier).startHeartbeat();
-        } else {
+        } else if (ref.exists(homeDashboardProvider)) {
           ref.read(homeDashboardProvider.notifier).stopHeartbeat();
         }
       },
@@ -114,6 +114,8 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
       );
       if (ref.read(authSessionControllerProvider).isAuthenticated) {
         ref.read(homeDashboardProvider.notifier).startHeartbeat();
+      } else if (ref.exists(homeDashboardProvider)) {
+        ref.read(homeDashboardProvider.notifier).stopHeartbeat();
       }
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {

@@ -89,8 +89,15 @@ class AuthSessionController extends _$AuthSessionController {
       }
 
       final provisionalSession = cachedSession ?? _placeholderSession(token);
-      state =
-          AuthState(status: AuthStatus.loading, session: provisionalSession);
+      // Publish the verified-once snapshot immediately so the router can
+      // restore the last workspace without waiting on the network. The
+      // `/auth/me` request below refreshes this state in the background.
+      state = AuthState(
+        status: AuthStatus.authenticated,
+        session: provisionalSession,
+        bootstrapComplete: true,
+        isOffline: true,
+      );
       final result = await ref.read(authRepositoryProvider).fetchMe();
       switch (result) {
         case AuthSuccess<AuthUser>(value: final user):
