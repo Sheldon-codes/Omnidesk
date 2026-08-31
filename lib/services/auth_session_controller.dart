@@ -3,7 +3,6 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../models/auth/auth_models.dart';
 import 'auth_repository.dart';
 import 'auth_token_store.dart';
-import 'app_runtime_config.dart';
 
 part 'auth_session_controller.g.dart';
 
@@ -16,36 +15,47 @@ enum AuthStatus {
 }
 
 class AuthState {
-  const AuthState(
-      {this.status = AuthStatus.bootstrapping,
-      this.session,
-      this.failure,
-      this.bootstrapComplete = false});
+  const AuthState({
+    this.status = AuthStatus.bootstrapping,
+    this.session,
+    this.failure,
+    this.bootstrapComplete = false,
+    this.isOffline = false,
+  });
+
   final AuthStatus status;
   final AuthSession? session;
   final AuthFailure? failure;
   final bool bootstrapComplete;
+  final bool isOffline;
+
   String? get accessToken => session?.accessToken;
   bool get isAuthenticated =>
       status == AuthStatus.authenticated && session != null;
-  AuthState copyWith(
-          {AuthStatus? status,
-          AuthSession? session,
-          AuthFailure? failure,
-          bool clearSession = false,
-          bool clearFailure = false,
-          bool? bootstrapComplete}) =>
+
+  AuthState copyWith({
+    AuthStatus? status,
+    AuthSession? session,
+    AuthFailure? failure,
+    bool clearSession = false,
+    bool clearFailure = false,
+    bool? bootstrapComplete,
+    bool? isOffline,
+  }) =>
       AuthState(
         status: status ?? this.status,
         session: clearSession ? null : (session ?? this.session),
         failure: clearFailure ? null : (failure ?? this.failure),
         bootstrapComplete: bootstrapComplete ?? this.bootstrapComplete,
+        isOffline: isOffline ?? this.isOffline,
       );
 }
 
 @Riverpod(keepAlive: true)
 class AuthSessionController extends _$AuthSessionController {
-  static const _demoAccessToken = 'ui-only-demo-token';
+  Future<void>? _bootstrapFuture;
+  Future<void>? _refreshFuture;
+  Future<void>? _invalidationFuture;
 
   @override
   AuthState build() {
@@ -53,76 +63,95 @@ class AuthSessionController extends _$AuthSessionController {
     return const AuthState();
   }
 
-  Future<void> bootstrap() async {
+  Future<void> bootstrap() {
+    final existing = _bootstrapFuture;
+    if (existing != null) return existing;
+    final task = _bootstrap();
+    _bootstrapFuture = task;
+    task.whenComplete(() {
+      if (identical(_bootstrapFuture, task)) _bootstrapFuture = null;
+    });
+    return task;
+  }
+
+  Future<void> _bootstrap() async {
     state = const AuthState(status: AuthStatus.bootstrapping);
-    final token = await ref.read(authTokenStoreProvider).readAccessToken();
-    if (token == null || token.isEmpty) {
+    try {
+      final store = ref.read(authTokenStoreProvider);
+      final cachedSession = await store.readSession();
+      final token = cachedSession?.accessToken ?? await store.readAccessToken();
+      if (token == null || token.isEmpty) {
+        state = const AuthState(
+          status: AuthStatus.unauthenticated,
+          bootstrapComplete: true,
+        );
+        return;
+      }
+
+      final provisionalSession = cachedSession ?? _placeholderSession(token);
+      state =
+          AuthState(status: AuthStatus.loading, session: provisionalSession);
+      final result = await ref.read(authRepositoryProvider).fetchMe();
+      switch (result) {
+        case AuthSuccess<AuthUser>(value: final user):
+          final verifiedSession = provisionalSession.withUser(user);
+          await store.saveSession(verifiedSession);
+          state = AuthState(
+            status: AuthStatus.authenticated,
+            session: verifiedSession,
+            bootstrapComplete: true,
+          );
+        case AuthFailureResult<AuthUser>(failure: final failure):
+          await _applyBootstrapFailure(failure, cachedSession);
+      }
+    } catch (_) {
       state = const AuthState(
-        status: AuthStatus.unauthenticated,
+        status: AuthStatus.error,
+        failure: AuthFailure(
+          type: AuthFailureType.unknown,
+          message: 'Unable to restore your saved session.',
+        ),
         bootstrapComplete: true,
       );
+    }
+  }
+
+  Future<void> _applyBootstrapFailure(
+    AuthFailure failure,
+    AuthSession? cachedSession,
+  ) async {
+    if (failure.statusCode == 401 || failure.statusCode == 403) {
+      await _clearLocalSession();
       return;
     }
-    if (uiOnlyMode) {
+    if (failure.type == AuthFailureType.network && cachedSession != null) {
       state = AuthState(
         status: AuthStatus.authenticated,
-        session: _demoSession,
+        session: cachedSession,
+        failure: failure,
         bootstrapComplete: true,
+        isOffline: true,
       );
       return;
     }
     state = AuthState(
-        status: AuthStatus.loading,
-        session: AuthSession(
-            accessToken: token,
-            tokenType: 'Bearer',
-            user: const AuthUser(
-                id: '',
-                name: '',
-                email: '',
-                role: 'agent',
-                isSuperAdmin: false,
-                status: 'active')),
-        bootstrapComplete: false);
-    final result = await ref.read(authRepositoryProvider).fetchMe();
-    switch (result) {
-      case AuthSuccess<AuthUser>(value: final user):
-        state = AuthState(
-            status: AuthStatus.authenticated,
-            session: state.session!.withUser(user),
-            bootstrapComplete: true);
-      case AuthFailureResult<AuthUser>(failure: final failure):
-        if (failure.statusCode == 401 || failure.statusCode == 403) {
-          await ref.read(authTokenStoreProvider).clear();
-          state = const AuthState(
-            status: AuthStatus.unauthenticated,
-            bootstrapComplete: true,
-          );
-        } else {
-          state = AuthState(
-            status: AuthStatus.error,
-            failure: failure,
-            bootstrapComplete: true,
-          );
-        }
-    }
+      status: AuthStatus.error,
+      failure: failure,
+      bootstrapComplete: true,
+    );
   }
 
-  Future<AuthFailure?> login(
-      {required String email, required String password}) async {
+  Future<AuthFailure?> login({
+    required String email,
+    required String password,
+  }) async {
     state = state.copyWith(
       status: AuthStatus.loading,
+      clearSession: true,
       clearFailure: true,
+      bootstrapComplete: true,
+      isOffline: false,
     );
-    if (uiOnlyMode) {
-      await ref.read(authTokenStoreProvider).saveAccessToken(_demoAccessToken);
-      state = AuthState(
-        status: AuthStatus.authenticated,
-        session: _demoSession,
-        bootstrapComplete: true,
-      );
-      return null;
-    }
     final result = await ref
         .read(authRepositoryProvider)
         .login(email: email, password: password);
@@ -134,13 +163,20 @@ class AuthSessionController extends _$AuthSessionController {
   }
 
   Future<AuthFailure?> _completeLogin(AuthSession session) async {
-    await ref.read(authTokenStoreProvider).saveAccessToken(session.accessToken);
-    state = AuthState(
-      status: AuthStatus.authenticated,
-      session: session,
-      bootstrapComplete: true,
-    );
-    return null;
+    try {
+      await ref.read(authTokenStoreProvider).saveSession(session);
+      state = AuthState(
+        status: AuthStatus.authenticated,
+        session: session,
+        bootstrapComplete: true,
+      );
+      return null;
+    } catch (_) {
+      return _fail(const AuthFailure(
+        type: AuthFailureType.unknown,
+        message: 'Unable to securely save your session. Please try again.',
+      ));
+    }
   }
 
   AuthFailure _fail(AuthFailure failure) {
@@ -152,36 +188,97 @@ class AuthSessionController extends _$AuthSessionController {
     return failure;
   }
 
-  static final _demoSession = AuthSession(
-    accessToken: _demoAccessToken,
-    tokenType: 'Bearer',
-    user: const AuthUser(
-      id: 'demo-user',
-      name: 'Demo Agent',
-      email: 'demo@omnidesk.local',
-      role: 'agent',
-      isSuperAdmin: false,
-      status: 'active',
-    ),
-  );
+  Future<void> refreshSession() {
+    final currentSession = state.session;
+    if (!state.isAuthenticated || currentSession == null) {
+      return Future.value();
+    }
+    final existing = _refreshFuture;
+    if (existing != null) return existing;
+    final task = _refresh(currentSession);
+    _refreshFuture = task;
+    task.whenComplete(() {
+      if (identical(_refreshFuture, task)) _refreshFuture = null;
+    });
+    return task;
+  }
+
+  Future<void> _refresh(AuthSession currentSession) async {
+    final result = await ref.read(authRepositoryProvider).fetchMe();
+    switch (result) {
+      case AuthSuccess<AuthUser>(value: final user):
+        final verifiedSession = currentSession.withUser(user);
+        try {
+          await ref.read(authTokenStoreProvider).saveSession(verifiedSession);
+          state = state.copyWith(
+            status: AuthStatus.authenticated,
+            session: verifiedSession,
+            clearFailure: true,
+            isOffline: false,
+          );
+        } catch (_) {
+          state = state.copyWith(
+            failure: const AuthFailure(
+              type: AuthFailureType.unknown,
+              message: 'Unable to securely update your session.',
+            ),
+          );
+        }
+      case AuthFailureResult<AuthUser>(failure: final failure):
+        if (failure.statusCode == 401 || failure.statusCode == 403) {
+          await invalidateSession();
+        } else {
+          state = state.copyWith(
+            failure: failure,
+            isOffline: failure.type == AuthFailureType.network,
+          );
+        }
+    }
+  }
 
   Future<void> logout({bool everywhere = false}) async {
-    if (!uiOnlyMode) {
+    try {
       await ref.read(authRepositoryProvider).logout(everywhere: everywhere);
+    } finally {
+      await invalidateSession();
     }
-    await ref.read(authTokenStoreProvider).clear();
-    state = const AuthState(
-      status: AuthStatus.unauthenticated,
-      bootstrapComplete: true,
-    );
   }
 
-  Future<void> invalidateSession() async {
-    if (state.status == AuthStatus.unauthenticated) return;
-    await ref.read(authTokenStoreProvider).clear();
-    state = const AuthState(
-      status: AuthStatus.unauthenticated,
-      bootstrapComplete: true,
-    );
+  Future<void> invalidateSession() {
+    final existing = _invalidationFuture;
+    if (existing != null) return existing;
+    final task = _clearLocalSession();
+    _invalidationFuture = task;
+    task.whenComplete(() {
+      if (identical(_invalidationFuture, task)) _invalidationFuture = null;
+    });
+    return task;
   }
+
+  Future<void> _clearLocalSession() async {
+    try {
+      await ref.read(authTokenStoreProvider).clear();
+    } catch (_) {
+      // The in-memory auth state must still be invalidated if secure storage
+      // is temporarily unavailable. A later login can repair persistence.
+    } finally {
+      state = const AuthState(
+        status: AuthStatus.unauthenticated,
+        bootstrapComplete: true,
+      );
+    }
+  }
+
+  AuthSession _placeholderSession(String token) => AuthSession(
+        accessToken: token,
+        tokenType: 'Bearer',
+        user: const AuthUser(
+          id: '',
+          name: '',
+          email: '',
+          role: 'agent',
+          isSuperAdmin: false,
+          status: 'active',
+        ),
+      );
 }

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../components/auth/auth_components.dart';
+import '../../services/auth_session_controller.dart';
 import 'login_page_model.dart';
 
 export 'login_page_model.dart';
@@ -91,8 +92,13 @@ class _LoginPageWidgetState extends ConsumerState<LoginPageWidget>
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(loginPageProvider);
+    final authState = ref.watch(authSessionControllerProvider);
     final notifier = ref.read(loginPageProvider.notifier);
     final theme = FlutterFlowTheme.of(context);
+    final errorMessage = state.errorMessage ??
+        (authState.status == AuthStatus.error
+            ? authState.failure?.displayMessage
+            : null);
     return GestureDetector(
       onTap: FocusScope.of(context).unfocus,
       child: Scaffold(
@@ -229,8 +235,8 @@ class _LoginPageWidgetState extends ConsumerState<LoginPageWidget>
                                   ),
                                 ),
                               ),
-                              if (state.errorMessage != null) ...[
-                                AuthErrorBanner(state.errorMessage!),
+                              if (errorMessage != null) ...[
+                                AuthErrorBanner(errorMessage),
                                 const SizedBox(height: 18),
                               ] else
                                 const SizedBox(height: 18),

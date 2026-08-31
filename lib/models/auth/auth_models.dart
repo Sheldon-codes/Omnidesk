@@ -69,6 +69,13 @@ class WorkspaceMembership {
         slug: (json['slug'] ?? '').toString(),
         role: (json['role'] ?? '').toString(),
       );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'slug': slug,
+        'role': role,
+      };
 }
 
 class AuthUser {
@@ -132,6 +139,36 @@ class AuthUser {
           : const [],
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'email': email,
+        if (phone != null) 'phone': phone,
+        'role': role,
+        'isSuperAdmin': isSuperAdmin,
+        'status': status,
+        if (activeWorkspace != null)
+          'activeWorkspace': activeWorkspace!.toJson(),
+        'workspaces':
+            workspaces.map((workspace) => workspace.toJson()).toList(),
+      };
+
+  /// `/auth/me` does not currently return the full workspace-membership list
+  /// returned from login. Keep that richer local metadata while applying the
+  /// freshly verified identity fields.
+  AuthUser mergeVerifiedProfile(AuthUser verified) => AuthUser(
+        id: verified.id,
+        name: verified.name,
+        email: verified.email,
+        phone: verified.phone,
+        role: verified.role,
+        isSuperAdmin: verified.isSuperAdmin,
+        status: verified.status,
+        activeWorkspace: verified.activeWorkspace ?? activeWorkspace,
+        workspaces:
+            verified.workspaces.isEmpty ? workspaces : verified.workspaces,
+      );
 }
 
 class AuthSession {
@@ -159,9 +196,30 @@ class AuthSession {
     );
   }
 
+  factory AuthSession.fromStoredJson(Map<String, dynamic> json) {
+    final token = json['accessToken']?.toString() ?? '';
+    final user = json['user'];
+    if (token.isEmpty || user is! Map) {
+      throw const FormatException('Invalid stored session.');
+    }
+    return AuthSession(
+      accessToken: token,
+      tokenType: (json['tokenType'] ?? 'Bearer').toString(),
+      user: AuthUser.fromJson(
+        user.map((key, value) => MapEntry(key.toString(), value)),
+      ),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'accessToken': accessToken,
+        'tokenType': tokenType,
+        'user': user.toJson(),
+      };
+
   AuthSession withUser(AuthUser value) => AuthSession(
         accessToken: accessToken,
         tokenType: tokenType,
-        user: value,
+        user: user.mergeVerifiedProfile(value),
       );
 }

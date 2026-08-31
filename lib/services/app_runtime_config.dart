@@ -1,6 +1,6 @@
-/// Runtime switches for environments where the backend is not available yet.
+/// Enables local interaction demos that do not have backend contracts yet.
 ///
-/// Keep this enabled until the production API contract is ready. All auth
-/// repository operations remain local while enabled, but page validation and
-/// navigation continue to execute normally.
-const bool uiOnlyMode = true;
+/// Authentication is intentionally not controlled by this switch: auth always
+/// uses the configured API endpoint. Keep this limited to discrete UI-only
+/// affordances such as the incoming-call demo.
+const bool enableUiDemos = true;

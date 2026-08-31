@@ -28,6 +28,12 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>OmniDesk uses the camera when you attach a photo or video to an email.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>OmniDesk uses your contacts when you choose to find, match, or add a customer from your device contacts.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>OmniDesk uses your location only when you choose to share a location in a customer conversation or support request.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>OmniDesk uses your location only when you choose to share a location in a customer conversation or support request.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>OmniDesk uses your photo library when you attach media to an email.</string>
 	<key>UIApplicationSceneManifest</key>

@@ -84,8 +84,9 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
                     searchActive: state.searchActive,
                     onSearch: state.searchActive ? _closeSearch : _openSearch,
                     onAddContact: () => context.push('/customers/new'),
-                    onDemoIncoming:
-                        uiOnlyMode ? () => _startDemoIncoming(context) : null,
+                    onDemoIncoming: enableUiDemos
+                        ? () => _startDemoIncoming(context)
+                        : null,
                   ),
                 ),
                 SliverPersistentHeader(

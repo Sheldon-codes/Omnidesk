@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:firebase_core/firebase_core.dart';
@@ -54,13 +55,15 @@ class OmnideskAgentApp extends ConsumerStatefulWidget {
   ConsumerState<OmnideskAgentApp> createState() => _OmnideskAgentAppState();
 }
 
-class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp> {
+class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
+    with WidgetsBindingObserver {
   ProviderSubscription<AuthState>? _authSubscription;
   ProviderSubscription<OnboardingState>? _onboardingSubscription;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _authSubscription = ref.listenManual<AuthState>(
       authSessionControllerProvider,
       (previous, next) {
@@ -91,9 +94,19 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _authSubscription?.close();
     _onboardingSubscription?.close();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(
+        ref.read(authSessionControllerProvider.notifier).refreshSession(),
+      );
+    }
   }
 
   @override
