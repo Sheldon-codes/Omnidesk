@@ -202,7 +202,10 @@ class HomePageWidget extends ConsumerWidget {
                                   ticket.isOverdue ? 'Overdue' : ticket.status,
                               statusColor: ticket.isOverdue
                                   ? theme.error
-                                  : theme.secondaryText,
+                                  : const {'resolved', 'closed'}
+                                          .contains(ticket.status.toLowerCase())
+                                      ? theme.success
+                                      : theme.secondaryText,
                               subject: ticket.subject,
                               meta:
                                   '${ticket.priority} · ${ticket.customerName}',
