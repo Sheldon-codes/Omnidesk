@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
+import '../../models/auth/auth_models.dart';
+import '../../services/api_service.dart';
 
 /// The operational presence states accepted by the future agent-presence API.
 enum PresenceStatus { available, busy, away, offline }
@@ -68,10 +70,160 @@ class LocalAgentPresenceRepository implements AgentPresenceRepository {
 }
 
 final agentPresenceRepositoryProvider = Provider<AgentPresenceRepository>(
-  // The dashboard owns the live availability endpoint. Profile keeps its
-  // richer multi-state presence controls local until that API supports them.
+  // Profile's richer multi-state presence remains local until the backend
+  // exposes more than the dashboard's available/unavailable boolean.
   (ref) => LocalAgentPresenceRepository(),
 );
+
+class ProfileWorkspace {
+  const ProfileWorkspace({
+    required this.id,
+    required this.name,
+    required this.slug,
+    required this.role,
+    required this.isAvailable,
+  });
+
+  final String id;
+  final String name;
+  final String slug;
+  final String role;
+  final bool isAvailable;
+
+  WorkspaceMembership toMembership() => WorkspaceMembership(
+        id: id,
+        name: name,
+        slug: slug,
+        role: role,
+      );
+}
+
+abstract class ProfileWorkspaceRepository {
+  Future<List<ProfileWorkspace>> loadWorkspaces();
+  Future<ProfileWorkspace> switchWorkspace(String workspaceId);
+}
+
+class ApiProfileWorkspaceRepository implements ProfileWorkspaceRepository {
+  ApiProfileWorkspaceRepository(this._api);
+  final ApiService _api;
+
+  @override
+  Future<List<ProfileWorkspace>> loadWorkspaces() async {
+    final response = await _api.get('/agent/workspaces');
+    final data = response is Map ? response['workspaces'] : null;
+    if (data is! List) {
+      throw const FormatException('Invalid workspaces response.');
+    }
+    return data.whereType<Map>().map(_parse).toList(growable: false);
+  }
+
+  @override
+  Future<ProfileWorkspace> switchWorkspace(String workspaceId) async {
+    final response = await _api.post('/agent/workspaces/switch', {
+      'workspace_id': int.tryParse(workspaceId) ?? workspaceId,
+    });
+    final active = response is Map ? response['activeWorkspace'] : null;
+    if (active is! Map) {
+      throw const FormatException('Invalid workspace response.');
+    }
+    return _parse(active);
+  }
+
+  ProfileWorkspace _parse(Map value) => ProfileWorkspace(
+        id: value['id'].toString(),
+        name: (value['name'] ?? '').toString(),
+        slug: (value['slug'] ?? '').toString(),
+        role: (value['role'] ?? 'agent').toString(),
+        isAvailable:
+            value['isAvailable'] == true || value['is_available'] == true,
+      );
+}
+
+class LocalProfileWorkspaceRepository implements ProfileWorkspaceRepository {
+  const LocalProfileWorkspaceRepository();
+  @override
+  Future<List<ProfileWorkspace>> loadWorkspaces() async => const [];
+  @override
+  Future<ProfileWorkspace> switchWorkspace(String workspaceId) =>
+      throw StateError('Workspace switching is unavailable offline.');
+}
+
+class ProfileWorkspaceState {
+  const ProfileWorkspaceState(
+      {this.items = const [],
+      this.loading = false,
+      this.switching = false,
+      this.failure});
+  final List<ProfileWorkspace> items;
+  final bool loading;
+  final bool switching;
+  final Object? failure;
+  ProfileWorkspaceState copyWith(
+          {List<ProfileWorkspace>? items,
+          bool? loading,
+          bool? switching,
+          Object? failure = _keep}) =>
+      ProfileWorkspaceState(
+        items: items ?? this.items,
+        loading: loading ?? this.loading,
+        switching: switching ?? this.switching,
+        failure: identical(failure, _keep) ? this.failure : failure,
+      );
+  static const _keep = Object();
+}
+
+final profileWorkspaceRepositoryProvider =
+    Provider<ProfileWorkspaceRepository>((ref) {
+  final api = ref.read(apiServiceProvider);
+  return api.baseUrl.isEmpty
+      ? const LocalProfileWorkspaceRepository()
+      : ApiProfileWorkspaceRepository(api);
+});
+
+final profileWorkspacesProvider =
+    NotifierProvider<ProfileWorkspaceController, ProfileWorkspaceState>(
+        ProfileWorkspaceController.new);
+
+class ProfileWorkspaceController extends Notifier<ProfileWorkspaceState> {
+  @override
+  ProfileWorkspaceState build() {
+    Future.microtask(load);
+    return const ProfileWorkspaceState(loading: true);
+  }
+
+  Future<void> load() async {
+    try {
+      state = state.copyWith(loading: true, failure: null);
+      state = ProfileWorkspaceState(
+          items: await ref
+              .read(profileWorkspaceRepositoryProvider)
+              .loadWorkspaces());
+    } catch (error) {
+      state = state.copyWith(loading: false, failure: error);
+    }
+  }
+
+  Future<ProfileWorkspace?> switchWorkspace(String id) async {
+    if (state.switching) return null;
+    try {
+      state = state.copyWith(switching: true, failure: null);
+      final selected = await ref
+          .read(profileWorkspaceRepositoryProvider)
+          .switchWorkspace(id);
+      state = state.copyWith(
+        switching: false,
+        items: [
+          for (final item in state.items)
+            item.id == selected.id ? selected : item
+        ],
+      );
+      return selected;
+    } catch (error) {
+      state = state.copyWith(switching: false, failure: error);
+      return null;
+    }
+  }
+}
 
 final agentPresenceProvider =
     NotifierProvider<AgentPresenceController, AgentPresenceState>(

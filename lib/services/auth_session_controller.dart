@@ -244,6 +244,14 @@ class AuthSessionController extends _$AuthSessionController {
     }
   }
 
+  Future<void> setActiveWorkspace(WorkspaceMembership workspace) async {
+    final current = state.session;
+    if (current == null) return;
+    final updated = current.withActiveWorkspace(workspace);
+    await ref.read(authTokenStoreProvider).saveSession(updated);
+    state = state.copyWith(session: updated, clearFailure: true);
+  }
+
   Future<void> invalidateSession() {
     final existing = _invalidationFuture;
     if (existing != null) return existing;

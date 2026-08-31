@@ -24,6 +24,7 @@ class ProfilePageWidget extends ConsumerWidget {
     final user = ref.watch(authSessionControllerProvider).session?.user;
     final presence = ref.watch(agentPresenceProvider);
     final appThemeMode = ref.watch(appThemeModeProvider);
+    final workspaceState = ref.watch(profileWorkspacesProvider);
     // `viewPadding` is the physical display cut-out/status-bar inset. Unlike
     // `padding`, it does not change when transient system UI changes, so the
     // pinned header cannot drift on Android gesture/navigation variants.
@@ -143,6 +144,10 @@ class ProfilePageWidget extends ConsumerWidget {
                             user?.role ??
                             'Agent',
                         theme: theme,
+                        onTap: workspaceState.items.length > 1
+                            ? () => _showWorkspaceSheet(
+                                context, ref, workspaceState)
+                            : null,
                       ),
                     ],
                   ),
@@ -180,6 +185,58 @@ class ProfilePageWidget extends ConsumerWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (_) => const _AvailabilitySheet(),
+    );
+  }
+
+  Future<void> _showWorkspaceSheet(
+    BuildContext context,
+    WidgetRef ref,
+    ProfileWorkspaceState workspaceState,
+  ) async {
+    final theme = FlutterFlowTheme.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: theme.secondaryBackground,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => _ProfileSelectionSheetFrame(
+        title: 'Switch workspace',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final workspace in workspaceState.items)
+              _ProfileSelectionOption(
+                icon: IconsaxPlusBroken.building_4,
+                title: workspace.name,
+                subtitle: workspace.role,
+                selected: workspace.name ==
+                    ref
+                        .read(authSessionControllerProvider)
+                        .session
+                        ?.user
+                        .activeWorkspace
+                        ?.name,
+                enabled: !workspaceState.switching,
+                onTap: () async {
+                  final selected = await ref
+                      .read(profileWorkspacesProvider.notifier)
+                      .switchWorkspace(workspace.id);
+                  if (selected == null || !context.mounted) return;
+                  await ref
+                      .read(authSessionControllerProvider.notifier)
+                      .setActiveWorkspace(selected.toMembership());
+                  if (context.mounted) Navigator.pop(context);
+                },
+              ),
+            if (workspaceState.switching)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: LinearProgressIndicator(),
+              ),
+          ],
+        ),
+      ),
     );
   }
 

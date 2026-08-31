@@ -222,4 +222,20 @@ class AuthSession {
         tokenType: tokenType,
         user: user.mergeVerifiedProfile(value),
       );
+
+  AuthSession withActiveWorkspace(WorkspaceMembership workspace) => AuthSession(
+        accessToken: accessToken,
+        tokenType: tokenType,
+        user: AuthUser(
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+          role: workspace.role,
+          isSuperAdmin: user.isSuperAdmin,
+          status: user.status,
+          activeWorkspace: workspace,
+          workspaces: user.workspaces,
+        ),
+      );
 }
