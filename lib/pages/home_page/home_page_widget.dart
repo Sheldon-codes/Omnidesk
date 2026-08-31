@@ -41,221 +41,235 @@ class HomePageWidget extends ConsumerWidget {
       ),
       body: SafeArea(
         top: false,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if ((greeting?.urgentCount ?? 0) > 0 ||
-                  (stats?.overdue ?? greeting?.overdueCount ?? 0) > 0) ...[
-                _SectionLabel('Needs attention', theme: theme),
-                const SizedBox(height: 12),
-                Container(
-                  decoration: BoxDecoration(
+        child: RefreshIndicator(
+          onRefresh: () =>
+              ref.read(homeDashboardProvider.notifier).load(force: true),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if ((greeting?.urgentCount ?? 0) > 0 ||
+                    (stats?.overdue ?? greeting?.overdueCount ?? 0) > 0) ...[
+                  _SectionLabel('Needs attention', theme: theme),
+                  const SizedBox(height: 12),
+                  Container(
+                    decoration: BoxDecoration(
+                        color: theme.primaryBackground,
+                        border: Border.all(color: theme.alternate),
+                        borderRadius: BorderRadius.all(Radius.circular(12))),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: Column(
+                        children: [
+                          _AttentionRow(
+                            theme: theme,
+                            icon: IconsaxPlusBroken.danger,
+                            iconColor: theme.warning,
+                            title: 'Escalated',
+                            count: greeting?.urgentCount ?? 0,
+                            onTap: () =>
+                                context.go('/tickets?filter=escalated'),
+                          ),
+                          const SizedBox(height: 10),
+                          _AttentionRow(
+                            theme: theme,
+                            icon: IconsaxPlusBroken.clock,
+                            iconColor: theme.error,
+                            title: 'Overdue',
+                            count:
+                                stats?.overdue ?? greeting?.overdueCount ?? 0,
+                            onTap: () => context.go('/tickets?filter=overdue'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                ],
+                _SectionLabel('Channels', theme: theme),
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _ChannelCell(
+                        theme: theme,
+                        icon: IconsaxPlusBroken.call,
+                        value: '${stats?.channels.calls.total ?? 0}',
+                        label:
+                            'Calls · ${stats?.channels.calls.open ?? 0} open',
+                        overdueLabel: stats == null
+                            ? null
+                            : '${stats.channels.calls.overdue} overdue',
+                        onTap: () => context.go('/phone'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _ChannelCell(
+                        theme: theme,
+                        icon: IconsaxPlusBroken.messages,
+                        value:
+                            '${(stats?.channels.whatsapp.total ?? 0) + (stats?.channels.widget.total ?? 0)}',
+                        label: 'Chats · ${stats?.unreadMessages ?? 0} unread',
+                        overdueLabel: stats == null
+                            ? null
+                            : '${stats.channels.whatsapp.overdue + stats.channels.widget.overdue} overdue',
+                        onTap: () => context.go('/chats'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _ChannelCell(
+                        theme: theme,
+                        icon: IconsaxPlusBroken.sms,
+                        value: '${stats?.channels.email.total ?? 0}',
+                        label: 'Email · ${stats?.unreadMessages ?? 0} unread',
+                        overdueLabel: stats == null
+                            ? null
+                            : '${stats.channels.email.overdue} overdue',
+                        onTap: () => context.go('/email'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _ChannelCell(
+                        theme: theme,
+                        icon: IconsaxPlusBroken.ticket,
+                        value: '${stats?.myOpen ?? 0}',
+                        label: 'Tickets · open',
+                        overdueLabel:
+                            stats == null ? null : '${stats.overdue} overdue',
+                        onTap: () => context.go('/tickets'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _QuickActionButton(
+                        theme: theme,
+                        icon: IconsaxPlusBroken.call,
+                        label: 'Call',
+                        onTap: () {},
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _QuickActionButton(
+                        theme: theme,
+                        icon: IconsaxPlusBroken.messages,
+                        label: 'Chat',
+                        onTap: () {},
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _QuickActionButton(
+                        theme: theme,
+                        icon: IconsaxPlusBroken.sms,
+                        label: 'Email',
+                        onTap: () {},
+                      ),
+                    ),
+                  ],
+                ),
+                if (dashboard.tickets.isNotEmpty) ...[
+                  const SizedBox(height: 28),
+                  _SectionHeader(
+                    theme: theme,
+                    title: 'My work',
+                    actionLabel: 'View all',
+                    onActionTap: () => context.go('/tickets'),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
                       color: theme.primaryBackground,
+                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: theme.alternate),
-                      borderRadius: BorderRadius.all(Radius.circular(12))),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
+                    ),
+                    child: Column(
+                      children: dashboard.tickets
+                          .take(3)
+                          .map((ticket) => _TicketRow(
+                                theme: theme,
+                                ticketId: ticket.displayNumber,
+                                status: ticket.isOverdue
+                                    ? 'Overdue'
+                                    : ticket.status,
+                                statusColor: ticket.isOverdue
+                                    ? theme.error
+                                    : const {
+                                        'resolved',
+                                        'closed'
+                                      }.contains(ticket.status.toLowerCase())
+                                        ? theme.success
+                                        : theme.secondaryText,
+                                subject: ticket.subject,
+                                meta:
+                                    '${ticket.priority} · ${ticket.customerName}',
+                                onTap: () =>
+                                    context.push('/tickets/${ticket.id}'),
+                              ))
+                          .toList(growable: false),
+                    ),
+                  ),
+                ],
+                if ((stats?.recentCallers.isNotEmpty ?? false) ||
+                    (stats?.recentCalls.isNotEmpty ?? false)) ...[
+                  const SizedBox(height: 28),
+                  _SectionLabel('Recent activity', theme: theme),
+                  const SizedBox(height: 2),
+                  Container(
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      color: theme.primaryBackground,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: theme.alternate),
+                    ),
                     child: Column(
                       children: [
-                        _AttentionRow(
-                          theme: theme,
-                          icon: IconsaxPlusBroken.danger,
-                          iconColor: theme.warning,
-                          title: 'Escalated',
-                          count: greeting?.urgentCount ?? 0,
-                          onTap: () => context.go('/tickets?filter=escalated'),
-                        ),
-                        const SizedBox(height: 10),
-                        _AttentionRow(
-                          theme: theme,
-                          icon: IconsaxPlusBroken.clock,
-                          iconColor: theme.error,
-                          title: 'Overdue',
-                          count: stats?.overdue ?? greeting?.overdueCount ?? 0,
-                          onTap: () => context.go('/tickets?filter=overdue'),
-                        ),
+                        ...?stats?.recentCallers
+                            .take(2)
+                            .map((caller) => _ActivityRow(
+                                  theme: theme,
+                                  icon: IconsaxPlusBroken.call_incoming,
+                                  text: '${caller.label} · ${caller.phone}',
+                                  time:
+                                      caller.timestamp?.toLocal().toString() ??
+                                          'Recent',
+                                  isLast: false,
+                                )),
+                        ...?stats?.recentCalls
+                            .take(1)
+                            .map((call) => _ActivityRow(
+                                  theme: theme,
+                                  icon: call.missed
+                                      ? IconsaxPlusBroken.call_slash
+                                      : IconsaxPlusBroken.call_incoming,
+                                  iconColor: call.missed ? theme.error : null,
+                                  text: call.label,
+                                  time: call.timestamp?.toLocal().toString() ??
+                                      'Recent',
+                                  isLast: true,
+                                )),
                       ],
                     ),
                   ),
-                ),
-                const SizedBox(height: 28),
-              ],
-              _SectionLabel('Channels', theme: theme),
-              const SizedBox(height: 8),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: _ChannelCell(
-                      theme: theme,
-                      icon: IconsaxPlusBroken.call,
-                      value: '${stats?.channels.calls.total ?? 0}',
-                      label: 'Calls · ${stats?.channels.calls.open ?? 0} open',
-                      overdueLabel: stats == null
-                          ? null
-                          : '${stats.channels.calls.overdue} overdue',
-                      onTap: () => context.go('/phone'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _ChannelCell(
-                      theme: theme,
-                      icon: IconsaxPlusBroken.messages,
-                      value:
-                          '${(stats?.channels.whatsapp.total ?? 0) + (stats?.channels.widget.total ?? 0)}',
-                      label: 'Chats · ${stats?.unreadMessages ?? 0} unread',
-                      overdueLabel: stats == null
-                          ? null
-                          : '${stats.channels.whatsapp.overdue + stats.channels.widget.overdue} overdue',
-                      onTap: () => context.go('/chats'),
-                    ),
-                  ),
                 ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: _ChannelCell(
-                      theme: theme,
-                      icon: IconsaxPlusBroken.sms,
-                      value: '${stats?.channels.email.total ?? 0}',
-                      label: 'Email · ${stats?.unreadMessages ?? 0} unread',
-                      overdueLabel: stats == null
-                          ? null
-                          : '${stats.channels.email.overdue} overdue',
-                      onTap: () => context.go('/email'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _ChannelCell(
-                      theme: theme,
-                      icon: IconsaxPlusBroken.ticket,
-                      value: '${stats?.myOpen ?? 0}',
-                      label: 'Tickets · open',
-                      overdueLabel:
-                          stats == null ? null : '${stats.overdue} overdue',
-                      onTap: () => context.go('/tickets'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 28),
-              Row(
-                children: [
-                  Expanded(
-                    child: _QuickActionButton(
-                      theme: theme,
-                      icon: IconsaxPlusBroken.call,
-                      label: 'Call',
-                      onTap: () {},
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _QuickActionButton(
-                      theme: theme,
-                      icon: IconsaxPlusBroken.messages,
-                      label: 'Chat',
-                      onTap: () {},
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _QuickActionButton(
-                      theme: theme,
-                      icon: IconsaxPlusBroken.sms,
-                      label: 'Email',
-                      onTap: () {},
-                    ),
-                  ),
-                ],
-              ),
-              if (dashboard.tickets.isNotEmpty) ...[
-                const SizedBox(height: 28),
-                _SectionHeader(
-                  theme: theme,
-                  title: 'My work',
-                  actionLabel: 'View all',
-                  onActionTap: () => context.go('/tickets'),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  clipBehavior: Clip.antiAlias,
-                  decoration: BoxDecoration(
-                    color: theme.primaryBackground,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: theme.alternate),
-                  ),
-                  child: Column(
-                    children: dashboard.tickets
-                        .take(3)
-                        .map((ticket) => _TicketRow(
-                              theme: theme,
-                              ticketId: ticket.displayNumber,
-                              status:
-                                  ticket.isOverdue ? 'Overdue' : ticket.status,
-                              statusColor: ticket.isOverdue
-                                  ? theme.error
-                                  : const {'resolved', 'closed'}
-                                          .contains(ticket.status.toLowerCase())
-                                      ? theme.success
-                                      : theme.secondaryText,
-                              subject: ticket.subject,
-                              meta:
-                                  '${ticket.priority} · ${ticket.customerName}',
-                              onTap: () =>
-                                  context.push('/tickets/${ticket.id}'),
-                            ))
-                        .toList(growable: false),
-                  ),
-                ),
               ],
-              if ((stats?.recentCallers.isNotEmpty ?? false) ||
-                  (stats?.recentCalls.isNotEmpty ?? false)) ...[
-                const SizedBox(height: 28),
-                _SectionLabel('Recent activity', theme: theme),
-                const SizedBox(height: 2),
-                Container(
-                  clipBehavior: Clip.antiAlias,
-                  decoration: BoxDecoration(
-                    color: theme.primaryBackground,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: theme.alternate),
-                  ),
-                  child: Column(
-                    children: [
-                      ...?stats?.recentCallers
-                          .take(2)
-                          .map((caller) => _ActivityRow(
-                                theme: theme,
-                                icon: IconsaxPlusBroken.call_incoming,
-                                text: '${caller.label} · ${caller.phone}',
-                                time: caller.timestamp?.toLocal().toString() ??
-                                    'Recent',
-                                isLast: false,
-                              )),
-                      ...?stats?.recentCalls.take(1).map((call) => _ActivityRow(
-                            theme: theme,
-                            icon: call.missed
-                                ? IconsaxPlusBroken.call_slash
-                                : IconsaxPlusBroken.call_incoming,
-                            iconColor: call.missed ? theme.error : null,
-                            text: call.label,
-                            time: call.timestamp?.toLocal().toString() ??
-                                'Recent',
-                            isLast: true,
-                          )),
-                    ],
-                  ),
-                ),
-              ],
-            ],
+            ),
           ),
         ),
       ),
