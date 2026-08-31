@@ -46,41 +46,42 @@ class HomePageWidget extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _SectionLabel('Needs attention', theme: theme),
-              const SizedBox(height: 12),
-              Container(
-                decoration: BoxDecoration(
-                    color: theme.primaryBackground,
-                    border: Border.all(color: theme.alternate),
-                    borderRadius: BorderRadius.all(Radius.circular(12))),
-                child: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: Column(
-                    children: [
-                      _AttentionRow(
-                        theme: theme,
-                        icon: IconsaxPlusBroken.danger,
-                        iconColor: theme.warning,
-                        title: 'Escalated',
-                        count: greeting?.urgentCount ?? 0,
-                        onTap: () => context.go('/tickets?filter=escalated'),
-                      ),
-                      SizedBox(
-                        height: 10,
-                      ),
-                      _AttentionRow(
-                        theme: theme,
-                        icon: IconsaxPlusBroken.clock,
-                        iconColor: theme.error,
-                        title: 'Overdue',
-                        count: stats?.overdue ?? greeting?.overdueCount ?? 0,
-                        onTap: () => context.go('/tickets?filter=overdue'),
-                      ),
-                    ],
+              if ((greeting?.urgentCount ?? 0) > 0 ||
+                  (stats?.overdue ?? greeting?.overdueCount ?? 0) > 0) ...[
+                _SectionLabel('Needs attention', theme: theme),
+                const SizedBox(height: 12),
+                Container(
+                  decoration: BoxDecoration(
+                      color: theme.primaryBackground,
+                      border: Border.all(color: theme.alternate),
+                      borderRadius: BorderRadius.all(Radius.circular(12))),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(
+                      children: [
+                        _AttentionRow(
+                          theme: theme,
+                          icon: IconsaxPlusBroken.danger,
+                          iconColor: theme.warning,
+                          title: 'Escalated',
+                          count: greeting?.urgentCount ?? 0,
+                          onTap: () => context.go('/tickets?filter=escalated'),
+                        ),
+                        const SizedBox(height: 10),
+                        _AttentionRow(
+                          theme: theme,
+                          icon: IconsaxPlusBroken.clock,
+                          iconColor: theme.error,
+                          title: 'Overdue',
+                          count: stats?.overdue ?? greeting?.overdueCount ?? 0,
+                          onTap: () => context.go('/tickets?filter=overdue'),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 28),
+                const SizedBox(height: 28),
+              ],
               _SectionLabel('Channels', theme: theme),
               const SizedBox(height: 8),
               Row(
@@ -175,69 +176,57 @@ class HomePageWidget extends ConsumerWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 28),
-              _SectionHeader(
-                theme: theme,
-                title: 'My work',
-                actionLabel: 'View all',
-                onActionTap: () => context.go('/tickets'),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                clipBehavior: Clip.antiAlias,
-                decoration: BoxDecoration(
-                  color: theme.primaryBackground,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: theme.alternate),
+              if (dashboard.tickets.isNotEmpty) ...[
+                const SizedBox(height: 28),
+                _SectionHeader(
+                  theme: theme,
+                  title: 'My work',
+                  actionLabel: 'View all',
+                  onActionTap: () => context.go('/tickets'),
                 ),
-                child: Column(
-                  children: [
-                    if (dashboard.loading && dashboard.tickets.isEmpty)
-                      const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: CircularProgressIndicator())
-                    else if (dashboard.tickets.isEmpty)
-                      Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Text('No assigned tickets',
-                              style: theme.bodySmall
-                                  .copyWith(color: theme.secondaryText)))
-                    else
-                      ...dashboard.tickets.take(3).map((ticket) => _TicketRow(
-                            theme: theme,
-                            ticketId: ticket.displayNumber,
-                            status:
-                                ticket.isOverdue ? 'Overdue' : ticket.status,
-                            statusColor: ticket.isOverdue
-                                ? theme.error
-                                : theme.secondaryText,
-                            subject: ticket.subject,
-                            meta: '${ticket.priority} · ${ticket.customerName}',
-                            onTap: () => context.push('/tickets/${ticket.id}'),
-                          )),
-                  ],
+                const SizedBox(height: 12),
+                Container(
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: theme.primaryBackground,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: theme.alternate),
+                  ),
+                  child: Column(
+                    children: dashboard.tickets
+                        .take(3)
+                        .map((ticket) => _TicketRow(
+                              theme: theme,
+                              ticketId: ticket.displayNumber,
+                              status:
+                                  ticket.isOverdue ? 'Overdue' : ticket.status,
+                              statusColor: ticket.isOverdue
+                                  ? theme.error
+                                  : theme.secondaryText,
+                              subject: ticket.subject,
+                              meta:
+                                  '${ticket.priority} · ${ticket.customerName}',
+                              onTap: () =>
+                                  context.push('/tickets/${ticket.id}'),
+                            ))
+                        .toList(growable: false),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 28),
-              _SectionLabel('Recent activity', theme: theme),
-              const SizedBox(height: 2),
-              Container(
-                clipBehavior: Clip.antiAlias,
-                decoration: BoxDecoration(
-                  color: theme.primaryBackground,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: theme.alternate),
-                ),
-                child: Column(
-                  children: [
-                    if ((stats?.recentCallers.isEmpty ?? true) &&
-                        (stats?.recentCalls.isEmpty ?? true))
-                      Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Text('No recent activity',
-                              style: theme.bodySmall
-                                  .copyWith(color: theme.secondaryText)))
-                    else ...[
+              ],
+              if ((stats?.recentCallers.isNotEmpty ?? false) ||
+                  (stats?.recentCalls.isNotEmpty ?? false)) ...[
+                const SizedBox(height: 28),
+                _SectionLabel('Recent activity', theme: theme),
+                const SizedBox(height: 2),
+                Container(
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: theme.primaryBackground,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: theme.alternate),
+                  ),
+                  child: Column(
+                    children: [
                       ...?stats?.recentCallers
                           .take(2)
                           .map((caller) => _ActivityRow(
@@ -260,9 +249,9 @@ class HomePageWidget extends ConsumerWidget {
                             isLast: true,
                           )),
                     ],
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
