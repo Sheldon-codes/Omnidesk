@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +12,7 @@ import 'package:intl/intl.dart';
 import '../../components/call_experience/call_session_controller.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import 'conversation_room_page_model.dart';
+import 'whatsapp_live_store.dart';
 import 'widgets/conversation_composer.dart';
 import 'widgets/conversation_media_widgets.dart';
 import 'widgets/conversation_message_bubble.dart';
@@ -30,26 +33,72 @@ class ConversationRoomPageWidget extends ConsumerStatefulWidget {
 }
 
 class _ConversationRoomPageWidgetState
-    extends ConsumerState<ConversationRoomPageWidget> {
+    extends ConsumerState<ConversationRoomPageWidget>
+    with WidgetsBindingObserver {
   final _composerController = TextEditingController();
   final _composerFocusNode = FocusNode();
   final _scrollController = ScrollController();
   final _audioController = ConversationAudioController();
   final _messageKeys = <String, GlobalKey>{};
+  WhatsAppThreadController? _liveStore;
 
   ConversationMessage? _replyingTo;
   String? _highlightedMessageId;
   Timer? _highlightTimer;
+  Timer? _typingTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _composerController.addListener(_scheduleTyping);
+    if (_isLiveWhatsApp) {
+      _liveStore = ref.read(whatsAppThreadsProvider.notifier);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToLatest());
+    if (_isLiveWhatsApp) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _liveStore?.load(widget.conversationId);
+        _liveStore?.startPolling(widget.conversationId);
+      });
+    }
+  }
+
+  void _scheduleTyping() {
+    if (!_isLiveWhatsApp || _composerController.text.trim().isEmpty) return;
+    _typingTimer?.cancel();
+    _typingTimer = Timer(const Duration(milliseconds: 700), () {
+      if (!mounted) return;
+      unawaited(
+        ref.read(whatsAppRepositoryProvider).typing(widget.conversationId),
+      );
+    });
+  }
+
+  bool get _isLiveWhatsApp => int.tryParse(widget.conversationId) != null;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_isLiveWhatsApp) return;
+    final store = _liveStore;
+    if (store == null) return;
+    if (state == AppLifecycleState.resumed) {
+      store.startPolling(widget.conversationId);
+    } else {
+      store.stopPolling(widget.conversationId);
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    if (_isLiveWhatsApp) {
+      _liveStore?.stopPolling(widget.conversationId);
+    }
     _highlightTimer?.cancel();
+    _typingTimer?.cancel();
+    _composerController.removeListener(_scheduleTyping);
     _composerController.dispose();
     _composerFocusNode.dispose();
     _scrollController.dispose();
@@ -68,17 +117,30 @@ class _ConversationRoomPageWidgetState
     );
   }
 
-  void _send(ConversationThread thread) {
+  Future<void> _send(ConversationThread thread) async {
     final value = _composerController.text.trim();
     if (value.isEmpty) {
       _showSnack('Enter a message');
       return;
     }
-    ref.read(conversationStoreProvider.notifier).sendText(
-          thread.conversation.id,
-          value,
-          replyToId: _replyingTo?.id,
-        );
+    try {
+      if (_isLiveWhatsApp) {
+        await ref.read(whatsAppThreadsProvider.notifier).send(
+              thread.conversation.id,
+              value,
+              replyToId: _replyingTo?.id,
+            );
+      } else {
+        ref.read(conversationStoreProvider.notifier).sendText(
+              thread.conversation.id,
+              value,
+              replyToId: _replyingTo?.id,
+            );
+      }
+    } catch (_) {
+      if (mounted) _showSnack('Message could not be sent. Try again.');
+      return;
+    }
     _composerController.clear();
     _composerFocusNode.unfocus();
     setState(() => _replyingTo = null);
@@ -148,10 +210,32 @@ class _ConversationRoomPageWidgetState
 
   @override
   Widget build(BuildContext context) {
-    final thread = ref.watch(
-      conversationThreadProvider(widget.conversationId),
-    );
+    final localThread =
+        ref.watch(conversationThreadProvider(widget.conversationId));
+    final liveState = _isLiveWhatsApp
+        ? ref.watch(whatsAppThreadsProvider)[widget.conversationId]
+        : null;
+    final inboxThread = _isLiveWhatsApp
+        ? ref
+            .watch(whatsAppInboxProvider)
+            .threads
+            .where((item) => item.conversation.id == widget.conversationId)
+            .firstOrNull
+        : null;
+    final thread = _isLiveWhatsApp ? liveState?.thread : localThread;
     final theme = FlutterFlowTheme.of(context);
+    if (_isLiveWhatsApp &&
+        thread == null &&
+        (liveState == null || (liveState.loading && liveState.error == null))) {
+      return _ConversationRoomSkeleton(theme: theme, knownThread: inboxThread);
+    }
+    if (_isLiveWhatsApp && liveState?.error != null && thread == null) {
+      return _LiveRoomError(
+          theme: theme,
+          onRetry: () => ref
+              .read(whatsAppThreadsProvider.notifier)
+              .load(widget.conversationId));
+    }
     if (thread == null) return _NotFound(theme: theme);
 
     final conversation = thread.conversation;
@@ -188,10 +272,21 @@ class _ConversationRoomPageWidgetState
                   onQuoteTap: (messageId) => _jumpToMessage(thread, messageId),
                   onLongPress: (message) =>
                       _openMessageActions(thread, message),
-                  onReaction: (message, emoji) => ref
-                      .read(conversationStoreProvider.notifier)
-                      .addReaction(conversation.id, message.id, emoji),
+                  onReaction: (message, emoji) {
+                    if (_isLiveWhatsApp) {
+                      _showSnack(
+                          'Reactions are not available for this channel');
+                      return;
+                    }
+                    ref
+                        .read(conversationStoreProvider.notifier)
+                        .addReaction(conversation.id, message.id, emoji);
+                  },
                   onRetry: (message) {
+                    if (_isLiveWhatsApp) {
+                      _showSnack('Try sending the message again');
+                      return;
+                    }
                     ref
                         .read(conversationStoreProvider.notifier)
                         .retryMessage(conversation.id, message.id);
@@ -211,9 +306,7 @@ class _ConversationRoomPageWidgetState
             if (resolved)
               ResolvedConversationComposer(
                 theme: theme,
-                onReopen: () => ref
-                    .read(conversationStoreProvider.notifier)
-                    .reopen(conversation.id),
+                onReopen: () => _reopen(thread),
               )
             else
               ConversationComposer(
@@ -269,16 +362,26 @@ class _ConversationRoomPageWidgetState
                   if (!started) _showSnack('Call already in progress');
                 },
               ),
-              ListTile(
-                leading: const Icon(IconsaxPlusBroken.message_minus),
-                title: const Text('Mark unread'),
-                onTap: () {
-                  ref
-                      .read(conversationStoreProvider.notifier)
-                      .markUnread(conversation.id);
-                  Navigator.pop(sheetContext);
-                },
-              ),
+              if (_isLiveWhatsApp)
+                ListTile(
+                  leading: const Icon(IconsaxPlusBroken.document_text),
+                  title: const Text('Saved replies'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _insertTemplate();
+                  },
+                ),
+              if (!_isLiveWhatsApp)
+                ListTile(
+                  leading: const Icon(IconsaxPlusBroken.message_minus),
+                  title: const Text('Mark unread'),
+                  onTap: () {
+                    ref
+                        .read(conversationStoreProvider.notifier)
+                        .markUnread(conversation.id);
+                    Navigator.pop(sheetContext);
+                  },
+                ),
               ListTile(
                 leading: Icon(
                   conversation.status == ChatConversationStatus.resolved
@@ -293,9 +396,7 @@ class _ConversationRoomPageWidgetState
                 onTap: () {
                   Navigator.pop(sheetContext);
                   if (conversation.status == ChatConversationStatus.resolved) {
-                    ref
-                        .read(conversationStoreProvider.notifier)
-                        .reopen(conversation.id);
+                    _reopen(thread);
                   } else {
                     _confirmResolve(thread);
                   }
@@ -356,9 +457,35 @@ class _ConversationRoomPageWidgetState
       ),
     );
     if (shouldResolve != true || !mounted) return;
-    ref
-        .read(conversationStoreProvider.notifier)
-        .resolve(thread.conversation.id);
+    try {
+      if (_isLiveWhatsApp) {
+        await ref
+            .read(whatsAppThreadsProvider.notifier)
+            .status(thread.conversation.id, 'resolved');
+      } else {
+        ref
+            .read(conversationStoreProvider.notifier)
+            .resolve(thread.conversation.id);
+      }
+    } catch (_) {
+      if (mounted) _showSnack('Unable to resolve the conversation. Try again.');
+    }
+  }
+
+  Future<void> _reopen(ConversationThread thread) async {
+    try {
+      if (_isLiveWhatsApp) {
+        await ref
+            .read(whatsAppThreadsProvider.notifier)
+            .status(thread.conversation.id, 'in_progress');
+      } else {
+        ref
+            .read(conversationStoreProvider.notifier)
+            .reopen(thread.conversation.id);
+      }
+    } catch (_) {
+      if (mounted) _showSnack('Unable to reopen the conversation. Try again.');
+    }
   }
 
   Future<void> _openInfo(ConversationThread thread) =>
@@ -396,6 +523,48 @@ class _ConversationRoomPageWidgetState
         ),
       );
 
+  Future<void> _insertTemplate() async {
+    try {
+      final templates =
+          await ref.read(whatsAppThreadsProvider.notifier).templates();
+      if (!mounted) return;
+      if (templates.isEmpty) {
+        _showSnack('No saved replies are available');
+        return;
+      }
+      final selected = await showModalBottomSheet<WhatsAppTemplate>(
+        context: context,
+        showDragHandle: true,
+        backgroundColor: FlutterFlowTheme.of(context).primaryBackground,
+        builder: (context) => SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+            children: [
+              for (final template in templates)
+                ListTile(
+                  title: Text(template.title),
+                  subtitle: Text(
+                    template.body,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onTap: () => Navigator.pop(context, template),
+                ),
+            ],
+          ),
+        ),
+      );
+      if (selected == null || !mounted) return;
+      _composerController
+        ..text = selected.body
+        ..selection = TextSelection.collapsed(offset: selected.body.length);
+      _composerFocusNode.requestFocus();
+    } catch (_) {
+      if (mounted) _showSnack('Saved replies could not be loaded. Try again.');
+    }
+  }
+
   Future<void> _openMessageActions(
     ConversationThread thread,
     ConversationMessage message,
@@ -421,55 +590,56 @@ class _ConversationRoomPageWidgetState
                     color: theme.primaryText, fontSize: 13, height: 1.35),
               ),
               const SizedBox(height: 13),
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 4,
-                children: [
-                  for (final emoji in const [
-                    '👍',
-                    '❤️',
-                    '😂',
-                    '😮',
-                    '😢',
-                    '🙏'
-                  ])
+              if (!_isLiveWhatsApp)
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 4,
+                  children: [
+                    for (final emoji in const [
+                      '👍',
+                      '❤️',
+                      '😂',
+                      '😮',
+                      '😢',
+                      '🙏'
+                    ])
+                      Semantics(
+                        button: true,
+                        label: 'React with $emoji',
+                        child: InkWell(
+                          onTap: () {
+                            ref
+                                .read(conversationStoreProvider.notifier)
+                                .addReaction(
+                                    thread.conversation.id, message.id, emoji);
+                            Navigator.pop(dialogContext);
+                          },
+                          borderRadius: BorderRadius.circular(18),
+                          child: Padding(
+                            padding: const EdgeInsets.all(7),
+                            child: Text(emoji,
+                                style: const TextStyle(fontSize: 21)),
+                          ),
+                        ),
+                      ),
                     Semantics(
                       button: true,
-                      label: 'React with $emoji',
+                      label: 'More reactions',
                       child: InkWell(
                         onTap: () {
-                          ref
-                              .read(conversationStoreProvider.notifier)
-                              .addReaction(
-                                  thread.conversation.id, message.id, emoji);
                           Navigator.pop(dialogContext);
+                          _showSnack('More reactions coming soon');
                         },
                         borderRadius: BorderRadius.circular(18),
-                        child: Padding(
-                          padding: const EdgeInsets.all(7),
-                          child:
-                              Text(emoji, style: const TextStyle(fontSize: 21)),
+                        child: const Padding(
+                          padding: EdgeInsets.all(7),
+                          child: Icon(Icons.add_rounded, size: 21),
                         ),
                       ),
                     ),
-                  Semantics(
-                    button: true,
-                    label: 'More reactions',
-                    child: InkWell(
-                      onTap: () {
-                        Navigator.pop(dialogContext);
-                        _showSnack('More reactions coming soon');
-                      },
-                      borderRadius: BorderRadius.circular(18),
-                      child: const Padding(
-                        padding: EdgeInsets.all(7),
-                        child: Icon(Icons.add_rounded, size: 21),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const Divider(height: 20),
+                  ],
+                ),
+              if (!_isLiveWhatsApp) const Divider(height: 20),
               if (thread.capabilities.canReply)
                 _MessageAction(
                   icon: Icons.reply_rounded,
@@ -513,6 +683,10 @@ class _ConversationRoomPageWidgetState
   }
 
   Future<void> _openAttachments(ConversationThread thread) async {
+    if (_isLiveWhatsApp) {
+      await _pickLiveAttachment(thread);
+      return;
+    }
     final capabilities = thread.capabilities;
     final choice = await showModalBottomSheet<_AttachmentChoice>(
       context: context,
@@ -596,6 +770,25 @@ class _ConversationRoomPageWidgetState
             avatar: 'J',
           ),
         );
+    }
+  }
+
+  Future<void> _pickLiveAttachment(ConversationThread thread) async {
+    try {
+      final path = (await FilePicker.pickFile())?.path;
+      if (path == null || path.isEmpty) return;
+      await ref.read(whatsAppThreadsProvider.notifier).send(
+            thread.conversation.id,
+            _composerController.text.trim(),
+            replyToId: _replyingTo?.id,
+            attachment: File(path),
+          );
+      _composerController.clear();
+      _composerFocusNode.unfocus();
+      if (mounted) setState(() => _replyingTo = null);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToLatest());
+    } catch (_) {
+      if (mounted) _showSnack('Attachment could not be sent. Try again.');
     }
   }
 
@@ -1164,6 +1357,315 @@ class _NotFound extends StatelessWidget {
                     onPressed: () => context.pop(),
                     child: const Text('Back to chats')),
               ],
+            ),
+          ),
+        ),
+      );
+}
+
+class _ConversationRoomSkeleton extends StatelessWidget {
+  const _ConversationRoomSkeleton({required this.theme, this.knownThread});
+
+  final FlutterFlowTheme theme;
+  final ConversationThread? knownThread;
+
+  @override
+  Widget build(BuildContext context) {
+    final base = theme.alternate.withValues(alpha: .56);
+    return Scaffold(
+      backgroundColor: theme.primaryBackground,
+      body: SafeArea(
+        child: ExcludeSemantics(
+          child: Column(
+            children: [
+              if (knownThread case final thread?)
+                _RoomHeader(
+                  thread: thread,
+                  theme: theme,
+                  onBack: () => context.pop(),
+                  onOpenCustomer: thread.conversation.customerId == null
+                      ? null
+                      : () => context.push(
+                            '/customers/${thread.conversation.customerId}',
+                          ),
+                  onActions: () {},
+                )
+              else
+                Container(
+                  height: 68,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    color: theme.primaryBackground,
+                    border: Border(bottom: BorderSide(color: theme.alternate)),
+                  ),
+                  child: Row(children: [
+                    const SizedBox(width: 48),
+                    _RoomSkeletonShape(
+                        color: base, width: 36, height: 36, round: true),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                          _RoomSkeletonShape(
+                              color: base, width: 126, height: 13),
+                          const SizedBox(height: 7),
+                          _RoomSkeletonShape(
+                              color: base, width: 90, height: 10),
+                        ])),
+                    const SizedBox(width: 48),
+                  ]),
+                ),
+              Expanded(
+                child: ColoredBox(
+                  color: theme.secondaryBackground,
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+                    children: [
+                      Center(
+                        child: _RoomSkeletonShape(
+                          color: base,
+                          width: 44,
+                          height: 10,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      _TimelineSkeletonBubble(
+                        color: base,
+                        alignment: Alignment.centerLeft,
+                        width: 154,
+                        height: 48,
+                        withAvatar: true,
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(16),
+                          topRight: Radius.circular(16),
+                          bottomLeft: Radius.circular(4),
+                          bottomRight: Radius.circular(16),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      _TimelineSkeletonBubble(
+                        color: base,
+                        alignment: Alignment.centerLeft,
+                        width: 202,
+                        height: 64,
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(4),
+                          topRight: Radius.circular(16),
+                          bottomLeft: Radius.circular(4),
+                          bottomRight: Radius.circular(16),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _TimelineSkeletonBubble(
+                        color: base,
+                        alignment: Alignment.centerRight,
+                        width: 178,
+                        height: 55,
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(16),
+                          topRight: Radius.circular(16),
+                          bottomLeft: Radius.circular(16),
+                          bottomRight: Radius.circular(4),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      _TimelineSkeletonBubble(
+                        color: base,
+                        alignment: Alignment.centerRight,
+                        width: 112,
+                        height: 46,
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(16),
+                          topRight: Radius.circular(4),
+                          bottomLeft: Radius.circular(16),
+                          bottomRight: Radius.circular(4),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  color: theme.primaryBackground,
+                  border: Border(top: BorderSide(color: theme.alternate)),
+                ),
+                padding: const EdgeInsets.fromLTRB(8, 7, 10, 9),
+                child: Row(children: [
+                  _RoomSkeletonShape(
+                      color: base, width: 44, height: 44, round: true),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: _RoomSkeletonShape(
+                      color: base,
+                      width: double.infinity,
+                      height: 44,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  _RoomSkeletonShape(
+                      color: theme.primary.withValues(alpha: .5),
+                      width: 44,
+                      height: 44,
+                      round: true),
+                ]),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RoomSkeletonShape extends StatelessWidget {
+  const _RoomSkeletonShape({
+    required this.color,
+    required this.width,
+    required this.height,
+    this.round = false,
+    this.borderRadius,
+  });
+
+  final Color color;
+  final double width;
+  final double height;
+  final bool round;
+  final BorderRadius? borderRadius;
+
+  @override
+  Widget build(BuildContext context) => _RoomShimmer(
+        color: color,
+        child: Container(
+          width: width,
+          height: height,
+          decoration: BoxDecoration(
+            borderRadius:
+                borderRadius ?? BorderRadius.circular(round ? width : 12),
+          ),
+        ),
+      );
+}
+
+class _TimelineSkeletonBubble extends StatelessWidget {
+  const _TimelineSkeletonBubble({
+    required this.color,
+    required this.alignment,
+    required this.width,
+    required this.height,
+    required this.borderRadius,
+    this.withAvatar = false,
+  });
+
+  final Color color;
+  final Alignment alignment;
+  final double width;
+  final double height;
+  final BorderRadius borderRadius;
+  final bool withAvatar;
+
+  @override
+  Widget build(BuildContext context) => Align(
+        alignment: alignment,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (withAvatar) ...[
+              _RoomSkeletonShape(
+                  color: color, width: 26, height: 26, round: true),
+              const SizedBox(width: 6),
+            ],
+            _RoomSkeletonShape(
+              color: color,
+              width: width,
+              height: height,
+              borderRadius: borderRadius,
+            ),
+          ],
+        ),
+      );
+}
+
+class _RoomShimmer extends StatefulWidget {
+  const _RoomShimmer({required this.color, required this.child});
+  final Color color;
+  final Widget child;
+
+  @override
+  State<_RoomShimmer> createState() => _RoomShimmerState();
+}
+
+class _RoomShimmerState extends State<_RoomShimmer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1150),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return ColoredBox(color: widget.color, child: widget.child);
+    }
+    return AnimatedBuilder(
+      animation: _controller,
+      child: widget.child,
+      builder: (context, child) => ShaderMask(
+        blendMode: BlendMode.srcATop,
+        shaderCallback: (bounds) => LinearGradient(
+          colors: [
+            widget.color,
+            widget.color.withValues(alpha: .35),
+            widget.color
+          ],
+          stops: const [0, .48, 1],
+          begin: Alignment(-1.8 + _controller.value * 3.6, 0),
+          end: Alignment(-.8 + _controller.value * 3.6, 0),
+        ).createShader(bounds),
+        child: ColoredBox(color: widget.color, child: child),
+      ),
+    );
+  }
+}
+
+class _LiveRoomError extends StatelessWidget {
+  const _LiveRoomError({required this.theme, required this.onRetry});
+  final FlutterFlowTheme theme;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: theme.primaryBackground,
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 30),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.cloud_off_outlined, color: theme.secondaryText),
+                const SizedBox(height: 12),
+                Text('Unable to load this conversation',
+                    style: TextStyle(
+                        color: theme.primaryText, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                Text('Check your connection and try again.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: theme.secondaryText, fontSize: 13)),
+                const SizedBox(height: 14),
+                OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
+                TextButton(
+                    onPressed: () => context.pop(),
+                    child: const Text('Back to chats')),
+              ]),
             ),
           ),
         ),

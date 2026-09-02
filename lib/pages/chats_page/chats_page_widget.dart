@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
+import '../conversation_room_page/whatsapp_live_store.dart';
 import 'chats_page_model.dart';
 
 export 'chats_page_model.dart';
@@ -23,12 +24,35 @@ class ChatsPageWidget extends ConsumerStatefulWidget {
 class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
+  final _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(whatsAppInboxProvider.notifier).load();
+    });
+    _scrollController.addListener(_loadMoreWhenNeeded);
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _scrollController
+      ..removeListener(_loadMoreWhenNeeded)
+      ..dispose();
     super.dispose();
+  }
+
+  void _loadMoreWhenNeeded() {
+    if (!_scrollController.hasClients ||
+        ref.read(chatsPageProvider).channel != ChatChannel.whatsapp) {
+      return;
+    }
+    if (_scrollController.position.extentAfter < 240) {
+      ref.read(whatsAppInboxProvider.notifier).loadMore();
+    }
   }
 
   void _openSearch() {
@@ -48,6 +72,9 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
     _searchController.clear();
     _searchFocusNode.unfocus();
     ref.read(chatsPageProvider.notifier).selectChannel(channel);
+    if (channel == ChatChannel.whatsapp) {
+      ref.read(whatsAppInboxProvider.notifier).load();
+    }
   }
 
   Future<void> _openFilters() async {
@@ -66,12 +93,19 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
           type: selection.type,
           status: selection.status,
         );
+    if (state.channel == ChatChannel.whatsapp) {
+      ref.read(whatsAppInboxProvider.notifier).load(
+            status: selection.status,
+            query: state.query,
+          );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(chatsPageProvider);
     final threads = ref.watch(conversationStoreProvider);
+    final whatsApp = ref.watch(whatsAppInboxProvider);
     final theme = FlutterFlowTheme.of(context);
     final topPadding = MediaQuery.paddingOf(context).top;
     final filtersActive = state.type != ChatConversationType.all ||
@@ -79,53 +113,132 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
 
     return Scaffold(
       backgroundColor: theme.primaryBackground,
-      body: CustomScrollView(
-        slivers: [
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _ChatsHeaderDelegate(
-              theme: theme,
-              topPadding: topPadding,
-              subtitle: state.subtitle,
-              searchActive: state.searchActive,
-              filtersActive: filtersActive,
-              onSearch: state.searchActive ? _closeSearch : _openSearch,
-              onFilter: _openFilters,
-            ),
-          ),
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _ChatsTabsDelegate(
-              theme: theme,
-              selected: state.channel,
-              onSelected: _selectChannel,
-            ),
-          ),
-          if (state.searchActive)
-            SliverToBoxAdapter(
-              child: _SearchField(
-                controller: _searchController,
-                focusNode: _searchFocusNode,
-                hintText: state.channel == ChatChannel.whatsapp
-                    ? 'Search WhatsApp chats'
-                    : 'Search Widget Chats',
-                onChanged: ref.read(chatsPageProvider.notifier).setSearchQuery,
-                onClose: _closeSearch,
+      body: RefreshIndicator(
+        onRefresh: () async {
+          if (state.channel == ChatChannel.whatsapp) {
+            await ref.read(whatsAppInboxProvider.notifier).load(
+                  status: state.status,
+                  query: state.query,
+                );
+          }
+        },
+        child: CustomScrollView(
+          controller: _scrollController,
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _ChatsHeaderDelegate(
                 theme: theme,
+                topPadding: topPadding,
+                subtitle:
+                    state.channel == ChatChannel.whatsapp && whatsApp.total > 0
+                        ? '${whatsApp.total} conversations'
+                        : state.subtitle,
+                searchActive: state.searchActive,
+                filtersActive: filtersActive,
+                onSearch: state.searchActive ? _closeSearch : _openSearch,
+                onFilter: _openFilters,
               ),
             ),
-          ..._conversationSliver(
-            filterChatConversations(
-              threads.map((thread) => thread.conversation),
-              state,
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _ChatsTabsDelegate(
+                theme: theme,
+                selected: state.channel,
+                onSelected: _selectChannel,
+              ),
             ),
-            state,
-            theme,
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
-        ],
+            if (state.searchActive)
+              SliverToBoxAdapter(
+                child: _SearchField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  hintText: state.channel == ChatChannel.whatsapp
+                      ? 'Search WhatsApp chats'
+                      : 'Search Widget Chats',
+                  onChanged: (value) {
+                    ref.read(chatsPageProvider.notifier).setSearchQuery(value);
+                    if (state.channel == ChatChannel.whatsapp) {
+                      ref.read(whatsAppInboxProvider.notifier).load(
+                            status: state.status,
+                            query: value,
+                          );
+                    }
+                  },
+                  onClose: _closeSearch,
+                  theme: theme,
+                ),
+              ),
+            if (state.channel == ChatChannel.whatsapp)
+              ..._whatsAppSliver(whatsApp, state, theme)
+            else
+              ..._conversationSliver(
+                filterChatConversations(
+                  threads.map((thread) => thread.conversation),
+                  state,
+                ),
+                state,
+                theme,
+              ),
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          ],
+        ),
       ),
     );
+  }
+
+  List<Widget> _whatsAppSliver(
+    WhatsAppInboxState inbox,
+    ChatsPageState state,
+    FlutterFlowTheme theme,
+  ) {
+    if (inbox.loading && inbox.threads.isEmpty) {
+      return [const _WhatsAppInboxSkeleton()];
+    }
+    if (inbox.error != null && inbox.threads.isEmpty) {
+      return [
+        _ChatErrorState(
+            theme: theme,
+            onRetry: () => ref
+                .read(whatsAppInboxProvider.notifier)
+                .load(status: state.status, query: state.query))
+      ];
+    }
+    if (inbox.threads.isEmpty) {
+      return [
+        _EmptyChats(
+            theme: theme,
+            label: state.query.trim().isEmpty
+                ? 'No WhatsApp conversations yet'
+                : 'No matching conversations')
+      ];
+    }
+    return [
+      if (inbox.isOffline)
+        SliverToBoxAdapter(child: _OfflineBanner(theme: theme)),
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+        sliver: SliverList.builder(
+          itemCount: inbox.threads.length + (inbox.loadingMore ? 3 : 0),
+          itemBuilder: (context, index) {
+            if (index >= inbox.threads.length) {
+              return const _ConversationRowSkeleton();
+            }
+            final conversation = inbox.threads[index].conversation;
+            return _ChatSwipeRow(
+              key: ValueKey('whatsapp-${conversation.id}'),
+              theme: theme,
+              semanticsLabel:
+                  '${conversation.name}, ${conversation.preview}, ${conversation.time}',
+              onAction: () => _showComingSoon(context),
+              onOpen: () => context.push('/chats/${conversation.id}'),
+              child: _ConversationRow(conversation: conversation, theme: theme),
+            );
+          },
+        ),
+      ),
+    ];
   }
 
   List<Widget> _conversationSliver(
@@ -937,5 +1050,149 @@ class _EmptyChats extends StatelessWidget {
                   color: theme.secondaryText,
                   fontSize: 13)),
         ),
+      );
+}
+
+class _WhatsAppInboxSkeleton extends StatelessWidget {
+  const _WhatsAppInboxSkeleton();
+  @override
+  Widget build(BuildContext context) => const SliverPadding(
+        padding: EdgeInsets.fromLTRB(20, 18, 20, 0),
+        sliver: SliverList(
+          delegate: SliverChildListDelegate.fixed([
+            _ConversationRowSkeleton(),
+            _ConversationRowSkeleton(),
+            _ConversationRowSkeleton(),
+            _ConversationRowSkeleton(),
+            _ConversationRowSkeleton(),
+          ]),
+        ),
+      );
+}
+
+class _ConversationRowSkeleton extends StatelessWidget {
+  const _ConversationRowSkeleton();
+  @override
+  Widget build(BuildContext context) {
+    final theme = FlutterFlowTheme.of(context);
+    final color = theme.alternate.withValues(alpha: .55);
+    return ExcludeSemantics(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(children: [
+          CircleAvatar(radius: 23, backgroundColor: color),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                _SkeletonBar(color: color, width: 120, height: 13),
+                const SizedBox(height: 9),
+                _SkeletonBar(color: color, width: 188, height: 11),
+              ])),
+          const SizedBox(width: 12),
+          _SkeletonBar(color: color, width: 28, height: 10),
+        ]),
+      ),
+    );
+  }
+}
+
+class _SkeletonBar extends StatefulWidget {
+  const _SkeletonBar(
+      {required this.color, required this.width, required this.height});
+  final Color color;
+  final double width;
+  final double height;
+
+  @override
+  State<_SkeletonBar> createState() => _SkeletonBarState();
+}
+
+class _SkeletonBarState extends State<_SkeletonBar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1150),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final child = Container(
+      width: widget.width,
+      height: widget.height,
+      decoration: BoxDecoration(
+        color: widget.color,
+        borderRadius: BorderRadius.circular(widget.height),
+      ),
+    );
+    if (MediaQuery.disableAnimationsOf(context)) return child;
+    return AnimatedBuilder(
+      animation: _controller,
+      child: child,
+      builder: (context, value) => ShaderMask(
+        blendMode: BlendMode.srcATop,
+        shaderCallback: (bounds) => LinearGradient(
+          colors: [
+            widget.color,
+            widget.color.withValues(alpha: .32),
+            widget.color
+          ],
+          stops: const [0, .5, 1],
+          begin: Alignment(-1.5 + _controller.value * 3, 0),
+          end: Alignment(-.5 + _controller.value * 3, 0),
+        ).createShader(bounds),
+        child: child,
+      ),
+    );
+  }
+}
+
+class _ChatErrorState extends StatelessWidget {
+  const _ChatErrorState({required this.theme, required this.onRetry});
+  final FlutterFlowTheme theme;
+  final VoidCallback onRetry;
+  @override
+  Widget build(BuildContext context) => SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 42, 24, 20),
+          child: Column(children: [
+            Icon(Icons.cloud_off_outlined, color: theme.secondaryText),
+            const SizedBox(height: 10),
+            Text('Unable to load WhatsApp conversations',
+                style: TextStyle(
+                    color: theme.primaryText, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text('Check your connection and try again.',
+                style: TextStyle(color: theme.secondaryText, fontSize: 13)),
+            const SizedBox(height: 12),
+            OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
+          ]),
+        ),
+      );
+}
+
+class _OfflineBanner extends StatelessWidget {
+  const _OfflineBanner({required this.theme});
+  final FlutterFlowTheme theme;
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+            color: theme.secondaryBackground,
+            borderRadius: BorderRadius.circular(8)),
+        child: Row(children: [
+          Icon(Icons.cloud_off_outlined, color: theme.secondaryText, size: 16),
+          const SizedBox(width: 7),
+          Text('Offline — showing your last conversations',
+              style: TextStyle(color: theme.secondaryText, fontSize: 12)),
+        ]),
       );
 }

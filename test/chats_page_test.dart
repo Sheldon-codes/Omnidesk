@@ -44,7 +44,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('WhatsApp'), findsOneWidget);
-    expect(find.text('kirawafinance'), findsOneWidget);
     await tester.tap(find.text('Widget Chat'));
     await tester.pumpAndSettle();
     expect(find.text('1 open · 73 resolved'), findsOneWidget);

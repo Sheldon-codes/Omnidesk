@@ -202,7 +202,9 @@ class ApiService {
         normalized.contains('password') ||
         normalized.contains('secret') ||
         normalized.contains('token') ||
-        normalized.contains('apikey');
+        normalized.contains('apikey') ||
+        normalized.contains('mediadata') ||
+        normalized.contains('message');
   }
 
   static String _stringify(dynamic value) {

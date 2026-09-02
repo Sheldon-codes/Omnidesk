@@ -22,7 +22,11 @@ class ConversationAudioController extends ChangeNotifier {
       await _player.stop();
       _activeAsset = assetPath;
       notifyListeners();
-      await _player.setAsset(assetPath);
+      if (isRemoteConversationMedia(assetPath)) {
+        await _player.setUrl(assetPath);
+      } else {
+        await _player.setAsset(assetPath);
+      }
       await _player.play();
       return;
     }
@@ -69,17 +73,23 @@ class ConversationImageMessage extends StatelessWidget {
           image: true,
           label: content.caption ?? 'Open photo',
           child: GestureDetector(
-            onTap: onOpen,
+            onTap: isRemoteConversationMedia(content.assetPath)
+                ? () => _showExternalMediaNotice(context)
+                : onOpen,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(11),
               child: AspectRatio(
                 aspectRatio: ratio.clamp(.76, 1.5),
-                child: Image.asset(
-                  content.assetPath,
-                  fit: BoxFit.cover,
-                  cacheWidth: 900,
-                  errorBuilder: (_, __, ___) => _MediaError(color: textColor),
-                ),
+                child: isRemoteConversationMedia(content.assetPath)
+                    ? _ExternalMediaPlaceholder(
+                        color: textColor, label: 'External image')
+                    : Image.asset(
+                        content.assetPath,
+                        fit: BoxFit.cover,
+                        cacheWidth: 900,
+                        errorBuilder: (_, __, ___) =>
+                            _MediaError(color: textColor),
+                      ),
               ),
             ),
           ),
@@ -114,7 +124,9 @@ class ConversationVideoMessage extends StatelessWidget {
             button: true,
             label: 'Play video, ${formatChatDuration(content.duration)}',
             child: GestureDetector(
-              onTap: onOpen,
+              onTap: isRemoteConversationMedia(content.assetPath)
+                  ? () => _showExternalMediaNotice(context)
+                  : onOpen,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(11),
                 child: AspectRatio(
@@ -122,8 +134,12 @@ class ConversationVideoMessage extends StatelessWidget {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      Image.asset(content.thumbnailAssetPath,
-                          fit: BoxFit.cover, cacheWidth: 900),
+                      if (isRemoteConversationMedia(content.thumbnailAssetPath))
+                        _ExternalMediaPlaceholder(
+                            color: textColor, label: 'External video')
+                      else
+                        Image.asset(content.thumbnailAssetPath,
+                            fit: BoxFit.cover, cacheWidth: 900),
                       ColoredBox(color: Colors.black.withValues(alpha: .16)),
                       const Center(
                         child: Icon(Icons.play_circle_fill_rounded,
@@ -153,6 +169,40 @@ class ConversationVideoMessage extends StatelessWidget {
                 style: TextStyle(color: textColor, fontSize: 14, height: 1.35)),
           ],
         ],
+      );
+}
+
+bool isRemoteConversationMedia(String value) {
+  final uri = Uri.tryParse(value);
+  return uri != null && (uri.scheme == 'https' || uri.scheme == 'http');
+}
+
+void _showExternalMediaNotice(BuildContext context) {
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      const SnackBar(
+        content: Text(
+            'External media is blocked until secure preview is available.'),
+      ),
+    );
+}
+
+class _ExternalMediaPlaceholder extends StatelessWidget {
+  const _ExternalMediaPlaceholder({required this.color, required this.label});
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+        color: color.withValues(alpha: .10),
+        child: Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.cloud_off_outlined, color: color.withValues(alpha: .78)),
+            const SizedBox(height: 6),
+            Text(label, style: TextStyle(color: color, fontSize: 12)),
+          ]),
+        ),
       );
 }
 
