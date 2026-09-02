@@ -27,7 +27,9 @@ class _EmailThreadPageWidgetState extends ConsumerState<EmailThreadPageWidget> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(emailStoreProvider.notifier).openThread(widget.threadId);
+      final store = ref.read(emailStoreProvider.notifier);
+      store.openThread(widget.threadId);
+      store.loadThread(widget.threadId).catchError((_) {});
     });
   }
 

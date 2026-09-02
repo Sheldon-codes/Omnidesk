@@ -30,6 +30,13 @@ class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
   void initState() {
     super.initState();
     _scrollController.addListener(_handleScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(emailStoreProvider.notifier).loadFolder(
+              ref.read(emailPageProvider).folder,
+            );
+      }
+    });
   }
 
   void _handleScroll() {
@@ -67,6 +74,7 @@ class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
     _searchController.clear();
     _searchFocusNode.unfocus();
     ref.read(emailPageProvider.notifier).selectFolder(folder);
+    ref.read(emailStoreProvider.notifier).loadFolder(folder);
   }
 
   @override
@@ -103,49 +111,79 @@ class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
                 child: const Icon(IconsaxPlusLinear.edit),
               ),
       ),
-      body: CustomScrollView(
-        controller: _scrollController,
-        slivers: [
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _EmailHeaderDelegate(
-              theme: theme,
-              topPadding: topPadding,
-              subtitle: state.subtitle,
-              searchActive: state.searchActive,
-              onSearch: state.searchActive ? _closeSearch : _openSearch,
-              onCompose: () => context.push('/email/compose'),
+      body: RefreshIndicator(
+        onRefresh: () => ref.read(emailStoreProvider.notifier).refresh(
+              state.folder,
+              query: state.query,
             ),
-          ),
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _EmailTabsDelegate(
-              theme: theme,
-              selected: state.folder,
-              onSelected: _selectFolder,
-            ),
-          ),
-          if (state.searchActive)
-            SliverToBoxAdapter(
-              child: _EmailSearchField(
-                controller: _searchController,
-                focusNode: _searchFocusNode,
-                onChanged: ref.read(emailPageProvider.notifier).setSearchQuery,
-                onClose: _closeSearch,
+        child: CustomScrollView(
+          controller: _scrollController,
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _EmailHeaderDelegate(
                 theme: theme,
+                topPadding: topPadding,
+                subtitle: state.subtitle,
+                searchActive: state.searchActive,
+                onSearch: state.searchActive ? _closeSearch : _openSearch,
+                onCompose: () => context.push('/email/compose'),
               ),
             ),
-          _emailList(
-            state.copyWith(threads: ref.watch(emailStoreProvider).threads),
-            theme,
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
-        ],
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _EmailTabsDelegate(
+                theme: theme,
+                selected: state.folder,
+                onSelected: _selectFolder,
+              ),
+            ),
+            if (state.searchActive)
+              SliverToBoxAdapter(
+                child: _EmailSearchField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  onChanged: (value) {
+                    ref.read(emailPageProvider.notifier).setSearchQuery(value);
+                    ref.read(emailStoreProvider.notifier).loadFolder(
+                          state.folder,
+                          query: value,
+                        );
+                  },
+                  onClose: _closeSearch,
+                  theme: theme,
+                ),
+              ),
+            _emailList(
+              state.copyWith(threads: ref.watch(emailStoreProvider).threads),
+              theme,
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          ],
+        ),
       ),
     );
   }
 
   Widget _emailList(EmailPageState state, FlutterFlowTheme theme) {
+    final store = ref.watch(emailStoreProvider);
+    if (store.loading && store.threads.isEmpty) {
+      return const SliverToBoxAdapter(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+    if (store.error != null && store.threads.isEmpty) {
+      return SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Center(child: Text('Unable to load email. Pull to retry.')),
+        ),
+      );
+    }
     final messages = state.filteredMessages;
     if (messages.isEmpty) {
       return SliverToBoxAdapter(

@@ -1,7 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
+
+import '../../services/api_service.dart';
 
 part 'email_page_model.g.dart';
 
@@ -253,21 +258,232 @@ class EmailDraft {
 }
 
 abstract class EmailRepository {
-  List<EmailThread> initialThreads();
+  Future<List<EmailThread>> loadFolder(EmailFolder folder,
+      {String query = '', int page = 1, int perPage = 20});
+  Future<EmailThread> loadThread(String id);
+  Future<void> markRead(String id);
+  Future<void> reply(String id, String message, {EmailAttachment? attachment});
+  Future<EmailThread> create(
+      {required String to,
+      String? customerName,
+      required String subject,
+      required String message});
+  Future<void> updateStatus(String id, String status);
 }
 
 class LocalEmailRepository implements EmailRepository {
   const LocalEmailRepository();
   @override
-  List<EmailThread> initialThreads() => _emailFixtures;
+  Future<List<EmailThread>> loadFolder(EmailFolder folder,
+          {String query = '', int page = 1, int perPage = 20}) async =>
+      _emailFixtures.where((t) => t.folders.contains(folder)).toList();
+  @override
+  Future<EmailThread> loadThread(String id) async =>
+      _emailFixtures.firstWhere((t) => t.id == id);
+  @override
+  Future<void> markRead(String id) async {}
+  @override
+  Future<void> reply(String id, String message,
+      {EmailAttachment? attachment}) async {}
+  @override
+  Future<EmailThread> create(
+          {required String to,
+          String? customerName,
+          required String subject,
+          required String message}) async =>
+      _emailFixtures.first;
+  @override
+  Future<void> updateStatus(String id, String status) async {}
 }
 
-final emailRepositoryProvider =
-    Provider<EmailRepository>((_) => const LocalEmailRepository());
+class RemoteEmailRepository implements EmailRepository {
+  RemoteEmailRepository(this._api);
+  final ApiService _api;
+
+  Map<String, dynamic> _map(dynamic value) => value is Map
+      ? value.map((key, val) => MapEntry(key.toString(), val))
+      : <String, dynamic>{};
+
+  @override
+  Future<List<EmailThread>> loadFolder(EmailFolder folder,
+      {String query = '', int page = 1, int perPage = 20}) async {
+    final statuses = switch (folder) {
+      EmailFolder.inbox => const ['open'],
+      EmailFolder.pending => const ['pending'],
+      EmailFolder.sent => const ['in_progress', 'resolved'],
+      EmailFolder.archived => const ['closed'],
+      EmailFolder.starred => const [null],
+    };
+    final results = <EmailThread>[];
+    for (final status in statuses) {
+      final response = await _api.get('/tickets', queryParameters: {
+        'source': 'email',
+        'assigned': 'me',
+        'per_page': perPage,
+        'page': page,
+        if (status != null) 'status': status,
+        if (folder == EmailFolder.starred) 'priority': 'urgent',
+        if (query.trim().isNotEmpty) 'search': query.trim(),
+      });
+      final data = response is Map ? response['data'] : null;
+      if (data is List) {
+        results.addAll(
+            data.whereType<Map>().map((item) => _summary(_map(item), folder)));
+      }
+    }
+    final deduped = <String, EmailThread>{
+      for (final item in results) item.id: item
+    };
+    return deduped.values.toList(growable: false);
+  }
+
+  EmailThread _summary(Map<String, dynamic> item, EmailFolder folder) {
+    final customer = _map(item['customer']);
+    final id = (item['id'] ?? item['display_number']).toString();
+    final subject = (item['subject'] ?? '(No subject)').toString();
+    final address = (customer['email'] ?? '').toString();
+    final sentAt = DateTime.tryParse(
+            (item['updated_at'] ?? item['created_at'] ?? '').toString()) ??
+        DateTime.now();
+    final message = EmailThreadMessage(
+        id: '$id-summary',
+        from: EmailAddress(
+            address: address.isEmpty ? 'unknown@example.com' : address,
+            name: customer['name']?.toString()),
+        to: const [EmailAddress(address: agentMailbox)],
+        sentAt: sentAt,
+        direction: EmailDirection.inbound,
+        body: EmailBody(plainText: subject));
+    final folders = <EmailFolder>{folder};
+    if (folder == EmailFolder.inbox && item['status'] == 'open') {
+      folders.add(EmailFolder.inbox);
+    }
+    return EmailThread(
+        id: id,
+        subject: subject,
+        messages: [message],
+        folders: folders,
+        ticketId: item['display_number']?.toString(),
+        customerId: customer['id']?.toString(),
+        unread: item['unread'] == true || item['agent_seen'] == false,
+        starred: folder == EmailFolder.starred);
+  }
+
+  @override
+  Future<EmailThread> loadThread(String id) async {
+    final ticketResponse = await _api.get('/tickets/$id');
+    final ticket =
+        _map(ticketResponse is Map ? ticketResponse['ticket'] : null);
+    final timelineResponse = await _api.get('/tickets/$id/timeline');
+    final timeline =
+        timelineResponse is Map ? timelineResponse['timeline'] : null;
+    final base =
+        _summary(ticket, _folderForStatus(ticket['status']?.toString()));
+    final messages = timeline is List
+        ? timeline.whereType<Map>().map(_timelineMessage).toList()
+        : <EmailThreadMessage>[];
+    return base.copyWith(messages: messages.isEmpty ? base.messages : messages);
+  }
+
+  EmailFolder _folderForStatus(String? status) => status == 'closed'
+      ? EmailFolder.archived
+      : status == 'pending'
+          ? EmailFolder.pending
+          : EmailFolder.inbox;
+  EmailThreadMessage _timelineMessage(Map raw) {
+    final item = _map(raw);
+    final fromCustomer = item['is_from_customer'] == true;
+    final text = (item['description'] ?? '').toString();
+    final at = DateTime.tryParse((item['created_at'] ?? '').toString()) ??
+        DateTime.now();
+    return EmailThreadMessage(
+        id: (item['id'] ?? at.microsecondsSinceEpoch).toString(),
+        from: EmailAddress(
+            address: fromCustomer ? 'customer@example.com' : agentMailbox,
+            name: fromCustomer ? 'Customer' : 'OmniDesk Support'),
+        to: const [EmailAddress(address: agentMailbox)],
+        sentAt: at,
+        direction:
+            fromCustomer ? EmailDirection.inbound : EmailDirection.outbound,
+        body: EmailBody(plainText: text),
+        attachments: item['media_url'] == null
+            ? const []
+            : [
+                EmailAttachment(
+                    id: 'media-${item['id']}',
+                    filename:
+                        (item['media_filename'] ?? 'attachment').toString(),
+                    mimeType: (item['media_type'] ?? 'application/octet-stream')
+                        .toString(),
+                    byteCount: 0)
+              ]);
+  }
+
+  @override
+  Future<void> markRead(String id) async {
+    await _api.post('/tickets/$id/mark-read', {});
+  }
+
+  @override
+  Future<void> reply(String id, String message,
+      {EmailAttachment? attachment}) async {
+    final payload = <String, dynamic>{'channel': 'email', 'message': message};
+    if (attachment != null) {
+      final path = attachment.localPath;
+      if (path == null || path.isEmpty) {
+        throw StateError('The selected attachment is not available locally.');
+      }
+      final file = File(path);
+      if (!await file.exists()) {
+        throw StateError('The selected attachment could not be found.');
+      }
+      payload.addAll({
+        'media_data': base64Encode(await file.readAsBytes()),
+        'media_type': attachment.mimeType,
+        'media_filename': attachment.filename,
+      });
+    }
+    await _api.post('/tickets/$id/reply', payload);
+  }
+
+  @override
+  Future<EmailThread> create(
+      {required String to,
+      String? customerName,
+      required String subject,
+      required String message}) async {
+    final response = await _api.post('/tickets', {
+      'subject': subject,
+      'description': message,
+      'customer_email': to,
+      if (customerName != null && customerName.trim().isNotEmpty)
+        'customer_name': customerName.trim(),
+      'priority': 'medium',
+      'source': 'email'
+    });
+    return _summary(
+        _map(response is Map ? response['ticket'] : null), EmailFolder.sent);
+  }
+
+  @override
+  Future<void> updateStatus(String id, String status) async {
+    await _api.post('/tickets/$id/status', {'status': status});
+  }
+}
+
+final emailRepositoryProvider = Provider<EmailRepository>(
+    (ref) => RemoteEmailRepository(ref.read(apiServiceProvider)));
 
 class EmailStoreState {
-  const EmailStoreState({required this.threads});
+  const EmailStoreState(
+      {required this.threads,
+      this.loading = false,
+      this.error,
+      this.loadedFolder});
   final List<EmailThread> threads;
+  final bool loading;
+  final Object? error;
+  final EmailFolder? loadedFolder;
   EmailThread? findThread(String id) =>
       threads.firstWhereOrNull((item) => item.id == id && !item.deleted);
 }
@@ -277,11 +493,31 @@ final emailStoreProvider =
 
 class EmailStore extends Notifier<EmailStoreState> {
   @override
-  EmailStoreState build() => EmailStoreState(
-      threads: ref.read(emailRepositoryProvider).initialThreads());
+  EmailStoreState build() => EmailStoreState(threads: _emailFixtures);
+  Future<void> loadFolder(EmailFolder folder, {String query = ''}) async {
+    state = EmailStoreState(
+        threads: state.threads, loading: true, loadedFolder: folder);
+    try {
+      final threads = await ref
+          .read(emailRepositoryProvider)
+          .loadFolder(folder, query: query);
+      state = EmailStoreState(threads: threads, loadedFolder: folder);
+    } catch (error) {
+      state = EmailStoreState(
+          threads: state.threads, error: error, loadedFolder: folder);
+    }
+  }
+
+  Future<void> refresh(EmailFolder folder, {String query = ''}) =>
+      loadFolder(folder, query: query);
   EmailThread? findById(String id) => state.findThread(id);
-  void openThread(String id) =>
-      _replace(id, (item) => item.copyWith(unread: false));
+  Future<void> openThread(String id) async {
+    _replace(id, (item) => item.copyWith(unread: false));
+    try {
+      await ref.read(emailRepositoryProvider).markRead(id);
+    } catch (_) {}
+  }
+
   void markUnread(String id) =>
       _replace(id, (item) => item.copyWith(unread: true));
   void toggleStar(String id) => _replace(id, (item) {
@@ -309,6 +545,35 @@ class EmailStore extends Notifier<EmailStoreState> {
         for (final item in state.threads)
           if (item.id == id) update(item) else item
       ]);
+
+  Future<void> reply(String id, String message,
+      {EmailAttachment? attachment}) async {
+    await ref
+        .read(emailRepositoryProvider)
+        .reply(id, message, attachment: attachment);
+    final thread = findById(id);
+    if (thread != null) await loadThread(id);
+  }
+
+  Future<void> loadThread(String id) async {
+    final thread = await ref.read(emailRepositoryProvider).loadThread(id);
+    _replace(id, (_) => thread);
+  }
+
+  Future<EmailThread> createRemote(
+      {required String to,
+      String? customerName,
+      required String subject,
+      required String message}) async {
+    final thread = await ref.read(emailRepositoryProvider).create(
+        to: to, customerName: customerName, subject: subject, message: message);
+    createSentThread(thread);
+    return thread;
+  }
+
+  Future<void> updateStatus(String id, String status) async {
+    await ref.read(emailRepositoryProvider).updateStatus(id, status);
+  }
 }
 
 final emailThreadProvider = Provider.family<EmailThread?, String>(

@@ -15,6 +15,12 @@ ApiService apiService(Ref ref) => ApiService(
       baseUrl: dotenv.env['API_BASE_URL'] ?? '',
       readAccessToken: () =>
           ref.read(authSessionControllerProvider).accessToken,
+      readWorkspaceId: () => ref
+          .read(authSessionControllerProvider)
+          .session
+          ?.user
+          .activeWorkspace
+          ?.id,
       onUnauthorized: () =>
           ref.read(authSessionControllerProvider.notifier).invalidateSession(),
     );
@@ -23,9 +29,11 @@ class ApiService {
   ApiService({
     required this.baseUrl,
     required String? Function() readAccessToken,
+    String? Function()? readWorkspaceId,
     required Future<void> Function() onUnauthorized,
     Dio? dio,
   })  : _readAccessToken = readAccessToken,
+        _readWorkspaceId = readWorkspaceId ?? (() => null),
         _onUnauthorized = onUnauthorized,
         _dio = dio ??
             Dio(BaseOptions(
@@ -44,6 +52,10 @@ class ApiService {
           final token = _readAccessToken();
           if (token != null && token.isNotEmpty) {
             options.headers['Authorization'] = 'Bearer $token';
+          }
+          final workspaceId = _readWorkspaceId();
+          if (workspaceId != null && workspaceId.isNotEmpty) {
+            options.headers['X-Workspace-Id'] = workspaceId;
           }
         }
         if (_diagnosticsEnabled) {
@@ -75,6 +87,7 @@ class ApiService {
   final Dio _dio;
   final String baseUrl;
   final String? Function() _readAccessToken;
+  final String? Function() _readWorkspaceId;
   final Future<void> Function() _onUnauthorized;
 
   static bool get _diagnosticsEnabled => kDebugMode || kProfileMode;

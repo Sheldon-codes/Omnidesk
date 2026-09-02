@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:vsc_quill_delta_to_html/vsc_quill_delta_to_html.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../customer_editor_page/customer_editor_page_model.dart';
@@ -293,42 +292,40 @@ class _EmailComposerPageWidgetState
     if (_subject.text.trim().isEmpty && plain.isEmpty && _attachments.isEmpty) {
       return _snack('Add a subject, message, or attachment');
     }
+    if (plain.isEmpty) {
+      return _snack('Add a message before sending');
+    }
     if (!attachmentsReady) {
       return _snack('Remove or retry unavailable attachments');
     }
-    setState(() => _sending = true);
-    final bodyHtml = QuillDeltaToHtmlConverter(_deltaJson()).convert();
-    final message = EmailThreadMessage(
-      id: 'email-${DateTime.now().microsecondsSinceEpoch}',
-      from: const EmailAddress(address: agentMailbox, name: 'OmniDesk Support'),
-      to: recipients,
-      cc: _cc,
-      bcc: _bcc,
-      sentAt: DateTime.now(),
-      direction: EmailDirection.outbound,
-      body: EmailBody(
-        plainText: plain.isEmpty
-            ? 'Attachment sent'
-            : '$plain\n\nThanks,\nOmniDesk Support',
-        html: '$bodyHtml<p><br>Thanks,<br>OmniDesk Support</p>',
-        forwarded: widget.mode == EmailComposerMode.forward,
-      ),
-      attachments: _attachments,
-    );
     final thread = _thread;
-    if (thread == null) {
-      ref.read(emailStoreProvider.notifier).createSentThread(
-            EmailThread(
-              id: 'thread-${DateTime.now().microsecondsSinceEpoch}',
+    if (thread == null && _attachments.isNotEmpty) {
+      return _snack('Attachments are not supported for new emails yet');
+    }
+    setState(() => _sending = true);
+    try {
+      if (thread == null) {
+        await ref.read(emailStoreProvider.notifier).createRemote(
+              to: recipients.first.address,
+              customerName: recipients.first.name,
               subject: _subject.text.trim().isEmpty
                   ? '(No subject)'
                   : _subject.text.trim(),
-              messages: [message],
-              folders: const {EmailFolder.sent},
-            ),
-          );
-    } else {
-      ref.read(emailStoreProvider.notifier).appendOutgoing(thread.id, message);
+              message: plain,
+            );
+      } else {
+        await ref.read(emailStoreProvider.notifier).reply(
+              thread.id,
+              plain,
+              attachment: _attachments.isEmpty ? null : _attachments.first,
+            );
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _sending = false);
+        _snack(error.toString().replaceFirst('Exception: ', ''));
+      }
+      return;
     }
     await _draftRepository.delete(_draftKey);
     if (!mounted) return;
