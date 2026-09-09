@@ -1,15 +1,36 @@
 PODS:
   - Flutter (1.0.0)
+  - NWWebSocket (0.5.10)
+  - pusher_channels_flutter (0.0.1):
+    - Flutter
+    - PusherSwift (~> 10.1.9)
+  - PusherSwift (10.1.10):
+    - NWWebSocket (~> 0.5.10)
+    - PusherTweetNacl (~> 1.2.0)
+  - PusherTweetNacl (1.2.0)
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
+  - pusher_channels_flutter (from `.symlinks/plugins/pusher_channels_flutter/ios`)
+
+SPEC REPOS:
+  trunk:
+    - NWWebSocket
+    - PusherSwift
+    - PusherTweetNacl
 
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
+  pusher_channels_flutter:
+    :path: ".symlinks/plugins/pusher_channels_flutter/ios"
 
 SPEC CHECKSUMS:
   Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
+  NWWebSocket: 873eb4b18acd0317da70cdba388d792a3187ce00
+  pusher_channels_flutter: 2723222f2686852dd91d13780938d11cca114a39
+  PusherSwift: 6022fe6584b4317dc5c177091292b2a4d80a8c35
+  PusherTweetNacl: 015f56f2cf010e718703f2bd9bca66fdcc91b208
 
 PODFILE CHECKSUM: 3ba3a73b1b12adcf321a227a745625fe0888cc82
 

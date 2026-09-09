@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
@@ -65,6 +67,7 @@ class ConversationImageMessage extends StatelessWidget {
     final ratio = content.width != null && content.height != null
         ? content.width! / content.height!
         : 4 / 3;
+    final remote = isRemoteConversationMedia(content.assetPath);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -73,16 +76,20 @@ class ConversationImageMessage extends StatelessWidget {
           image: true,
           label: content.caption ?? 'Open photo',
           child: GestureDetector(
-            onTap: isRemoteConversationMedia(content.assetPath)
-                ? () => _showExternalMediaNotice(context)
-                : onOpen,
+            onTap: onOpen,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(11),
               child: AspectRatio(
                 aspectRatio: ratio.clamp(.76, 1.5),
-                child: isRemoteConversationMedia(content.assetPath)
-                    ? _ExternalMediaPlaceholder(
-                        color: textColor, label: 'External image')
+                child: remote
+                    ? CachedNetworkImage(
+                        imageUrl: content.assetPath,
+                        fit: BoxFit.cover,
+                        placeholder: (_, __) => _MediaLoading(
+                            color: textColor, label: 'Loading image…'),
+                        errorWidget: (_, __, ___) =>
+                            _MediaError(color: textColor),
+                      )
                     : Image.asset(
                         content.assetPath,
                         fit: BoxFit.cover,
@@ -117,16 +124,17 @@ class ConversationVideoMessage extends StatelessWidget {
   final VoidCallback onOpen;
 
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context) {
+    final remoteThumb =
+        isRemoteConversationMedia(content.thumbnailAssetPath);
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Semantics(
             button: true,
             label: 'Play video, ${formatChatDuration(content.duration)}',
             child: GestureDetector(
-              onTap: isRemoteConversationMedia(content.assetPath)
-                  ? () => _showExternalMediaNotice(context)
-                  : onOpen,
+              onTap: onOpen,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(11),
                 child: AspectRatio(
@@ -134,9 +142,15 @@ class ConversationVideoMessage extends StatelessWidget {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      if (isRemoteConversationMedia(content.thumbnailAssetPath))
-                        _ExternalMediaPlaceholder(
-                            color: textColor, label: 'External video')
+                      if (remoteThumb)
+                        CachedNetworkImage(
+                          imageUrl: content.thumbnailAssetPath,
+                          fit: BoxFit.cover,
+                          placeholder: (_, __) => _MediaLoading(
+                              color: textColor, label: 'Loading video…'),
+                          errorWidget: (_, __, ___) =>
+                              _MediaError(color: textColor),
+                        )
                       else
                         Image.asset(content.thumbnailAssetPath,
                             fit: BoxFit.cover, cacheWidth: 900),
@@ -170,6 +184,7 @@ class ConversationVideoMessage extends StatelessWidget {
           ],
         ],
       );
+  }
 }
 
 bool isRemoteConversationMedia(String value) {
@@ -177,19 +192,8 @@ bool isRemoteConversationMedia(String value) {
   return uri != null && (uri.scheme == 'https' || uri.scheme == 'http');
 }
 
-void _showExternalMediaNotice(BuildContext context) {
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(
-      const SnackBar(
-        content: Text(
-            'External media is blocked until secure preview is available.'),
-      ),
-    );
-}
-
-class _ExternalMediaPlaceholder extends StatelessWidget {
-  const _ExternalMediaPlaceholder({required this.color, required this.label});
+class _MediaLoading extends StatelessWidget {
+  const _MediaLoading({required this.color, required this.label});
   final Color color;
   final String label;
 
@@ -198,7 +202,12 @@ class _ExternalMediaPlaceholder extends StatelessWidget {
         color: color.withValues(alpha: .10),
         child: Center(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.cloud_off_outlined, color: color.withValues(alpha: .78)),
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: color.withValues(alpha: .78)),
+            ),
             const SizedBox(height: 6),
             Text(label, style: TextStyle(color: color, fontSize: 12)),
           ]),
@@ -484,6 +493,15 @@ Future<void> showConversationVideoViewer(
     );
 
 Future<void> openBundledDocument(DocumentMessageContent content) async {
+  if (isRemoteConversationMedia(content.assetPath)) {
+    final directory = await getTemporaryDirectory();
+    final file = File('${directory.path}/${content.fileName}');
+    if (!await file.exists()) {
+      await Dio().download(content.assetPath, file.path);
+    }
+    await OpenFile.open(file.path);
+    return;
+  }
   final bytes = await rootBundle.load(content.assetPath);
   final directory = await getTemporaryDirectory();
   final file = File('${directory.path}/${content.fileName}');
@@ -521,7 +539,20 @@ class _ImageViewer extends StatelessWidget {
                   child: InteractiveViewer(
                     minScale: 1,
                     maxScale: 5,
-                    child: Center(child: Image.asset(content.assetPath)),
+                    child: Center(
+                      child: isRemoteConversationMedia(content.assetPath)
+                          ? CachedNetworkImage(
+                              imageUrl: content.assetPath,
+                              placeholder: (_, __) => const Center(
+                                  child: CircularProgressIndicator(
+                                      color: Colors.white)),
+                              errorWidget: (_, __, ___) => const Icon(
+                                  Icons.broken_image_outlined,
+                                  color: Colors.white70,
+                                  size: 48),
+                            )
+                          : Image.asset(content.assetPath),
+                    ),
                   ),
                 ),
                 if (content.caption case final caption?)
@@ -553,7 +584,9 @@ class _VideoViewerState extends State<_VideoViewer> {
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.asset(widget.content.assetPath);
+    _controller = isRemoteConversationMedia(widget.content.assetPath)
+        ? VideoPlayerController.networkUrl(Uri.parse(widget.content.assetPath))
+        : VideoPlayerController.asset(widget.content.assetPath);
     _initialize = _controller.initialize();
     _controller.addListener(_onVideoChanged);
   }

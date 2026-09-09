@@ -25,6 +25,7 @@ class ChatConversation {
     required this.preview,
     required this.time,
     this.avatar,
+    this.avatarUrl,
     this.customerId,
     this.contactIdentifier,
     this.unreadCount = 0,
@@ -39,6 +40,7 @@ class ChatConversation {
   final String preview;
   final String time;
   final String? avatar;
+  final String? avatarUrl;
   final String? customerId;
   final String? contactIdentifier;
   final int unreadCount;
@@ -52,6 +54,7 @@ class ChatConversation {
     String? preview,
     String? time,
     int? unreadCount,
+    String? avatarUrl,
   }) =>
       ChatConversation(
         id: id,
@@ -62,6 +65,7 @@ class ChatConversation {
         preview: preview ?? this.preview,
         time: time ?? this.time,
         avatar: avatar,
+        avatarUrl: avatarUrl ?? this.avatarUrl,
         customerId: customerId,
         contactIdentifier: contactIdentifier,
         unreadCount: unreadCount ?? this.unreadCount,
@@ -211,6 +215,12 @@ class ConversationMessage {
     this.delivery = MessageDelivery.none,
     this.replyToId,
     this.reactions = const [],
+    this.quotedText,
+    this.quotedSenderName,
+    this.agentName,
+    this.customerAvatarUrl,
+    this.fallbackLabel,
+    this.uploadProgress,
   });
   final String id;
   final MessageSender sender;
@@ -219,10 +229,18 @@ class ConversationMessage {
   final MessageDelivery delivery;
   final String? replyToId;
   final List<MessageReaction> reactions;
+  final String? quotedText;
+  final String? quotedSenderName;
+  final String? agentName;
+  final String? customerAvatarUrl;
+  final String? fallbackLabel;
+  final double? uploadProgress;
 
   ConversationMessage copyWith({
     MessageDelivery? delivery,
     List<MessageReaction>? reactions,
+    double? uploadProgress,
+    bool clearUploadProgress = false,
   }) =>
       ConversationMessage(
         id: id,
@@ -232,6 +250,13 @@ class ConversationMessage {
         delivery: delivery ?? this.delivery,
         replyToId: replyToId,
         reactions: reactions ?? this.reactions,
+        quotedText: quotedText,
+        quotedSenderName: quotedSenderName,
+        agentName: agentName,
+        customerAvatarUrl: customerAvatarUrl,
+        fallbackLabel: fallbackLabel,
+        uploadProgress:
+            clearUploadProgress ? null : (uploadProgress ?? this.uploadProgress),
       );
 }
 

@@ -1245,6 +1245,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.0"
+  js:
+    dependency: transitive
+    description:
+      name: js
+      sha256: "53385261521cc4a0c4658fd0ad07a7d14591cf8fc33abbceae306ddb974888dc"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.7.2"
   json_annotation:
     dependency: transitive
     description:
@@ -1733,6 +1741,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.5.0"
+  pusher_channels_flutter:
+    dependency: "direct main"
+    description:
+      name: pusher_channels_flutter
+      sha256: "683e4cb7c1803b3358142be895f144ec9818c282630ce6476a0b4dd75faf56b6"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.6.0"
   qr:
     dependency: transitive
     description:
@@ -2379,7 +2395,7 @@ packages:
     source: hosted
     version: "1.0.1"
   web_socket_channel:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: web_socket_channel
       sha256: d645757fb0f4773d602444000a8131ff5d48c9e47adfe9772652dd1a4f2d45c8

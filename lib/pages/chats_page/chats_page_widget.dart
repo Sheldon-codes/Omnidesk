@@ -5,7 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
+import '../../components/user_avatar/user_avatar.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
+import '../../services/realtime/connection_monitor.dart';
+import '../../services/realtime/realtime_event.dart';
+import '../../services/realtime/realtime_service.dart';
 import '../conversation_room_page/whatsapp_live_store.dart';
 import 'chats_page_model.dart';
 
@@ -106,10 +110,14 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
     final state = ref.watch(chatsPageProvider);
     final threads = ref.watch(conversationStoreProvider);
     final whatsApp = ref.watch(whatsAppInboxProvider);
+    final online = ref.watch(connectionMonitorProvider);
+    final connState = ref.watch(realtimeConnectionProvider).value;
     final theme = FlutterFlowTheme.of(context);
     final topPadding = MediaQuery.paddingOf(context).top;
     final filtersActive = state.type != ChatConversationType.all ||
         state.status != ChatConversationStatus.all;
+    final showDegraded = state.channel == ChatChannel.whatsapp &&
+        (!online || connState == RealtimeConnectionState.degraded);
 
     return Scaffold(
       backgroundColor: theme.primaryBackground,
@@ -133,7 +141,7 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
                 topPadding: topPadding,
                 subtitle:
                     state.channel == ChatChannel.whatsapp && whatsApp.total > 0
-                        ? '${whatsApp.total} conversations'
+                        ? '${whatsApp.total} conversations${whatsApp.live ? ' · Live' : ''}'
                         : state.subtitle,
                 searchActive: state.searchActive,
                 filtersActive: filtersActive,
@@ -141,6 +149,37 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
                 onFilter: _openFilters,
               ),
             ),
+            if (showDegraded)
+              SliverToBoxAdapter(
+                child: Container(
+                  margin: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(
+                      color: theme.secondaryBackground,
+                      borderRadius: BorderRadius.circular(8)),
+                  child: Row(children: [
+                    Icon(Icons.cloud_off_outlined,
+                        color: theme.secondaryText, size: 15),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                          online
+                              ? 'Reconnecting live updates…'
+                              : 'Offline — showing your last conversations',
+                          style: TextStyle(
+                              color: theme.secondaryText, fontSize: 12)),
+                    ),
+                    if (whatsApp.live)
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                            color: theme.primary, shape: BoxShape.circle),
+                      ),
+                  ]),
+                ),
+              ),
             SliverPersistentHeader(
               pinned: true,
               delegate: _ChatsTabsDelegate(
@@ -699,23 +738,13 @@ class _Avatar extends StatelessWidget {
   final FlutterFlowTheme theme;
 
   @override
-  Widget build(BuildContext context) => Container(
-        width: 42,
-        height: 42,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: theme.secondaryBackground,
-          shape: BoxShape.circle,
-        ),
-        child: Text(
-          conversation.avatar ?? conversation.initials,
-          style: theme.bodyMedium.override(
-            fontFamily: theme.bodyMediumFamily,
-            color: theme.secondaryText,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+  Widget build(BuildContext context) => UserAvatar(
+        imageUrl: conversation.avatarUrl,
+        initials: conversation.avatar ?? conversation.initials,
+        radius: 21,
+        backgroundColor: theme.secondaryBackground,
+        foregroundColor: theme.secondaryText,
+        fontSize: 14,
       );
 }
 

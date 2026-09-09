@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1057010279183",
+    "project_id": "digistem-32d80",
+    "storage_bucket": "digistem-32d80.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1057010279183:android:d2e8d6122dfb00c226147a",
+        "android_client_info": {
+          "package_name": "com.bigbrainzsolutions.omnidesk"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAFEEptf-6u-5B-vC7ZZtepkV8O9cF1pnE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

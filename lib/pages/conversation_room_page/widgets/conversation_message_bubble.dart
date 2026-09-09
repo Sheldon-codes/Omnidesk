@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:intl/intl.dart';
 
+import '../../../components/user_avatar/user_avatar.dart';
 import '../../../flutter_flow/flutter_flow_theme.dart';
 import '../conversation_room_page_model.dart';
 import 'conversation_media_widgets.dart';
@@ -18,6 +19,7 @@ class ConversationMessageBubble extends StatefulWidget {
     required this.quoted,
     required this.groupPosition,
     required this.customerInitial,
+    this.customerAvatarUrl,
     required this.theme,
     required this.audioController,
     required this.canReply,
@@ -35,6 +37,7 @@ class ConversationMessageBubble extends StatefulWidget {
   final ConversationMessage? quoted;
   final MessageGroupPosition groupPosition;
   final String customerInitial;
+  final String? customerAvatarUrl;
   final FlutterFlowTheme theme;
   final ConversationAudioController audioController;
   final bool canReply;
@@ -151,12 +154,11 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
           SizedBox(
             width: 32,
             child: showAvatar
-                ? CircleAvatar(
-                    radius: 13,
-                    backgroundColor: widget.theme.secondaryBackground,
-                    child: Text(widget.customerInitial,
-                        style: TextStyle(
-                            color: widget.theme.primaryText, fontSize: 10)),
+                ? _CustomerAvatar(
+                    initial: widget.customerInitial,
+                    avatarUrl: widget.customerAvatarUrl ??
+                        widget.message.customerAvatarUrl,
+                    theme: widget.theme,
                   )
                 : null,
           ),
@@ -185,6 +187,16 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
                             message: quoted,
                             textColor: textColor,
                             onTap: () => widget.onQuoteTap(quoted.id),
+                          )
+                        else if (widget.message.quotedText != null)
+                          _QuotedFallbackPreview(
+                            text: widget.message.quotedText!,
+                            senderLabel: widget.message.quotedSenderName,
+                            textColor: textColor,
+                            onTap: widget.message.replyToId == null
+                                ? null
+                                : () => widget
+                                    .onQuoteTap(widget.message.replyToId!),
                           ),
                         _MessageContentRenderer(
                           message: widget.message,
@@ -193,6 +205,20 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
                           onLocation: widget.onLocation,
                           onContact: widget.onContact,
                         ),
+                        if (widget.message.uploadProgress != null) ...[
+                          const SizedBox(height: 6),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(3),
+                            child: LinearProgressIndicator(
+                              value: widget.message.uploadProgress!.clamp(0.0, 1.0),
+                              minHeight: 3,
+                              backgroundColor:
+                                  textColor.withValues(alpha: .18),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                  textColor.withValues(alpha: .85)),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 4),
                         Align(
                           alignment: Alignment.bottomRight,
@@ -351,6 +377,79 @@ class _QuotedMessagePreview extends StatelessWidget {
             ),
           ),
         ),
+      );
+}
+
+class _QuotedFallbackPreview extends StatelessWidget {
+  const _QuotedFallbackPreview({
+    required this.text,
+    required this.textColor,
+    this.senderLabel,
+    this.onTap,
+  });
+  final String text;
+  final Color textColor;
+  final String? senderLabel;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(7),
+        child: Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 7),
+          padding: const EdgeInsets.fromLTRB(8, 6, 7, 6),
+          decoration: BoxDecoration(
+            color: textColor.withValues(alpha: .09),
+            borderRadius: BorderRadius.circular(7),
+            border: Border(
+              left: BorderSide(
+                  color: textColor.withValues(alpha: .65), width: 2),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (senderLabel != null && senderLabel!.isNotEmpty)
+                Text(
+                  senderLabel!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: textColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700),
+                ),
+              Text(
+                text,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: textColor.withValues(alpha: .77),
+                    fontSize: 11,
+                    height: 1.25),
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
+class _CustomerAvatar extends StatelessWidget {
+  const _CustomerAvatar(
+      {required this.initial, required this.theme, this.avatarUrl});
+  final String initial;
+  final FlutterFlowTheme theme;
+  final String? avatarUrl;
+  @override
+  Widget build(BuildContext context) => UserAvatar(
+        imageUrl: avatarUrl,
+        initials: initial,
+        radius: 13,
+        backgroundColor: theme.secondaryBackground,
+        foregroundColor: theme.primaryText,
+        fontSize: 10,
       );
 }
 

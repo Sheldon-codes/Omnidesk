@@ -10,6 +10,11 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:intl/intl.dart';
 
 import '../../components/call_experience/call_session_controller.dart';
+import '../../components/user_avatar/user_avatar.dart';
+import '../../services/realtime/connection_monitor.dart';
+import '../../services/realtime/realtime_event.dart';
+import '../../services/realtime/realtime_service.dart';
+import '../../services/realtime/typing_presence.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import 'conversation_room_page_model.dart';
 import 'whatsapp_live_store.dart';
@@ -46,6 +51,8 @@ class _ConversationRoomPageWidgetState
   String? _highlightedMessageId;
   Timer? _highlightTimer;
   Timer? _typingTimer;
+  bool _initialJumpDone = false;
+  String? _jumpForConversation;
 
   @override
   void initState() {
@@ -55,7 +62,6 @@ class _ConversationRoomPageWidgetState
     if (_isLiveWhatsApp) {
       _liveStore = ref.read(whatsAppThreadsProvider.notifier);
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToLatest());
     if (_isLiveWhatsApp) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -70,9 +76,9 @@ class _ConversationRoomPageWidgetState
     _typingTimer?.cancel();
     _typingTimer = Timer(const Duration(milliseconds: 700), () {
       if (!mounted) return;
-      unawaited(
-        ref.read(whatsAppRepositoryProvider).typing(widget.conversationId),
-      );
+      unawaited(ref
+          .read(whatsAppThreadsProvider.notifier)
+          .sendTyping(widget.conversationId));
     });
   }
 
@@ -117,12 +123,23 @@ class _ConversationRoomPageWidgetState
     );
   }
 
+  /// Instant, non-animated jump used exactly once per conversation when the
+  /// first messages render — the room opens already pinned to the latest
+  /// message with no visible glide.
+  void _jumpToLatest() {
+    if (!mounted || !_scrollController.hasClients) return;
+    final max = _scrollController.position.maxScrollExtent;
+    if (max <= 0) return;
+    _scrollController.jumpTo(max);
+  }
+
   Future<void> _send(ConversationThread thread) async {
     final value = _composerController.text.trim();
     if (value.isEmpty) {
       _showSnack('Enter a message');
       return;
     }
+    final online = ref.read(connectionMonitorProvider);
     try {
       if (_isLiveWhatsApp) {
         await ref.read(whatsAppThreadsProvider.notifier).send(
@@ -130,6 +147,9 @@ class _ConversationRoomPageWidgetState
               value,
               replyToId: _replyingTo?.id,
             );
+        if (!online && mounted) {
+          _showSnack('Offline — message queued, will send on reconnect');
+        }
       } else {
         ref.read(conversationStoreProvider.notifier).sendText(
               thread.conversation.id,
@@ -224,11 +244,6 @@ class _ConversationRoomPageWidgetState
         : null;
     final thread = _isLiveWhatsApp ? liveState?.thread : localThread;
     final theme = FlutterFlowTheme.of(context);
-    if (_isLiveWhatsApp &&
-        thread == null &&
-        (liveState == null || (liveState.loading && liveState.error == null))) {
-      return _ConversationRoomSkeleton(theme: theme, knownThread: inboxThread);
-    }
     if (_isLiveWhatsApp && liveState?.error != null && thread == null) {
       return _LiveRoomError(
           theme: theme,
@@ -236,10 +251,58 @@ class _ConversationRoomPageWidgetState
               .read(whatsAppThreadsProvider.notifier)
               .load(widget.conversationId));
     }
+    // Any live room without content yet shows the shimmer — first open,
+    // reload, blank-but-loading timeline, or a stale entry left behind by
+    // a previous visit (e.g. popped mid-load). Never _NotFound here.
+    final showSkeleton = _isLiveWhatsApp &&
+        (thread == null ||
+            (thread.messages.isEmpty &&
+                (liveState == null || liveState.loading)));
+    if (showSkeleton) {
+      return _ConversationRoomSkeleton(theme: theme, knownThread: inboxThread);
+    }
     if (thread == null) return _NotFound(theme: theme);
 
     final conversation = thread.conversation;
     final resolved = conversation.status == ChatConversationStatus.resolved;
+    final typing = _isLiveWhatsApp
+        ? ref.watch(typingPresenceProvider(conversation.id)).values
+            .where((t) => t.isTyping)
+            .firstOrNull
+        : null;
+    final online = ref.watch(connectionMonitorProvider);
+    final connState =
+        _isLiveWhatsApp ? ref.watch(realtimeConnectionProvider).value : null;
+    final degraded = _isLiveWhatsApp &&
+        (!online ||
+            liveState?.degraded == true ||
+            connState == RealtimeConnectionState.degraded);
+    // Auto-scroll when live messages land while the user is near the bottom.
+    ref.listen(
+        whatsAppThreadsProvider.select(
+            (m) => m[widget.conversationId]?.thread?.messages.length ?? 0),
+        (prev, next) {
+      if (!mounted || next <= (prev ?? 0)) return;
+      if (!_scrollController.hasClients) return;
+      final pos = _scrollController.position;
+      if (pos.extentAfter < 320) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToLatest());
+      }
+    });
+    // Pin to the latest message the moment the first batch renders.
+    // jumpTo (not animateTo) so the open feels instant — no visible scroll.
+    if (_jumpForConversation != widget.conversationId) {
+      _jumpForConversation = widget.conversationId;
+      _initialJumpDone = false;
+    }
+    if (!_initialJumpDone && thread.messages.isNotEmpty) {
+      _initialJumpDone = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _jumpToLatest();
+        // Second frame catches late layout growth (remote images sizing).
+        WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToLatest());
+      });
+    }
     return Scaffold(
       backgroundColor: theme.primaryBackground,
       resizeToAvoidBottomInset: true,
@@ -255,6 +318,46 @@ class _ConversationRoomPageWidgetState
                   : () => context.push('/customers/${conversation.customerId}'),
               onActions: () => _openActions(thread),
             ),
+            if (degraded)
+              Container(
+                width: double.infinity,
+                color: theme.secondaryBackground,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                child: Text(
+                  'Reconnecting — new messages may be delayed',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: theme.secondaryText, fontSize: 11),
+                ),
+              ),
+            if (typing != null)
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 28,
+                      height: 14,
+                      child: _TypingDots(color: theme.primary),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        typing.who == 'customer'
+                            ? '${typing.displayName ?? conversation.name} is typing…'
+                            : '${typing.displayName ?? 'Another agent'} is typing…',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: theme.secondaryText, fontSize: 11),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             Expanded(
               child: ColoredBox(
                 color: theme.secondaryBackground,
@@ -284,7 +387,10 @@ class _ConversationRoomPageWidgetState
                   },
                   onRetry: (message) {
                     if (_isLiveWhatsApp) {
-                      _showSnack('Try sending the message again');
+                      unawaited(ref
+                          .read(whatsAppThreadsProvider.notifier)
+                          .retry(conversation.id, message.id));
+                      _showSnack('Retrying queued message');
                       return;
                     }
                     ref
@@ -775,7 +881,8 @@ class _ConversationRoomPageWidgetState
 
   Future<void> _pickLiveAttachment(ConversationThread thread) async {
     try {
-      final path = (await FilePicker.pickFile())?.path;
+      final picked = await FilePicker.pickFile();
+      final path = picked?.path;
       if (path == null || path.isEmpty) return;
       await ref.read(whatsAppThreadsProvider.notifier).send(
             thread.conversation.id,
@@ -928,11 +1035,12 @@ class _RoomHeader extends StatelessWidget {
               onTap: onOpenCustomer,
               child: Row(
                 children: [
-                  CircleAvatar(
+                  UserAvatar(
+                    imageUrl: item.avatarUrl,
+                    initials: item.avatar ?? item.initials,
                     radius: 18,
                     backgroundColor: theme.secondaryBackground,
-                    child: Text(item.avatar ?? item.initials,
-                        style: TextStyle(color: theme.primaryText)),
+                    foregroundColor: theme.primaryText,
                   ),
                   const SizedBox(width: 9),
                   Expanded(
@@ -1057,6 +1165,7 @@ class _MessageTimeline extends StatelessWidget {
               quoted: quoted,
               groupPosition: messageItem.groupPosition,
               customerInitial: thread.conversation.initials,
+              customerAvatarUrl: thread.conversation.avatarUrl,
               theme: theme,
               audioController: audioController,
               canReply: thread.capabilities.canReply,
@@ -1438,13 +1547,13 @@ class _ConversationRoomSkeleton extends StatelessWidget {
                         height: 48,
                         withAvatar: true,
                         borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(16),
-                          topRight: Radius.circular(16),
+                          topLeft: Radius.circular(15),
+                          topRight: Radius.circular(15),
                           bottomLeft: Radius.circular(4),
-                          bottomRight: Radius.circular(16),
+                          bottomRight: Radius.circular(15),
                         ),
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 2),
                       _TimelineSkeletonBubble(
                         color: base,
                         alignment: Alignment.centerLeft,
@@ -1452,34 +1561,34 @@ class _ConversationRoomSkeleton extends StatelessWidget {
                         height: 64,
                         borderRadius: const BorderRadius.only(
                           topLeft: Radius.circular(4),
-                          topRight: Radius.circular(16),
+                          topRight: Radius.circular(15),
                           bottomLeft: Radius.circular(4),
-                          bottomRight: Radius.circular(16),
+                          bottomRight: Radius.circular(15),
                         ),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
                       _TimelineSkeletonBubble(
                         color: base,
                         alignment: Alignment.centerRight,
                         width: 178,
                         height: 55,
                         borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(16),
-                          topRight: Radius.circular(16),
-                          bottomLeft: Radius.circular(16),
+                          topLeft: Radius.circular(15),
+                          topRight: Radius.circular(15),
+                          bottomLeft: Radius.circular(15),
                           bottomRight: Radius.circular(4),
                         ),
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 2),
                       _TimelineSkeletonBubble(
                         color: base,
                         alignment: Alignment.centerRight,
                         width: 112,
                         height: 46,
                         borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(16),
+                          topLeft: Radius.circular(15),
                           topRight: Radius.circular(4),
-                          bottomLeft: Radius.circular(16),
+                          bottomLeft: Radius.circular(15),
                           bottomRight: Radius.circular(4),
                         ),
                       ),
@@ -1617,20 +1726,20 @@ class _RoomShimmerState extends State<_RoomShimmer>
     if (MediaQuery.disableAnimationsOf(context)) {
       return ColoredBox(color: widget.color, child: widget.child);
     }
+    // Bright highlight band sweeping across the shape — a real shine sweep
+    // rather than a subtle pulse. The band is lerped toward white so it
+    // reads on both light and dark themes.
+    final shine = Color.lerp(widget.color, Colors.white, .72) ?? Colors.white;
     return AnimatedBuilder(
       animation: _controller,
       child: widget.child,
       builder: (context, child) => ShaderMask(
         blendMode: BlendMode.srcATop,
         shaderCallback: (bounds) => LinearGradient(
-          colors: [
-            widget.color,
-            widget.color.withValues(alpha: .35),
-            widget.color
-          ],
-          stops: const [0, .48, 1],
-          begin: Alignment(-1.8 + _controller.value * 3.6, 0),
-          end: Alignment(-.8 + _controller.value * 3.6, 0),
+          colors: [widget.color, shine, widget.color],
+          stops: const [.32, .5, .68],
+          begin: Alignment(-1.9 + _controller.value * 3.8, -.25),
+          end: Alignment(-.9 + _controller.value * 3.8, .25),
         ).createShader(bounds),
         child: ColoredBox(color: widget.color, child: child),
       ),
@@ -1676,5 +1785,70 @@ extension<T> on Iterable<T> {
   T? get firstOrNull {
     final iterator = this.iterator;
     return iterator.moveNext() ? iterator.current : null;
+  }
+}
+
+class _TypingDots extends StatefulWidget {
+  const _TypingDots({required this.color});
+  final Color color;
+  @override
+  State<_TypingDots> createState() => _TypingDotsState();
+}
+
+class _TypingDotsState extends State<_TypingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          for (var i = 0; i < 3; i++)
+            Container(
+              width: 5,
+              height: 5,
+              decoration: BoxDecoration(
+                  color: widget.color, shape: BoxShape.circle),
+            ),
+        ],
+      );
+    }
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) => Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          for (var i = 0; i < 3; i++)
+            Opacity(
+              opacity: _dotOpacity(_controller.value, i),
+              child: Container(
+                width: 5,
+                height: 5,
+                decoration: BoxDecoration(
+                    color: widget.color, shape: BoxShape.circle),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Triangle wave in [0.35, 1.0] — staggered per dot. Plain arithmetic with
+  /// no `%`/`*` precedence traps and no path outside [0, 1].
+  double _dotOpacity(double t, int index) {
+    final phase = (t * 1.2 - index * 0.25) % 1.0;
+    final triangle = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
+    return (0.35 + 0.65 * triangle).clamp(0.0, 1.0);
   }
 }

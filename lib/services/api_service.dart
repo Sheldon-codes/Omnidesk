@@ -144,6 +144,21 @@ class ApiService {
           {bool requiresAuth = true, Map<String, String>? headers}) =>
       _request(() => _dio.post(path,
           data: body, options: _options(requiresAuth, headers)));
+
+  /// POST with upload progress callbacks (used for base64 media payloads).
+  Future<dynamic> postWithProgress(
+    String path,
+    Map<String, dynamic> body, {
+    bool requiresAuth = true,
+    Map<String, String>? headers,
+    void Function(int sent, int total)? onSendProgress,
+  }) =>
+      _request(() => _dio.post(
+            path,
+            data: body,
+            options: _options(requiresAuth, headers),
+            onSendProgress: onSendProgress,
+          ));
   Future<dynamic> put(String path, Map<String, dynamic> body,
           {bool requiresAuth = true}) =>
       _request(
