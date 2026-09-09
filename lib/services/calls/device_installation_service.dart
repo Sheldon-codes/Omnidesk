@@ -8,6 +8,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../fcm_service.dart';
 import 'call_api.dart';
+import 'native_call_service.dart';
 
 /// Owns a random, app-scoped installation identity. It is intentionally not a
 /// device identifier (IMEI/IDFV/Android ID) so an uninstall creates a new
@@ -102,13 +103,16 @@ class DeviceRegistry {
     required CallApi api,
     required DeviceInstallationService installation,
     required FcmService fcm,
+    required NativeCallService native,
   })  : _api = api,
         _installation = installation,
-        _fcm = fcm;
+        _fcm = fcm,
+        _native = native;
 
   final CallApi _api;
   final DeviceInstallationService _installation;
   final FcmService _fcm;
+  final NativeCallService _native;
   String? _registeredFingerprint;
 
   Future<String> installationId() => _installation.getOrCreateInstallationId();
@@ -119,7 +123,7 @@ class DeviceRegistry {
       installationId: id,
       fcmToken: _fcm.currentToken,
       apnsToken: _fcm.apnsToken,
-      voipPushToken: _fcm.voipPushToken,
+      voipPushToken: _fcm.voipPushToken ?? await _native.readVoipPushToken(),
     );
     // The server can only route a mobile offer after it has a platform-native
     // wake token. Avoid registering a misleading, non-routable installation.
@@ -155,6 +159,7 @@ final deviceRegistryProvider = Provider<DeviceRegistry>((ref) => DeviceRegistry(
       api: ref.read(callApiProvider),
       installation: ref.read(deviceInstallationServiceProvider),
       fcm: ref.read(fcmServiceProvider),
+      native: ref.read(nativeCallServiceProvider),
     ));
 
 /// Small dependency used by the session controller; keeping this separate

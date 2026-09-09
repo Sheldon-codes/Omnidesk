@@ -302,6 +302,15 @@ class _FakeNativeCallService implements NativeCallService {
   Stream<NativeCallEvent> get events => _events.stream;
 
   @override
+  Future<String?> readVoipPushToken() async => null;
+
+  @override
+  Future<CallOffer?> takePendingOffer() async => null;
+
+  @override
+  Future<NativeCallEvent?> takePendingAction() async => null;
+
+  @override
   Future<void> dismiss(String callId) async {}
 
   @override

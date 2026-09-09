@@ -8,6 +8,7 @@ import '../fcm_service.dart';
 import 'call_api.dart';
 import 'call_models.dart';
 import 'device_installation_service.dart';
+import 'native_call_service.dart';
 
 /// Application-level call coordinator. It owns authentication-aware device
 /// registration and bridges push events into the session controller; widgets
@@ -17,15 +18,18 @@ class CallLifecycleCoordinator {
     required CallApi api,
     required DeviceRegistry registry,
     required FcmService fcm,
+    required NativeCallService native,
     required CallSessionController Function() controller,
   })  : _api = api,
         _registry = registry,
         _fcm = fcm,
+        _native = native,
         _controller = controller;
 
   final CallApi _api;
   final DeviceRegistry _registry;
   final FcmService _fcm;
+  final NativeCallService _native;
   final CallSessionController Function() _controller;
   StreamSubscription<CallOffer>? _offers;
   StreamSubscription<String?>? _tokenChanges;
@@ -42,6 +46,14 @@ class CallLifecycleCoordinator {
       unawaited(_register());
     });
     await _register();
+    final nativeOffer = await _native.takePendingOffer();
+    if (nativeOffer != null) await _onOffer(nativeOffer);
+    final action = await _native.takePendingAction();
+    if (action?.type == NativeCallEventType.answer) {
+      await _controller().answer();
+    } else if (action?.type == NativeCallEventType.decline) {
+      await _controller().decline();
+    }
     await recover();
   }
 
@@ -116,6 +128,7 @@ final callLifecycleCoordinatorProvider =
     api: ref.read(callApiProvider),
     registry: ref.read(deviceRegistryProvider),
     fcm: ref.read(fcmServiceProvider),
+    native: ref.read(nativeCallServiceProvider),
     controller: () => ref.read(callSessionControllerProvider.notifier),
   );
   ref.onDispose(() => unawaited(coordinator.dispose()));

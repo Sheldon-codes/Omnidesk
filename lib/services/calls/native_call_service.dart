@@ -30,6 +30,9 @@ class NativeCallEvent {
 /// report an offer before Flutter's widget tree exists.
 abstract class NativeCallService {
   Stream<NativeCallEvent> get events;
+  Future<String?> readVoipPushToken();
+  Future<CallOffer?> takePendingOffer();
+  Future<NativeCallEvent?> takePendingAction();
   Future<void> presentIncoming(CallOffer offer);
   Future<void> dismiss(CallId callId);
   Future<void> registerMedia(CallMediaConfig config);
@@ -51,6 +54,41 @@ class MethodChannelNativeCallService implements NativeCallService {
 
   @override
   Stream<NativeCallEvent> get events => _events.stream;
+
+  @override
+  Future<String?> readVoipPushToken() =>
+      _readString('readVoipPushToken', allowMissingPlugin: true);
+
+  @override
+  Future<CallOffer?> takePendingOffer() async {
+    final value = await _readMap('takePendingOffer', allowMissingPlugin: true);
+    if (value == null) return null;
+    try {
+      final offer = CallOffer.fromJson(value);
+      return offer.callId.isEmpty || offer.offerId.isEmpty ? null : offer;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<NativeCallEvent?> takePendingAction() async {
+    final value = await _readMap('takePendingAction', allowMissingPlugin: true);
+    if (value == null) return null;
+    final callId = value['callId']?.toString();
+    final action = value['action']?.toString();
+    if (callId == null || callId.isEmpty) return null;
+    final type = switch (action) {
+      'answer' => NativeCallEventType.answer,
+      'decline' => NativeCallEventType.decline,
+      'end' => NativeCallEventType.end,
+      _ => null,
+    };
+    return type == null
+        ? null
+        : NativeCallEvent(
+            type: type, callId: callId, reason: value['reason']?.toString());
+  }
 
   @override
   Future<void> presentIncoming(CallOffer offer) => _invoke(
@@ -111,6 +149,32 @@ class MethodChannelNativeCallService implements NativeCallService {
           'Native call media is not installed on this device.',
         );
       }
+    }
+  }
+
+  Future<String?> _readString(
+    String method, {
+    required bool allowMissingPlugin,
+  }) async {
+    try {
+      return await _channel.invokeMethod<String>(method);
+    } on MissingPluginException {
+      if (allowMissingPlugin) return null;
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _readMap(
+    String method, {
+    required bool allowMissingPlugin,
+  }) async {
+    try {
+      final value = await _channel.invokeMethod<dynamic>(method);
+      if (value is! Map) return null;
+      return value.map((key, nested) => MapEntry('$key', nested));
+    } on MissingPluginException {
+      if (allowMissingPlugin) return null;
+      rethrow;
     }
   }
 
