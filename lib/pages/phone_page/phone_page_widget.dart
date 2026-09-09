@@ -156,7 +156,10 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
   bool _startOutgoing(BuildContext context, CallParty party) {
     final started =
         ref.read(callSessionControllerProvider.notifier).startOutgoing(party);
-    if (!started) _showSnack(context, 'Call already in progress');
+    if (!started) {
+      final call = ref.read(callSessionControllerProvider);
+      _showSnack(context, call.failureMessage ?? 'Call already in progress');
+    }
     return started;
   }
 
@@ -167,7 +170,7 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
     }
     final started = ref
         .read(callSessionControllerProvider.notifier)
-        .startIncoming(const CallParty(
+        .startDemoIncoming(const CallParty(
           customerId: 'aloise-obaga',
           displayName: 'Aloise Obaga Kaizen School',
           phoneNumber: '+254723506031',

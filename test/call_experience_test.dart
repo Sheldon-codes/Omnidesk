@@ -1,8 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omnidesk_agent/components/call_experience/call_experience_host.dart';
 import 'package:omnidesk_agent/components/call_experience/call_session_controller.dart';
+import 'package:omnidesk_agent/services/calls/call_api.dart';
+import 'package:omnidesk_agent/services/calls/call_models.dart';
+import 'package:omnidesk_agent/services/calls/device_installation_service.dart';
+import 'package:omnidesk_agent/services/calls/native_call_service.dart';
 
 const _party = CallParty(
   customerId: 'aloise-obaga',
@@ -11,7 +17,8 @@ const _party = CallParty(
 );
 
 void main() {
-  test('call controller supports incoming, active, and collapsed states', () {
+  test('call controller supports incoming, active, and collapsed states',
+      () async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     final controller = container.read(callSessionControllerProvider.notifier);
@@ -22,20 +29,20 @@ void main() {
         CallLifecycle.incomingRinging);
     expect(controller.startOutgoing(_party), isFalse);
 
-    controller.answer();
+    await controller.answer();
     expect(container.read(callSessionControllerProvider).lifecycle,
         CallLifecycle.active);
-    controller.toggleMute();
-    controller.toggleSpeaker();
-    controller.toggleHold();
+    await controller.toggleMute();
+    await controller.toggleSpeaker();
+    await controller.toggleHold();
     expect(container.read(callSessionControllerProvider).muted, isTrue);
     expect(
         container.read(callSessionControllerProvider).speakerEnabled, isTrue);
     expect(container.read(callSessionControllerProvider).onHold, isTrue);
 
     controller.openKeypad();
-    controller.appendDtmfDigit('2');
-    controller.appendDtmfDigit('#');
+    await controller.appendDtmfDigit('2');
+    await controller.appendDtmfDigit('#');
     expect(container.read(callSessionControllerProvider).dtmfDigits, '2#');
     controller.minimize();
     expect(container.read(callSessionControllerProvider).presentation,
@@ -43,22 +50,62 @@ void main() {
     expect(
         container.read(callSessionControllerProvider).keypadVisible, isFalse);
     controller.restore();
-    controller.end();
+    await controller.end();
     expect(container.read(callSessionControllerProvider).hasCall, isFalse);
   });
 
-  test('outgoing call can be connected deterministically', () {
+  test('outgoing call does not recreate the removed timer-driven demo flow',
+      () {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     final controller = container.read(callSessionControllerProvider.notifier);
 
-    expect(controller.startOutgoing(_party), isTrue);
+    expect(controller.startOutgoing(_party), isFalse);
     expect(container.read(callSessionControllerProvider).lifecycle,
-        CallLifecycle.outgoingRinging);
+        CallLifecycle.idle);
+    expect(container.read(callSessionControllerProvider).hasCall, isFalse);
+    expect(container.read(callSessionControllerProvider).failureMessage,
+        contains('Outgoing calling'));
     controller.connectOutgoing();
     expect(container.read(callSessionControllerProvider).lifecycle,
+        CallLifecycle.idle);
+  });
+
+  test('live incoming offer follows accept, media-ready, then native connect',
+      () async {
+    final api = _FakeCallApi();
+    final native = _FakeNativeCallService();
+    final container = ProviderContainer(overrides: [
+      callApiProvider.overrideWithValue(api),
+      nativeCallServiceProvider.overrideWithValue(native),
+      callInstallationIdProvider
+          .overrideWithValue(() async => 'installation-1'),
+    ]);
+    addTearDown(container.dispose);
+    final controller = container.read(callSessionControllerProvider.notifier);
+    final now = DateTime.now().toUtc();
+    final offer = CallOffer(
+      callId: 'call-1',
+      offerId: 'offer-1',
+      provider: 'africas_talking',
+      callerNumber: '+254700000001',
+      callerName: 'Aloise',
+      workspaceId: 'workspace-1',
+      receivedAt: now,
+      expiresAt: now.add(const Duration(seconds: 30)),
+    );
+
+    expect(await controller.handleIncomingOffer(offer), isTrue);
+    expect(container.read(callSessionControllerProvider).callId, 'call-1');
+    await controller.answer();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(api.deliveryAcknowledged, isTrue);
+    expect(api.accepted, isTrue);
+    expect(api.mediaReadySent, isTrue);
+    expect(native.registered, isTrue);
+    expect(container.read(callSessionControllerProvider).lifecycle,
         CallLifecycle.active);
-    expect(container.read(callSessionControllerProvider).startedAt, isNotNull);
   });
 
   testWidgets('incoming fullscreen answers and minimizes to call bar',
@@ -112,8 +159,8 @@ void main() {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     final controller = container.read(callSessionControllerProvider.notifier);
-    controller.startOutgoing(_party);
-    controller.connectOutgoing();
+    controller.startDemoIncoming(_party);
+    controller.answer();
 
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
@@ -170,4 +217,117 @@ void main() {
     expect(find.bySemanticsLabel('Minimize call'), findsOneWidget);
     container.read(callSessionControllerProvider.notifier).end();
   });
+}
+
+class _FakeCallApi implements CallApi {
+  bool deliveryAcknowledged = false;
+  bool accepted = false;
+  bool mediaReadySent = false;
+
+  @override
+  Future<void> acknowledgeDelivery({
+    required String callId,
+    required String installationId,
+  }) async =>
+      deliveryAcknowledged = true;
+
+  @override
+  Future<ActiveCallSnapshot> accept({
+    required String callId,
+    required String offerId,
+    required String installationId,
+  }) async {
+    accepted = true;
+    return ActiveCallSnapshot(
+      callId: callId,
+      direction: CallDirection.inbound,
+      phase: CallPhase.connecting,
+      remoteNumber: '+254700000001',
+      createdAt: DateTime.now().toUtc(),
+      answeredAt: DateTime.now().toUtc(),
+    );
+  }
+
+  @override
+  Future<void> decline({
+    required String callId,
+    required String offerId,
+    required String installationId,
+    required String reason,
+  }) async {}
+
+  @override
+  Future<void> end({required String callId, required String reason}) async {}
+
+  @override
+  Future<ActiveCallSnapshot?> getActiveCall() async => null;
+
+  @override
+  Future<CallMediaConfig> getMediaConfig() async => const CallMediaConfig(
+        provider: 'africas_talking',
+        transport: 'sip',
+        endpointType: 'mobile',
+        sipUri: 'sip:agent@example.test',
+        sipUsername: 'agent',
+        sipPassword: 'short-lived',
+        registrar: 'example.test',
+        sipTransport: 'tls',
+        port: 5061,
+        supportsHold: true,
+        supportsDtmf: true,
+        supportsNativeIncoming: true,
+      );
+
+  @override
+  Future<void> mediaReady({
+    required String callId,
+    required String offerId,
+    required String installationId,
+  }) async =>
+      mediaReadySent = true;
+
+  @override
+  Future<void> registerDevice(DeviceRegistration registration) async {}
+
+  @override
+  Future<void> unregisterDevice(String installationId) async {}
+}
+
+class _FakeNativeCallService implements NativeCallService {
+  final _events = StreamController<NativeCallEvent>.broadcast();
+  bool registered = false;
+  String? _callId;
+
+  @override
+  Stream<NativeCallEvent> get events => _events.stream;
+
+  @override
+  Future<void> dismiss(String callId) async {}
+
+  @override
+  Future<void> endMedia(String callId) async {}
+
+  @override
+  Future<void> presentIncoming(CallOffer offer) async => _callId = offer.callId;
+
+  @override
+  Future<void> registerMedia(CallMediaConfig config) async {
+    registered = true;
+    _events.add(NativeCallEvent(
+      type: NativeCallEventType.connected,
+      callId: _callId!,
+    ));
+  }
+
+  @override
+  Future<void> sendDtmf(String digit) async {}
+
+  @override
+  Future<void> setHeld(bool enabled) async {}
+
+  @override
+  Future<void> setMuted(bool enabled) async {}
+
+  @override
+  Future<void> setSpeaker(bool enabled) async {}
 }

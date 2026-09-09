@@ -57,22 +57,44 @@ class AgentPresenceState {
 
 /// Repository seam for API-backed presence updates.
 abstract class AgentPresenceRepository {
-  Future<void> updateStatus(PresenceStatus status);
-  Future<void> updateCallAvailability(bool enabled);
+  Future<void> update({
+    required PresenceStatus status,
+    required bool receiveIncomingCalls,
+  });
 }
 
 class LocalAgentPresenceRepository implements AgentPresenceRepository {
   @override
-  Future<void> updateCallAvailability(bool enabled) async {}
+  Future<void> update({
+    required PresenceStatus status,
+    required bool receiveIncomingCalls,
+  }) async {}
+}
+
+class ApiAgentPresenceRepository implements AgentPresenceRepository {
+  const ApiAgentPresenceRepository(this._api);
+  final ApiService _api;
 
   @override
-  Future<void> updateStatus(PresenceStatus status) async {}
+  Future<void> update({
+    required PresenceStatus status,
+    required bool receiveIncomingCalls,
+  }) async {
+    await _api.post('/agent/availability', {
+      'is_available': status == PresenceStatus.available,
+      'receive_calls': receiveIncomingCalls,
+      'state': status.name,
+    });
+  }
 }
 
 final agentPresenceRepositoryProvider = Provider<AgentPresenceRepository>(
-  // Profile's richer multi-state presence remains local until the backend
-  // exposes more than the dashboard's available/unavailable boolean.
-  (ref) => LocalAgentPresenceRepository(),
+  (ref) {
+    final api = ref.read(apiServiceProvider);
+    return api.baseUrl.isEmpty
+        ? LocalAgentPresenceRepository()
+        : ApiAgentPresenceRepository(api);
+  },
 );
 
 class ProfileWorkspace {
@@ -253,19 +275,12 @@ class AgentPresenceController extends Notifier<AgentPresenceState> {
   @override
   AgentPresenceState build() => const AgentPresenceState();
 
-  Future<bool> setStatus(PresenceStatus status) => _perform(
-        _PresenceMutation.status(status),
-        () => ref.read(agentPresenceRepositoryProvider).updateStatus(status),
-        () => state.copyWith(status: status),
-      );
+  Future<bool> setStatus(PresenceStatus status) =>
+      _update(_PresenceMutation.status(status), state.copyWith(status: status));
 
-  Future<bool> setReceiveIncomingCalls(bool enabled) => _perform(
-        _PresenceMutation.calls(enabled),
-        () => ref
-            .read(agentPresenceRepositoryProvider)
-            .updateCallAvailability(enabled),
-        () => state.copyWith(receiveIncomingCalls: enabled),
-      );
+  Future<bool> setReceiveIncomingCalls(bool enabled) => _update(
+      _PresenceMutation.calls(enabled),
+      state.copyWith(receiveIncomingCalls: enabled));
 
   Future<bool> retry() {
     final mutation = _lastMutation;
@@ -275,17 +290,19 @@ class AgentPresenceController extends Notifier<AgentPresenceState> {
         : setReceiveIncomingCalls(mutation.callAvailability!);
   }
 
-  Future<bool> _perform(
+  Future<bool> _update(
     _PresenceMutation mutation,
-    Future<void> Function() request,
-    AgentPresenceState Function() onSuccess,
+    AgentPresenceState desired,
   ) async {
     if (state.isSaving) return false;
     _lastMutation = mutation;
     state = state.copyWith(isSaving: true, failure: null);
     try {
-      await request();
-      state = onSuccess().copyWith(isSaving: false, failure: null);
+      await ref.read(agentPresenceRepositoryProvider).update(
+            status: desired.status,
+            receiveIncomingCalls: desired.receiveIncomingCalls,
+          );
+      state = desired.copyWith(isSaving: false, failure: null);
       return true;
     } catch (error) {
       state = state.copyWith(isSaving: false, failure: error);

@@ -266,7 +266,9 @@ class _ConversationRoomPageWidgetState
     final conversation = thread.conversation;
     final resolved = conversation.status == ChatConversationStatus.resolved;
     final typing = _isLiveWhatsApp
-        ? ref.watch(typingPresenceProvider(conversation.id)).values
+        ? ref
+            .watch(typingPresenceProvider(conversation.id))
+            .values
             .where((t) => t.isTyping)
             .firstOrNull
         : null;
@@ -327,8 +329,7 @@ class _ConversationRoomPageWidgetState
                 child: Text(
                   'Reconnecting — new messages may be delayed',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: theme.secondaryText, fontSize: 11),
+                  style: TextStyle(color: theme.secondaryText, fontSize: 11),
                 ),
               ),
             if (typing != null)
@@ -351,8 +352,8 @@ class _ConversationRoomPageWidgetState
                             : '${typing.displayName ?? 'Another agent'} is typing…',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: theme.secondaryText, fontSize: 11),
+                        style:
+                            TextStyle(color: theme.secondaryText, fontSize: 11),
                       ),
                     ),
                   ],
@@ -465,7 +466,12 @@ class _ConversationRoomPageWidgetState
                             conversation.contactIdentifier ?? 'Unknown',
                         avatar: conversation.avatar,
                       ));
-                  if (!started) _showSnack('Call already in progress');
+                  if (!started) {
+                    _showSnack(
+                      ref.read(callSessionControllerProvider).failureMessage ??
+                          'Call already in progress',
+                    );
+                  }
                 },
               ),
               if (_isLiveWhatsApp)
@@ -1818,8 +1824,8 @@ class _TypingDotsState extends State<_TypingDots>
             Container(
               width: 5,
               height: 5,
-              decoration: BoxDecoration(
-                  color: widget.color, shape: BoxShape.circle),
+              decoration:
+                  BoxDecoration(color: widget.color, shape: BoxShape.circle),
             ),
         ],
       );
@@ -1835,8 +1841,8 @@ class _TypingDotsState extends State<_TypingDots>
               child: Container(
                 width: 5,
                 height: 5,
-                decoration: BoxDecoration(
-                    color: widget.color, shape: BoxShape.circle),
+                decoration:
+                    BoxDecoration(color: widget.color, shape: BoxShape.circle),
               ),
             ),
         ],

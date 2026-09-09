@@ -102,9 +102,10 @@ class _FakePresenceRepository implements AgentPresenceRepository {
   _FakePresenceRepository({required this.failNext});
   bool failNext;
   @override
-  Future<void> updateCallAvailability(bool enabled) async {}
-  @override
-  Future<void> updateStatus(PresenceStatus status) async {
+  Future<void> update({
+    required PresenceStatus status,
+    required bool receiveIncomingCalls,
+  }) async {
     if (failNext) throw StateError('offline');
   }
 }

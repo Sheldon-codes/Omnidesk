@@ -1,6 +1,7 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../models/auth/auth_models.dart';
+import 'calls/device_installation_service.dart';
 import 'auth_repository.dart';
 import 'auth_token_store.dart';
 
@@ -245,6 +246,11 @@ class AuthSessionController extends _$AuthSessionController {
 
   Future<void> logout({bool everywhere = false}) async {
     try {
+      // De-register while the Bearer token is still available. This is
+      // intentionally best-effort: local logout must remain possible offline.
+      try {
+        await ref.read(deviceRegistryProvider).unregister();
+      } catch (_) {}
       await ref.read(authRepositoryProvider).logout(everywhere: everywhere);
     } finally {
       await invalidateSession();

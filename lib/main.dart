@@ -22,6 +22,7 @@ import 'pages/chats_page/chats_page_widget.dart';
 import 'pages/email_page/email_page_widget.dart';
 import 'pages/tickets_page/tickets_page_widget.dart';
 import 'services/auth_session_controller.dart';
+import 'services/calls/call_lifecycle_coordinator.dart';
 import 'services/fcm_service.dart';
 import 'services/onboarding_controller.dart';
 
@@ -76,8 +77,11 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
         );
         if (next.isAuthenticated) {
           ref.read(homeDashboardProvider.notifier).startHeartbeat();
+          unawaited(
+              ref.read(callLifecycleCoordinatorProvider).updateAuth(next));
         } else if (ref.exists(homeDashboardProvider)) {
           ref.read(homeDashboardProvider.notifier).stopHeartbeat();
+          unawaited(ref.read(callLifecycleCoordinatorProvider).stop());
         }
       },
       fireImmediately: true,
@@ -114,6 +118,7 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
       );
       if (ref.read(authSessionControllerProvider).isAuthenticated) {
         ref.read(homeDashboardProvider.notifier).startHeartbeat();
+        unawaited(ref.read(callLifecycleCoordinatorProvider).recover());
       } else if (ref.exists(homeDashboardProvider)) {
         ref.read(homeDashboardProvider.notifier).stopHeartbeat();
       }

@@ -34,6 +34,8 @@
 	<string>OmniDesk uses your location only when you choose to share a location in a customer conversation or support request.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>OmniDesk uses your location only when you choose to share a location in a customer conversation or support request.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OmniDesk uses the microphone to handle a live support call when you answer or place one.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>OmniDesk uses your photo library when you attach media to an email.</string>
 	<key>UIApplicationSceneManifest</key>

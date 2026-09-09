@@ -207,7 +207,11 @@ class TicketDetailsPageWidget extends ConsumerWidget {
               phoneNumber: ticket.contactIdentifier!,
             ));
         if (!started) {
-          _snack(context, 'Call already in progress');
+          _snack(
+            context,
+            ref.read(callSessionControllerProvider).failureMessage ??
+                'Call already in progress',
+          );
         }
       case 'source':
         _openSource(context, ticket);

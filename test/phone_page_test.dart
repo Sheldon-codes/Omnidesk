@@ -112,7 +112,9 @@ void main() {
     expect(find.byTooltip('Add contact'), findsOneWidget);
   });
 
-  testWidgets('dial pad Call starts an outgoing session', (tester) async {
+  testWidgets(
+      'dial pad reports unavailable when no live outbound contract exists',
+      (tester) async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     await tester.pumpWidget(UncontrolledProviderScope(
@@ -129,9 +131,12 @@ void main() {
     await tester.pump();
 
     final call = container.read(callSessionControllerProvider);
-    expect(call.lifecycle, CallLifecycle.outgoingRinging);
-    expect(call.party?.phoneNumber, '71');
-    expect(container.read(phonePageProvider).viewMode, PhoneViewMode.list);
+    expect(call.lifecycle, CallLifecycle.idle);
+    expect(call.party, isNull);
+    expect(container.read(phonePageProvider).viewMode, PhoneViewMode.dialPad);
+    expect(
+        find.text('Outgoing calling is not enabled by the call service yet.'),
+        findsOneWidget);
     container.read(callSessionControllerProvider.notifier).end();
   });
 
@@ -154,7 +159,8 @@ void main() {
     expect(container.read(callSessionControllerProvider).hasCall, isFalse);
   });
 
-  testWidgets('recent swipe Call starts outgoing from both directions',
+  testWidgets(
+      'recent swipe Call reports outbound availability from both directions',
       (tester) async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
@@ -172,7 +178,7 @@ void main() {
     await tester.pump();
 
     expect(container.read(callSessionControllerProvider).lifecycle,
-        CallLifecycle.outgoingRinging);
+        CallLifecycle.idle);
     container.read(callSessionControllerProvider.notifier).end();
     await tester.pumpAndSettle();
 
@@ -182,7 +188,7 @@ void main() {
     await tester.pump();
 
     expect(container.read(callSessionControllerProvider).lifecycle,
-        CallLifecycle.outgoingRinging);
+        CallLifecycle.idle);
     container.read(callSessionControllerProvider.notifier).end();
   });
 }

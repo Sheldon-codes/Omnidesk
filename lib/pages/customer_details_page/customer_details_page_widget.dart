@@ -87,7 +87,13 @@ class CustomerDetailsPageWidget extends ConsumerWidget {
                           phoneNumber: customer.phone,
                         ));
                     if (!started) {
-                      _showMessage(context, 'Call already in progress');
+                      _showMessage(
+                        context,
+                        ref
+                                .read(callSessionControllerProvider)
+                                .failureMessage ??
+                            'Call already in progress',
+                      );
                     }
                   },
                 ),
