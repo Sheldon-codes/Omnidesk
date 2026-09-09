@@ -207,21 +207,6 @@ class CallSessionController extends _$CallSessionController {
     }
   }
 
-  /// Temporary, explicitly local visual demo. Production offers must enter via
-  /// [handleIncomingOffer], where the backend's offer ID is required.
-  bool startDemoIncoming(CallParty party) {
-    if (state.hasCall) return false;
-    state = CallSessionState(
-      lifecycle: CallLifecycle.incomingRinging,
-      phase: CallPhase.incomingRinging,
-      party: party,
-    );
-    return true;
-  }
-
-  @Deprecated('Use handleIncomingOffer for live calls or startDemoIncoming.')
-  bool startIncoming(CallParty party) => startDemoIncoming(party);
-
   /// Outbound calling is unavailable until the backend exposes a mobile
   /// originate contract. It intentionally does not recreate the old timer.
   bool startOutgoing(CallParty party) {
@@ -235,11 +220,7 @@ class CallSessionController extends _$CallSessionController {
 
   Future<void> answer() async {
     if (state.lifecycle != CallLifecycle.incomingRinging) return;
-    if (!state.isBackendCall || state.offerId == null) {
-      // Demo-only flow; never used for a live incoming offer.
-      _activate(DateTime.now().toUtc());
-      return;
-    }
+    if (!state.isBackendCall || state.offerId == null) return;
     final callId = state.callId!;
     final offerId = state.offerId!;
     try {
@@ -275,14 +256,6 @@ class CallSessionController extends _$CallSessionController {
       // Native media emits `connected`; only that starts the duration clock.
     } catch (error) {
       _fail(_messageFor(error));
-    }
-  }
-
-  /// Kept as a deterministic demo/test seam. Real activation is driven by a
-  /// native media `connected` event.
-  void connectOutgoing() {
-    if (state.lifecycle == CallLifecycle.outgoingRinging) {
-      _activate(DateTime.now().toUtc());
     }
   }
 

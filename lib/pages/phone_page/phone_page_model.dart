@@ -1,11 +1,17 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../../services/calls/call_log_store.dart';
+import '../../services/calls/call_models.dart';
 import '../customer_editor_page/customer_editor_page_model.dart' as customers;
 
 part 'phone_page_model.g.dart';
 
 enum PhoneTab { recents, contacts }
 
+/// Presentation model for a call-history record. Its list remains empty until
+/// the calls API exposes a documented history endpoint; keeping the typed
+/// projection lets the existing rows, accessibility labels, and swipe actions
+/// render server-backed records without another UI rewrite.
 enum PhoneCallDirection { missed, inbound, outbound }
 
 enum PhoneViewMode { list, dialPad }
@@ -27,10 +33,39 @@ class PhoneRecent {
   final PhoneCallDirection direction;
   final String? ticket;
 
-  /// A recording is available only for calls that were answered.
+  /// A recording control is shown only for answered server records.
   bool get isAnswered =>
       direction != PhoneCallDirection.missed &&
       RegExp(r'^\d+:\d{2}$').hasMatch(detail.trim());
+
+  factory PhoneRecent.fromCallLog(CallLogRecord record) => PhoneRecent(
+        name: record.customerName?.trim().isNotEmpty == true
+            ? record.customerName!.trim()
+            : record.phoneNumber,
+        phone: record.phoneNumber,
+        time: _timeLabel(record.occurredAt),
+        detail: _detailLabel(record),
+        direction: switch (record.status) {
+          CallLogStatus.missed => PhoneCallDirection.missed,
+          _ when record.direction == CallDirection.outbound =>
+            PhoneCallDirection.outbound,
+          _ => PhoneCallDirection.inbound,
+        },
+        ticket: record.ticketNumber,
+      );
+
+  static String _timeLabel(DateTime value) =>
+      '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+
+  static String _detailLabel(CallLogRecord record) {
+    if (record.status == CallLogStatus.missed) return 'Missed';
+    if (record.status == CallLogStatus.failed) return 'Failed';
+    if (record.status == CallLogStatus.cancelled) return 'Cancelled';
+    final minutes = record.duration.inMinutes;
+    final seconds =
+        record.duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
 }
 
 class PhoneContact {
@@ -74,8 +109,13 @@ class PhonePageState {
     this.searchActive = false,
     this.query = '',
     this.dialedNumber = '',
-    this.recents = _defaultRecents,
-    this.contacts = _defaultContacts,
+    this.recents = const [],
+    this.contacts = const [],
+    this.historyLoading = false,
+    this.historyRefreshing = false,
+    this.historyLoadingMore = false,
+    this.historyHasMore = false,
+    this.historyError,
   });
 
   final PhoneTab tab;
@@ -85,9 +125,15 @@ class PhonePageState {
   final String dialedNumber;
   final List<PhoneRecent> recents;
   final List<PhoneContact> contacts;
+  final bool historyLoading;
+  final bool historyRefreshing;
+  final bool historyLoadingMore;
+  final bool historyHasMore;
+  final String? historyError;
 
-  String get subtitle =>
-      tab == PhoneTab.recents ? '9 calls today · 3 missed' : '192 contacts';
+  String get subtitle => tab == PhoneTab.recents
+      ? 'Call history'
+      : '${contacts.length} ${contacts.length == 1 ? 'contact' : 'contacts'}';
 
   PhoneContact? get matchedContact {
     final normalized = _digitsOnly(dialedNumber);
@@ -133,6 +179,11 @@ class PhonePageState {
     bool? searchActive,
     String? query,
     String? dialedNumber,
+    bool? historyLoading,
+    bool? historyRefreshing,
+    bool? historyLoadingMore,
+    bool? historyHasMore,
+    Object? historyError = _keep,
   }) =>
       PhonePageState(
         tab: tab ?? this.tab,
@@ -142,8 +193,16 @@ class PhonePageState {
         dialedNumber: dialedNumber ?? this.dialedNumber,
         recents: recents,
         contacts: contacts,
+        historyLoading: historyLoading ?? this.historyLoading,
+        historyRefreshing: historyRefreshing ?? this.historyRefreshing,
+        historyLoadingMore: historyLoadingMore ?? this.historyLoadingMore,
+        historyHasMore: historyHasMore ?? this.historyHasMore,
+        historyError: identical(historyError, _keep)
+            ? this.historyError
+            : historyError as String?,
       );
 
+  static const _keep = Object();
   static bool _matches(String query, Iterable<String> values) =>
       values.any((value) => value.toLowerCase().contains(query));
 
@@ -151,80 +210,26 @@ class PhonePageState {
       value.replaceAll(RegExp(r'[^0-9]'), '');
 }
 
-const _defaultRecents = <PhoneRecent>[
-  PhoneRecent(
-    name: 'Caller 1967',
-    phone: '+254720261967',
-    time: '09:50',
-    detail: 'failed',
-    direction: PhoneCallDirection.missed,
-    ticket: 'DGKSL-378',
-  ),
-  PhoneRecent(
-    name: 'Fidel Wisdom Park',
-    phone: '0743424985',
-    time: '12:29',
-    detail: '1:03',
-  ),
-  PhoneRecent(
-    name: 'Caller 5538',
-    phone: '+254754375538',
-    time: '12:09',
-    detail: 'missed',
-    direction: PhoneCallDirection.missed,
-    ticket: 'DGKSL-373',
-  ),
-  PhoneRecent(
-    name: 'Hillary Cheserek',
-    phone: '0720228448',
-    time: '11:56',
-    detail: 'missed',
-    direction: PhoneCallDirection.missed,
-  ),
-  PhoneRecent(
-    name: 'Unknown caller',
-    phone: '0714474457',
-    time: '11:55',
-    detail: '0:10',
-    direction: PhoneCallDirection.outbound,
-  ),
-];
-
-const _defaultContacts = <PhoneContact>[
-  PhoneContact(
-    name: 'Caller 1967',
-    identifier: '+254720261967',
-    ticketCount: 1,
-  ),
-  PhoneContact(
-    name: '😎',
-    identifier: '+254721161652',
-    avatar: '😎',
-    ticketCount: 1,
-  ),
-  PhoneContact(identifier: '+29454885757108'),
-  PhoneContact(
-    name: 'Nana',
-    identifier: '+254719106280',
-    ticketCount: 1,
-  ),
-  PhoneContact(identifier: '+43907731261010'),
-  PhoneContact(
-    name: 'otieno',
-    identifier: 'sullyvan83@gmail.com',
-    ticketCount: 1,
-  ),
-];
-
 @riverpod
 class PhonePageNotifier extends _$PhonePageNotifier {
   @override
-  PhonePageState build() => PhonePageState(
-        contacts: ref
-            .watch(customers.customersStoreProvider)
-            .map(PhoneContact.fromCustomer)
-            .toList(growable: false),
-      );
+  PhonePageState build() {
+    final callHistory = ref.watch(callLogStoreProvider);
+    return PhonePageState(
+      recents: callHistory.records
+          .map(PhoneRecent.fromCallLog)
+          .toList(growable: false),
+      contacts: ref
+          .watch(customers.customersStoreProvider)
+          .map(PhoneContact.fromCustomer)
+          .toList(growable: false),
+      historyLoading: callHistory.loading,
+      historyRefreshing: callHistory.refreshing,
+      historyLoadingMore: callHistory.loadingMore,
+      historyHasMore: callHistory.hasMore,
+      historyError: callHistory.error,
+    );
+  }
 
   void selectTab(PhoneTab tab) {
     state = state.copyWith(tab: tab, searchActive: false, query: '');

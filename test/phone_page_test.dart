@@ -3,24 +3,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omnidesk_agent/components/call_experience/call_session_controller.dart';
 import 'package:omnidesk_agent/pages/phone_page/phone_page_widget.dart';
-import 'package:omnidesk_agent/pages/profile_page/profile_page_model.dart';
 
 void main() {
-  test('Phone provider starts on Recents and filters local fixtures', () {
+  test('Phone provider starts on an empty live-history Recents state', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);
 
     final notifier = container.read(phonePageProvider.notifier);
     expect(container.read(phonePageProvider).tab, PhoneTab.recents);
-    expect(container.read(phonePageProvider).filteredRecents, hasLength(5));
-
-    notifier.setSearchQuery('1967');
-    expect(container.read(phonePageProvider).filteredRecents, hasLength(1));
-    expect(container.read(phonePageProvider).filteredRecents.single.name,
-        'Caller 1967');
+    expect(container.read(phonePageProvider).subtitle, 'Call history');
 
     notifier.selectTab(PhoneTab.contacts);
-    expect(container.read(phonePageProvider).subtitle, '192 contacts');
+    expect(container.read(phonePageProvider).subtitle, '7 contacts');
     expect(container.read(phonePageProvider).query, isEmpty);
     expect(container.read(phonePageProvider).filteredContacts, hasLength(7));
   });
@@ -34,12 +28,13 @@ void main() {
     expect(container.read(phonePageProvider).viewMode, PhoneViewMode.dialPad);
     notifier.appendDigit('+'); // Unsupported symbols are ignored.
     notifier.appendDigit('7');
-    notifier.appendDigit('1');
-    notifier.appendDigit('9');
-    expect(container.read(phonePageProvider).dialedNumber, '719');
-    expect(container.read(phonePageProvider).matchedContact?.title, 'Nana');
+    notifier.appendDigit('2');
+    notifier.appendDigit('3');
+    expect(container.read(phonePageProvider).dialedNumber, '723');
+    expect(container.read(phonePageProvider).matchedContact?.title,
+        'Aloise Obaga Kaizen School');
     notifier.deleteLastDigit();
-    expect(container.read(phonePageProvider).dialedNumber, '71');
+    expect(container.read(phonePageProvider).dialedNumber, '72');
     notifier.clearDialedNumber();
     expect(container.read(phonePageProvider).dialedNumber, isEmpty);
     notifier.closeDialPad();
@@ -57,21 +52,21 @@ void main() {
 
     await tester.tap(find.text('Contacts'));
     await tester.pumpAndSettle();
-    expect(find.text('192 contacts'), findsOneWidget);
+    expect(find.text('7 contacts'), findsOneWidget);
     expect(
-      find.byWidgetPredicate(
-          (widget) => widget is Text && widget.data == 'Nana'),
+      find.byWidgetPredicate((widget) =>
+          widget is Text && widget.data == 'Aloise Obaga Kaizen School'),
       findsOneWidget,
     );
 
     await tester.tap(find.byTooltip('Search'));
     await tester.pumpAndSettle();
     expect(find.text('Search contacts'), findsOneWidget);
-    await tester.enterText(find.byType(TextField), 'Nana');
+    await tester.enterText(find.byType(TextField), 'Aloise');
     await tester.pump();
     expect(
-      find.byWidgetPredicate(
-          (widget) => widget is Text && widget.data == 'Nana'),
+      find.byWidgetPredicate((widget) =>
+          widget is Text && widget.data == 'Aloise Obaga Kaizen School'),
       findsOneWidget,
     );
     expect(find.text('Caller 1967'), findsNothing);
@@ -140,55 +135,14 @@ void main() {
     container.read(callSessionControllerProvider.notifier).end();
   });
 
-  testWidgets('demo incoming call respects Profile call availability',
+  testWidgets('Recents never renders fabricated call history or demo actions',
       (tester) async {
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    await container
-        .read(agentPresenceProvider.notifier)
-        .setReceiveIncomingCalls(false);
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(home: PhonePageWidget()),
-    ));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byTooltip('Demo incoming call'));
-    await tester.pump();
-    expect(find.text('Incoming calls are disabled in Profile'), findsOneWidget);
-    expect(container.read(callSessionControllerProvider).hasCall, isFalse);
-  });
-
-  testWidgets(
-      'recent swipe Call reports outbound availability from both directions',
-      (tester) async {
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
     await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp(home: PhonePageWidget()),
-      ),
+      const ProviderScope(child: MaterialApp(home: PhonePageWidget())),
     );
     await tester.pumpAndSettle();
 
-    await tester.drag(find.text('Caller 1967'), const Offset(-180, 0));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Call').at(1));
-    await tester.pump();
-
-    expect(container.read(callSessionControllerProvider).lifecycle,
-        CallLifecycle.idle);
-    container.read(callSessionControllerProvider.notifier).end();
-    await tester.pumpAndSettle();
-
-    await tester.drag(find.text('Caller 1967'), const Offset(180, 0));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Call').first);
-    await tester.pump();
-
-    expect(container.read(callSessionControllerProvider).lifecycle,
-        CallLifecycle.idle);
-    container.read(callSessionControllerProvider.notifier).end();
+    expect(find.text('Caller 1967'), findsNothing);
+    expect(find.byTooltip('Demo incoming call'), findsNothing);
   });
 }

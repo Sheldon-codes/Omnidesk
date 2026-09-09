@@ -7,6 +7,8 @@ typedef CallOfferId = String;
 
 enum CallDirection { inbound, outbound }
 
+enum CallLogStatus { completed, missed, failed, cancelled, unknown }
+
 enum CallPhase {
   idle,
   incomingRinging,
@@ -216,6 +218,157 @@ class ActiveCallSnapshot {
       category: json['category']?.toString(),
       createdAt: parseDate(json['created_at']) ?? DateTime.now().toUtc(),
       answeredAt: parseDate(json['answered_at'] ?? json['connected_at']),
+    );
+  }
+}
+
+class CallLogRecord {
+  const CallLogRecord({
+    required this.id,
+    required this.direction,
+    required this.status,
+    required this.phoneNumber,
+    required this.occurredAt,
+    this.customerId,
+    this.customerName,
+    this.duration = Duration.zero,
+    this.ticketNumber,
+    this.recordingUrl,
+  });
+
+  final String id;
+  final CallDirection direction;
+  final CallLogStatus status;
+  final String phoneNumber;
+  final DateTime occurredAt;
+  final String? customerId;
+  final String? customerName;
+  final Duration duration;
+  final String? ticketNumber;
+  final String? recordingUrl;
+
+  bool get isAnswered =>
+      status == CallLogStatus.completed && duration > Duration.zero;
+
+  factory CallLogRecord.fromJson(Map<String, dynamic> json) {
+    final rawStatus =
+        '${json['status'] ?? json['call_status'] ?? ''}'.trim().toLowerCase();
+    final rawDirection = '${json['direction'] ?? ''}'.trim().toLowerCase();
+    final durationSeconds = int.tryParse(
+          '${json['duration_seconds'] ?? json['duration'] ?? 0}',
+        ) ??
+        0;
+    final timestamp = DateTime.tryParse(
+          '${json['occurred_at'] ?? json['created_at'] ?? json['ended_at'] ?? ''}',
+        )?.toLocal() ??
+        DateTime.now();
+    final direction = rawDirection == 'outbound'
+        ? CallDirection.outbound
+        : CallDirection.inbound;
+    final nestedCustomer = json['customer'] is Map
+        ? (json['customer'] as Map).map((key, value) => MapEntry('$key', value))
+        : const <String, dynamic>{};
+    final nestedTicket = json['ticket'] is Map
+        ? (json['ticket'] as Map).map((key, value) => MapEntry('$key', value))
+        : const <String, dynamic>{};
+    final nestedTicketCustomer = nestedTicket['customer'] is Map
+        ? (nestedTicket['customer'] as Map)
+            .map((key, value) => MapEntry('$key', value))
+        : const <String, dynamic>{};
+    final callerName = json['caller_name']?.toString().trim();
+    final customerName = json['customer_name']?.toString().trim();
+    final resolvedName = (callerName?.isNotEmpty == true
+            ? callerName
+            : customerName?.isNotEmpty == true
+                ? customerName
+                : nestedCustomer['name']?.toString().trim().isNotEmpty == true
+                    ? nestedCustomer['name']?.toString().trim()
+                    : nestedTicketCustomer['name']?.toString().trim()) ??
+        '';
+    final fromNumber =
+        '${json['from_number'] ?? json['caller_number'] ?? json['remote_number'] ?? ''}'
+            .trim();
+    final toNumber =
+        '${json['to_number'] ?? json['phone_number'] ?? json['remote_number'] ?? ''}'
+            .trim();
+    return CallLogRecord(
+      id: '${json['call_id'] ?? json['id'] ?? ''}',
+      direction: direction,
+      status: switch (rawStatus) {
+        'completed' || 'connected' || 'answered' => CallLogStatus.completed,
+        'missed' || 'no_answer' => CallLogStatus.missed,
+        'failed' || 'busy' => CallLogStatus.failed,
+        'cancelled' || 'canceled' => CallLogStatus.cancelled,
+        _ => CallLogStatus.unknown,
+      },
+      // For outbound calls the customer is the destination; for inbound
+      // calls the customer is the originating number.
+      phoneNumber: direction == CallDirection.outbound ? toNumber : fromNumber,
+      occurredAt: timestamp,
+      customerId: json['customer_id']?.toString() ??
+          nestedCustomer['id']?.toString() ??
+          nestedTicketCustomer['id']?.toString(),
+      customerName: resolvedName.isEmpty ? null : resolvedName,
+      duration: Duration(seconds: durationSeconds.clamp(0, 31536000).toInt()),
+      ticketNumber:
+          (json['ticket_number'] ?? json['ticket_display_number'])?.toString(),
+      recordingUrl: json['recording_url']?.toString(),
+    );
+  }
+}
+
+class CallLogPage {
+  const CallLogPage({
+    required this.records,
+    required this.page,
+    required this.hasMore,
+  });
+
+  final List<CallLogRecord> records;
+  final int page;
+  final bool hasMore;
+
+  factory CallLogPage.fromJson(Object? value, {required int requestedPage}) {
+    if (value is List) {
+      return CallLogPage(
+        records: value
+            .whereType<Map>()
+            .map((item) => CallLogRecord.fromJson(
+                item.map((key, entry) => MapEntry('$key', entry))))
+            .toList(growable: false),
+        page: requestedPage,
+        hasMore: false,
+      );
+    }
+    if (value is! Map) {
+      throw const FormatException(
+        'The call history service returned an invalid response.',
+      );
+    }
+    final map = value.map((key, entry) => MapEntry('$key', entry));
+    final data = map['data'] is List
+        ? map['data'] as List
+        : map['calls'] is List
+            ? map['calls'] as List
+            : const <dynamic>[];
+    final meta =
+        map['meta'] is Map ? map['meta'] as Map : const <dynamic, dynamic>{};
+    final page = int.tryParse(
+            '${meta['current_page'] ?? map['current_page'] ?? requestedPage}') ??
+        requestedPage;
+    final lastPage =
+        int.tryParse('${meta['last_page'] ?? map['last_page'] ?? page}') ??
+            page;
+    final records = data
+        .whereType<Map>()
+        .map((item) => CallLogRecord.fromJson(
+            item.map((key, entry) => MapEntry('$key', entry))))
+        .toList()
+      ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
+    return CallLogPage(
+      records: records,
+      page: page,
+      hasMore: page < lastPage,
     );
   }
 }

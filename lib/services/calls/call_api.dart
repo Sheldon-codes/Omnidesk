@@ -119,6 +119,7 @@ abstract class CallApi {
   });
   Future<void> end({required CallId callId, required String reason});
   Future<ActiveCallSnapshot?> getActiveCall();
+  Future<CallLogPage> getCallLogs({int page = 1, int perPage = 20});
 }
 
 class RemoteCallApi implements CallApi {
@@ -195,6 +196,19 @@ class RemoteCallApi implements CallApi {
     return ActiveCallSnapshot.fromJson(
       (map['call'] as Map).map((key, value) => MapEntry('$key', value)),
     );
+  }
+
+  @override
+  Future<CallLogPage> getCallLogs({int page = 1, int perPage = 20}) async {
+    try {
+      final response = await _api.get(
+        '/calls/logs',
+        queryParameters: {'page': page, 'per_page': perPage},
+      );
+      return CallLogPage.fromJson(response, requestedPage: page);
+    } on ApiClientException catch (error) {
+      throw CallApiException.fromApi(error);
+    }
   }
 
   Future<Map<String, dynamic>> _getMap(String path) async {

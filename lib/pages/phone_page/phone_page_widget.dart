@@ -7,8 +7,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 
 import '../../components/call_experience/call_session_controller.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
-import '../../services/app_runtime_config.dart';
-import '../profile_page/profile_page_model.dart';
+import '../../services/calls/call_log_store.dart';
 import 'phone_dial_pad_widget.dart';
 import 'phone_page_model.dart';
 
@@ -73,50 +72,63 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
               onClear: ref.read(phonePageProvider.notifier).clearDialedNumber,
               onCall: () => _handleDialCall(context),
             )
-          : CustomScrollView(
-              slivers: [
-                SliverPersistentHeader(
-                  pinned: true,
-                  delegate: _PhoneHeaderDelegate(
-                    theme: theme,
-                    topPadding: topPadding,
-                    subtitle: state.subtitle,
-                    searchActive: state.searchActive,
-                    onSearch: state.searchActive ? _closeSearch : _openSearch,
-                    onAddContact: () => context.push('/customers/new'),
-                    onDemoIncoming: enableUiDemos
-                        ? () => _startDemoIncoming(context)
-                        : null,
-                  ),
-                ),
-                SliverPersistentHeader(
-                  pinned: true,
-                  delegate: _PhoneTabsDelegate(
-                    theme: theme,
-                    selected: state.tab,
-                    onSelected: _selectTab,
-                  ),
-                ),
-                if (state.searchActive)
-                  SliverToBoxAdapter(
-                    child: _SearchField(
-                      controller: _searchController,
-                      focusNode: _searchFocusNode,
-                      hintText: state.tab == PhoneTab.contacts
-                          ? 'Search contacts'
-                          : 'Search recent calls',
-                      onChanged:
-                          ref.read(phonePageProvider.notifier).setSearchQuery,
-                      onClose: _closeSearch,
-                      theme: theme,
+          : RefreshIndicator(
+              onRefresh: ref.read(callLogStoreProvider.notifier).refresh,
+              child: NotificationListener<ScrollNotification>(
+                onNotification: (notification) {
+                  if (state.tab == PhoneTab.recents &&
+                      state.historyHasMore &&
+                      notification.metrics.extentAfter < 200) {
+                    ref.read(callLogStoreProvider.notifier).loadMore();
+                  }
+                  return false;
+                },
+                child: CustomScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  slivers: [
+                    SliverPersistentHeader(
+                      pinned: true,
+                      delegate: _PhoneHeaderDelegate(
+                        theme: theme,
+                        topPadding: topPadding,
+                        subtitle: state.subtitle,
+                        searchActive: state.searchActive,
+                        onSearch:
+                            state.searchActive ? _closeSearch : _openSearch,
+                        onAddContact: () => context.push('/customers/new'),
+                      ),
                     ),
-                  ),
-                if (state.tab == PhoneTab.recents)
-                  ..._recentsSlivers(state, theme)
-                else
-                  ..._contactSlivers(state, theme),
-                const SliverToBoxAdapter(child: SizedBox(height: 24)),
-              ],
+                    SliverPersistentHeader(
+                      pinned: true,
+                      delegate: _PhoneTabsDelegate(
+                        theme: theme,
+                        selected: state.tab,
+                        onSelected: _selectTab,
+                      ),
+                    ),
+                    if (state.searchActive)
+                      SliverToBoxAdapter(
+                        child: _SearchField(
+                          controller: _searchController,
+                          focusNode: _searchFocusNode,
+                          hintText: state.tab == PhoneTab.contacts
+                              ? 'Search contacts'
+                              : 'Search recent calls',
+                          onChanged: ref
+                              .read(phonePageProvider.notifier)
+                              .setSearchQuery,
+                          onClose: _closeSearch,
+                          theme: theme,
+                        ),
+                      ),
+                    if (state.tab == PhoneTab.recents)
+                      ..._recentsSlivers(state, theme)
+                    else
+                      ..._contactSlivers(state, theme),
+                    const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                  ],
+                ),
+              ),
             ),
       floatingActionButton:
           state.viewMode == PhoneViewMode.list && state.tab == PhoneTab.recents
@@ -163,21 +175,6 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
     return started;
   }
 
-  void _startDemoIncoming(BuildContext context) {
-    if (!ref.read(agentPresenceProvider).receiveIncomingCalls) {
-      _showSnack(context, 'Incoming calls are disabled in Profile');
-      return;
-    }
-    final started = ref
-        .read(callSessionControllerProvider.notifier)
-        .startDemoIncoming(const CallParty(
-          customerId: 'aloise-obaga',
-          displayName: 'Aloise Obaga Kaizen School',
-          phoneNumber: '+254723506031',
-        ));
-    if (!started) _showSnack(context, 'Call already in progress');
-  }
-
   void _showSnack(BuildContext context, String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -189,8 +186,29 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
     FlutterFlowTheme theme,
   ) {
     final items = state.filteredRecents;
+    final isSearching = state.query.trim().isNotEmpty;
+    if (state.historyLoading && items.isEmpty) {
+      return [_CallHistorySkeleton(theme: theme)];
+    }
+    if (state.historyError != null && items.isEmpty) {
+      return [
+        _CallHistoryError(
+          theme: theme,
+          message: state.historyError!,
+          onRetry: ref.read(callLogStoreProvider.notifier).refresh,
+        ),
+      ];
+    }
     if (items.isEmpty) {
-      return [_EmptyResults(theme: theme, label: 'No recent calls found')];
+      return [
+        _EmptyResults(
+          theme: theme,
+          label: isSearching ? 'No recent calls found' : 'No recent calls yet',
+          description: isSearching
+              ? 'Try a different phone number or contact name.'
+              : 'Completed calls will appear here when call history is available.',
+        ),
+      ];
     }
 
     return [
@@ -198,7 +216,7 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 22, 20, 8),
           child: Text(
-            'Today',
+            'Recent calls',
             style: theme.bodyMedium.override(
               fontFamily: theme.bodyMediumFamily,
               color: theme.secondaryText,
@@ -227,14 +245,27 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
               onPlay: () => _showComingSoon(context),
               showCallAction: true,
               showPlayAction: recent.isAnswered,
-              child: _RecentRow(
-                recent: recent,
-                theme: theme,
-              ),
+              child: _RecentRow(recent: recent, theme: theme),
             );
           },
         ),
       ),
+      if (state.historyLoadingMore)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Center(
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: theme.primary,
+                ),
+              ),
+            ),
+          ),
+        ),
     ];
   }
 
@@ -307,7 +338,6 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
     required this.searchActive,
     required this.onSearch,
     required this.onAddContact,
-    this.onDemoIncoming,
   });
 
   static const _toolbarHeight = 56.0;
@@ -319,7 +349,6 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
   final bool searchActive;
   final VoidCallback onSearch;
   final VoidCallback onAddContact;
-  final VoidCallback? onDemoIncoming;
 
   @override
   double get minExtent => topPadding + _toolbarHeight;
@@ -357,15 +386,6 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
             height: _toolbarHeight,
             child: Row(
               children: [
-                if (onDemoIncoming != null)
-                  IconButton(
-                    tooltip: 'Demo incoming call',
-                    constraints:
-                        const BoxConstraints(minWidth: 44, minHeight: 44),
-                    onPressed: onDemoIncoming,
-                    icon: Icon(IconsaxPlusBroken.call_incoming,
-                        color: theme.primaryText, size: 22),
-                  ),
                 IconButton(
                   tooltip: searchActive ? 'Close search' : 'Search',
                   constraints:
@@ -393,7 +413,7 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
           Positioned(
             top: titleTop,
             left: 20,
-            right: onDemoIncoming == null ? 108 : 152,
+            right: 108,
             child: Transform.scale(
               scale: titleScale,
               alignment: Alignment.topLeft,
@@ -457,8 +477,7 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
       oldDelegate.subtitle != subtitle ||
       oldDelegate.searchActive != searchActive ||
       oldDelegate.onSearch != onSearch ||
-      oldDelegate.onAddContact != onAddContact ||
-      oldDelegate.onDemoIncoming != onDemoIncoming;
+      oldDelegate.onAddContact != onAddContact;
 }
 
 class _PhoneTabsDelegate extends SliverPersistentHeaderDelegate {
@@ -1041,23 +1060,149 @@ class _SwipeAction extends StatelessWidget {
 }
 
 class _EmptyResults extends StatelessWidget {
-  const _EmptyResults({required this.theme, required this.label});
+  const _EmptyResults({
+    required this.theme,
+    required this.label,
+    this.description,
+  });
 
   final FlutterFlowTheme theme;
   final String label;
+  final String? description;
 
   @override
   Widget build(BuildContext context) => SliverToBoxAdapter(
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 48),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: theme.bodyMedium.override(
-              fontFamily: theme.bodyMediumFamily,
-              color: theme.secondaryText,
-              fontSize: 13,
+          child: Column(
+            children: [
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                style: theme.bodyMedium.override(
+                  fontFamily: theme.bodyMediumFamily,
+                  color: theme.secondaryText,
+                  fontSize: 13,
+                ),
+              ),
+              if (description != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  description!,
+                  textAlign: TextAlign.center,
+                  style: theme.bodySmall.override(
+                    fontFamily: theme.bodySmallFamily,
+                    color: theme.secondaryText,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+}
+
+class _CallHistorySkeleton extends StatelessWidget {
+  const _CallHistorySkeleton({required this.theme});
+
+  final FlutterFlowTheme theme;
+
+  @override
+  Widget build(BuildContext context) => SliverPadding(
+        padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+        sliver: SliverList.builder(
+          itemCount: 5,
+          itemBuilder: (context, index) => SizedBox(
+            height: 74,
+            child: Row(
+              children: [
+                Container(
+                  width: 19,
+                  height: 19,
+                  decoration: BoxDecoration(
+                    color: theme.alternate,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 29),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _SkeletonBar(theme: theme, widthFactor: .46, height: 14),
+                      const SizedBox(height: 8),
+                      _SkeletonBar(theme: theme, widthFactor: .7, height: 11),
+                    ],
+                  ),
+                ),
+              ],
             ),
+          ),
+        ),
+      );
+}
+
+class _SkeletonBar extends StatelessWidget {
+  const _SkeletonBar({
+    required this.theme,
+    required this.widthFactor,
+    required this.height,
+  });
+
+  final FlutterFlowTheme theme;
+  final double widthFactor;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) => FractionallySizedBox(
+        widthFactor: widthFactor,
+        alignment: Alignment.centerLeft,
+        child: Container(
+          height: height,
+          decoration: BoxDecoration(
+            color: theme.alternate,
+            borderRadius: BorderRadius.circular(height / 2),
+          ),
+        ),
+      );
+}
+
+class _CallHistoryError extends StatelessWidget {
+  const _CallHistoryError({
+    required this.theme,
+    required this.message,
+    required this.onRetry,
+  });
+
+  final FlutterFlowTheme theme;
+  final String message;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) => SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 40, 20, 0),
+          child: Column(
+            children: [
+              Icon(Icons.error_outline, color: theme.secondaryText, size: 22),
+              const SizedBox(height: 10),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: theme.bodyMedium.override(
+                  fontFamily: theme.bodyMediumFamily,
+                  color: theme.secondaryText,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextButton(
+                onPressed: () => onRetry(),
+                child: const Text('Retry'),
+              ),
+            ],
           ),
         ),
       );

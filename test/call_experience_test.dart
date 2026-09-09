@@ -10,26 +10,20 @@ import 'package:omnidesk_agent/services/calls/call_models.dart';
 import 'package:omnidesk_agent/services/calls/device_installation_service.dart';
 import 'package:omnidesk_agent/services/calls/native_call_service.dart';
 
-const _party = CallParty(
-  customerId: 'aloise-obaga',
-  displayName: 'Aloise Obaga Kaizen School',
-  phoneNumber: '+254723506031',
-);
-
 void main() {
-  test('call controller supports incoming, active, and collapsed states',
+  test('call controller supports live incoming, active, and collapsed states',
       () async {
-    final container = ProviderContainer();
+    final container = _liveContainer();
     addTearDown(container.dispose);
     final controller = container.read(callSessionControllerProvider.notifier);
 
     expect(container.read(callSessionControllerProvider).hasCall, isFalse);
-    expect(controller.startIncoming(_party), isTrue);
+    expect(await controller.handleIncomingOffer(_incomingOffer()), isTrue);
     expect(container.read(callSessionControllerProvider).lifecycle,
         CallLifecycle.incomingRinging);
-    expect(controller.startOutgoing(_party), isFalse);
 
     await controller.answer();
+    await Future<void>.delayed(Duration.zero);
     expect(container.read(callSessionControllerProvider).lifecycle,
         CallLifecycle.active);
     await controller.toggleMute();
@@ -60,40 +54,28 @@ void main() {
     addTearDown(container.dispose);
     final controller = container.read(callSessionControllerProvider.notifier);
 
-    expect(controller.startOutgoing(_party), isFalse);
+    expect(
+      controller.startOutgoing(const CallParty(
+        displayName: 'Caller',
+        phoneNumber: '+254700000001',
+      )),
+      isFalse,
+    );
     expect(container.read(callSessionControllerProvider).lifecycle,
         CallLifecycle.idle);
     expect(container.read(callSessionControllerProvider).hasCall, isFalse);
     expect(container.read(callSessionControllerProvider).failureMessage,
         contains('Outgoing calling'));
-    controller.connectOutgoing();
-    expect(container.read(callSessionControllerProvider).lifecycle,
-        CallLifecycle.idle);
   });
 
   test('live incoming offer follows accept, media-ready, then native connect',
       () async {
     final api = _FakeCallApi();
     final native = _FakeNativeCallService();
-    final container = ProviderContainer(overrides: [
-      callApiProvider.overrideWithValue(api),
-      nativeCallServiceProvider.overrideWithValue(native),
-      callInstallationIdProvider
-          .overrideWithValue(() async => 'installation-1'),
-    ]);
+    final container = _liveContainer(api: api, native: native);
     addTearDown(container.dispose);
     final controller = container.read(callSessionControllerProvider.notifier);
-    final now = DateTime.now().toUtc();
-    final offer = CallOffer(
-      callId: 'call-1',
-      offerId: 'offer-1',
-      provider: 'africas_talking',
-      callerNumber: '+254700000001',
-      callerName: 'Aloise',
-      workspaceId: 'workspace-1',
-      receivedAt: now,
-      expiresAt: now.add(const Duration(seconds: 30)),
-    );
+    final offer = _incomingOffer();
 
     expect(await controller.handleIncomingOffer(offer), isTrue);
     expect(container.read(callSessionControllerProvider).callId, 'call-1');
@@ -110,11 +92,11 @@ void main() {
 
   testWidgets('incoming fullscreen answers and minimizes to call bar',
       (tester) async {
-    final container = ProviderContainer();
+    final container = _liveContainer();
     addTearDown(container.dispose);
-    container
+    await container
         .read(callSessionControllerProvider.notifier)
-        .startIncoming(_party);
+        .handleIncomingOffer(_incomingOffer());
 
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
@@ -152,52 +134,16 @@ void main() {
     await tester.tap(find.text('Aloise Obaga Kaizen School'));
     await tester.pumpAndSettle();
     expect(find.bySemanticsLabel('Minimize call'), findsOneWidget);
-    container.read(callSessionControllerProvider.notifier).end();
-  });
-
-  testWidgets('active call keypad records local DTMF digits', (tester) async {
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final controller = container.read(callSessionControllerProvider.notifier);
-    controller.startDemoIncoming(_party);
-    controller.answer();
-
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(
-        home: CallExperienceHost(child: Scaffold()),
-      ),
-    ));
-    await tester.pump();
-
-    await tester.tap(find.text('Keypad'));
-    await tester.pump();
-    await tester.tap(find.text('2'));
-    await tester.tap(find.text('#'));
-    await tester.pump();
-    expect(find.text('2#'), findsOneWidget);
-    expect(container.read(callSessionControllerProvider).dtmfDigits, '2#');
-    expect(find.bySemanticsLabel('Close keypad'), findsOneWidget);
-    expect(find.bySemanticsLabel('Delete last digit. Long press to clear'),
-        findsOneWidget);
-    await tester
-        .tap(find.bySemanticsLabel('Delete last digit. Long press to clear'));
-    await tester.pump();
-    expect(container.read(callSessionControllerProvider).dtmfDigits, '2');
-    await tester.longPress(
-        find.bySemanticsLabel('Delete last digit. Long press to clear'));
-    await tester.pump();
-    expect(container.read(callSessionControllerProvider).dtmfDigits, isEmpty);
-    controller.end();
+    await container.read(callSessionControllerProvider.notifier).end();
   });
 
   testWidgets('call controls work when the host is mounted in app builder',
       (tester) async {
-    final container = ProviderContainer();
+    final container = _liveContainer();
     addTearDown(container.dispose);
-    container
+    await container
         .read(callSessionControllerProvider.notifier)
-        .startIncoming(_party);
+        .handleIncomingOffer(_incomingOffer());
 
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
@@ -215,8 +161,34 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
     expect(find.bySemanticsLabel('Minimize call'), findsOneWidget);
-    container.read(callSessionControllerProvider.notifier).end();
+    await container.read(callSessionControllerProvider.notifier).end();
   });
+}
+
+ProviderContainer _liveContainer({
+  _FakeCallApi? api,
+  _FakeNativeCallService? native,
+}) {
+  return ProviderContainer(overrides: [
+    callApiProvider.overrideWithValue(api ?? _FakeCallApi()),
+    nativeCallServiceProvider
+        .overrideWithValue(native ?? _FakeNativeCallService()),
+    callInstallationIdProvider.overrideWithValue(() async => 'installation-1'),
+  ]);
+}
+
+CallOffer _incomingOffer() {
+  final now = DateTime.now().toUtc();
+  return CallOffer(
+    callId: 'call-1',
+    offerId: 'offer-1',
+    provider: 'africas_talking',
+    callerNumber: '+254700000001',
+    callerName: 'Aloise Obaga Kaizen School',
+    workspaceId: 'workspace-1',
+    receivedAt: now,
+    expiresAt: now.add(const Duration(seconds: 30)),
+  );
 }
 
 class _FakeCallApi implements CallApi {
@@ -261,6 +233,10 @@ class _FakeCallApi implements CallApi {
 
   @override
   Future<ActiveCallSnapshot?> getActiveCall() async => null;
+
+  @override
+  Future<CallLogPage> getCallLogs({int page = 1, int perPage = 20}) async =>
+      CallLogPage(records: const [], page: page, hasMore: false);
 
   @override
   Future<CallMediaConfig> getMediaConfig() async => const CallMediaConfig(
