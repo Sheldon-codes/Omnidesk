@@ -110,7 +110,9 @@ void main() {
       final m = mapper.fromTimeline({
         'id': 900,
         'event_type': type,
-        'description': type == 'agent_notified' ? 'agent_notified:5' : 'Reassigned to Alice Agent. SLA clock reset.',
+        'description': type == 'agent_notified'
+            ? 'agent_notified:5'
+            : 'Reassigned to Alice Agent. SLA clock reset.',
         'is_from_customer': false,
         'created_at': '2026-09-03T12:29:12+03:00',
       });
@@ -125,6 +127,7 @@ void main() {
       'subject': 'WhatsApp: Account',
       'status': 'open',
       'display_number': '#TKT-14',
+      'display_id': 'DGKSL-14',
       'updated_at': '2026-08-31T07:45:12Z',
       'customer': {
         'id': 88,
@@ -138,6 +141,6 @@ void main() {
     expect(thread.conversation.preview, 'How much?');
     expect(thread.conversation.unreadCount, 3);
     expect(thread.conversation.avatarUrl, 'https://x/a.jpg');
-    expect(thread.conversation.ticketId, '#TKT-14');
+    expect(thread.conversation.ticketId, 'DGKSL-14');
   });
 }

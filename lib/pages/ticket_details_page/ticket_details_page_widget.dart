@@ -199,13 +199,14 @@ class TicketDetailsPageWidget extends ConsumerWidget {
       case 'customer':
         _openCustomer(context, ticket);
       case 'call':
-        final started = ref
-            .read(callSessionControllerProvider.notifier)
-            .startOutgoing(CallParty(
-              customerId: ticket.customerId,
-              displayName: ticket.customerLabel,
-              phoneNumber: ticket.contactIdentifier!,
-            ));
+        final started =
+            ref.read(callSessionControllerProvider.notifier).startOutgoing(
+                CallParty(
+                  customerId: ticket.customerId,
+                  displayName: ticket.customerLabel,
+                  phoneNumber: ticket.contactIdentifier!,
+                ),
+                ticketId: ticket.id);
         if (!started) {
           _snack(
             context,

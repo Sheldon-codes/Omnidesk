@@ -25,9 +25,13 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 }
 
 class FcmService {
-  FcmService({FirebaseMessaging? messaging})
-      : _messaging = messaging ?? FirebaseMessaging.instance;
-  final FirebaseMessaging _messaging;
+  // [_messaging] is resolved lazily: touching `FirebaseMessaging.instance`
+  // with no initialized Firebase app throws `[core/no-app]` and would poison
+  // every provider that (transitively) reads this service — including the
+  // call coordinator on FCM-disabled builds. Resolution failure just means
+  // push is unavailable; all call flows degrade to socket/REST.
+  FcmService({FirebaseMessaging? messaging}) : _messaging = messaging;
+  FirebaseMessaging? _messaging;
   String? _token;
   String? _apnsToken;
   String? _voipPushToken;
@@ -40,21 +44,41 @@ class FcmService {
   Stream<CallOffer> get incomingCallOffers => _offers.stream;
   Stream<String?> get tokenChanges => _tokenChanges.stream;
 
+  FirebaseMessaging? _resolveMessaging() {
+    final existing = _messaging;
+    if (existing != null) return existing;
+    try {
+      return _messaging = FirebaseMessaging.instance;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> initialize() async {
     if (_initialized) return;
+    final messaging = _resolveMessaging();
+    if (messaging == null) {
+      developer.log(
+        'FCM unavailable: Firebase is not initialized on this build.',
+        name: 'FcmService',
+      );
+      return;
+    }
     try {
-      await _messaging.requestPermission(alert: true, badge: true, sound: true);
-      _token = await _messaging.getToken();
-      _apnsToken = await _messaging.getAPNSToken();
+      await messaging.requestPermission(alert: true, badge: true, sound: true);
+      _token = await messaging.getToken();
+      _apnsToken = await messaging.getAPNSToken();
       _tokenChanges.add(_token);
-      _messaging.onTokenRefresh.listen((token) {
+      messaging.onTokenRefresh.listen((token) {
         _token = token;
         _tokenChanges.add(token);
         developer.log('FCM token refreshed', name: 'FcmService');
       });
+      // Static-only in this firebase_messaging release; guarded by the
+      // surrounding try/catch when no Firebase app exists.
       FirebaseMessaging.onMessage.listen(_handleMessage);
       FirebaseMessaging.onMessageOpenedApp.listen(_handleMessage);
-      final initial = await _messaging.getInitialMessage();
+      final initial = await messaging.getInitialMessage();
       if (initial != null) _handleMessage(initial);
       final pending = await PendingCallOfferStore().take();
       if (pending != null && !pending.isExpired) _offers.add(pending);

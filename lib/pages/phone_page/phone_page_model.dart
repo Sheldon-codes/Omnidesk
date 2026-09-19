@@ -24,6 +24,7 @@ class PhoneRecent {
     required this.detail,
     this.direction = PhoneCallDirection.inbound,
     this.ticket,
+    this.recordingUrl,
   });
 
   final String name;
@@ -32,11 +33,17 @@ class PhoneRecent {
   final String detail;
   final PhoneCallDirection direction;
   final String? ticket;
+  final String? recordingUrl;
 
   /// A recording control is shown only for answered server records.
   bool get isAnswered =>
       direction != PhoneCallDirection.missed &&
       RegExp(r'^\d+:\d{2}$').hasMatch(detail.trim());
+
+  bool get hasRecording {
+    final uri = Uri.tryParse(recordingUrl ?? '');
+    return uri != null && (uri.scheme == 'https' || uri.scheme == 'http');
+  }
 
   factory PhoneRecent.fromCallLog(CallLogRecord record) => PhoneRecent(
         name: record.customerName?.trim().isNotEmpty == true
@@ -52,6 +59,7 @@ class PhoneRecent {
           _ => PhoneCallDirection.inbound,
         },
         ticket: record.ticketNumber,
+        recordingUrl: record.recordingUrl,
       );
 
   static String _timeLabel(DateTime value) =>
@@ -61,6 +69,11 @@ class PhoneRecent {
     if (record.status == CallLogStatus.missed) return 'Missed';
     if (record.status == CallLogStatus.failed) return 'Failed';
     if (record.status == CallLogStatus.cancelled) return 'Cancelled';
+    final formattedDuration = record.formattedDuration?.trim();
+    if (formattedDuration != null &&
+        RegExp(r'^\d+:\d{2}(?::\d{2})?$').hasMatch(formattedDuration)) {
+      return formattedDuration;
+    }
     final minutes = record.duration.inMinutes;
     final seconds =
         record.duration.inSeconds.remainder(60).toString().padLeft(2, '0');

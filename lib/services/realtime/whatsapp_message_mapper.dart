@@ -21,8 +21,7 @@ class WhatsAppMessageMapper {
 
     final mediaUrl = strOrNull(value['media_url']);
     final mediaType = str(value['media_type']).toLowerCase();
-    final mediaFilename =
-        str(value['media_filename'], fallback: 'Attachment');
+    final mediaFilename = str(value['media_filename'], fallback: 'Attachment');
     final text = str(value['description']);
     final quotedText = strOrNull(value['quoted_message_text']);
     final quotedSender = strOrNull(value['quoted_sender_name']);
@@ -82,8 +81,7 @@ class WhatsAppMessageMapper {
         assetPath: mediaUrl,
         fileName: mediaFilename,
         mimeType: mediaType.isEmpty ? 'file' : mediaType,
-        sizeLabel: str(value['size_label'],
-            fallback: _sizeLabelFor(mediaType)),
+        sizeLabel: str(value['size_label'], fallback: _sizeLabelFor(mediaType)),
       );
     }
 
@@ -114,20 +112,23 @@ class WhatsAppMessageMapper {
         DateTime.now();
     final subject = str(value['subject'], fallback: 'No messages yet');
     final latest = _map(value['latest_message']);
-    final preview = latest.isNotEmpty
-        ? str(latest['body'], fallback: subject)
-        : subject;
+    final preview =
+        latest.isNotEmpty ? str(latest['body'], fallback: subject) : subject;
     final unread = _int(value['unread_messages_count']) ??
         _int(value['unread_count']) ??
         0;
+    // `display_id` is the user-facing ticket reference (for example
+    // `DGKSL-439`). Keep `display_number` only as a backwards-compatible
+    // fallback for older API responses.
     final displayNumber =
-        strOrNull(value['display_number']) ?? strOrNull(value['display_id']);
+        strOrNull(value['display_id']) ?? strOrNull(value['display_number']);
 
     final conversation = ChatConversation(
       id: '${value['id']}',
       channel: ChatChannel.whatsapp,
-      type:
-          _isGroup(value) ? ChatConversationType.groups : ChatConversationType.dms,
+      type: _isGroup(value)
+          ? ChatConversationType.groups
+          : ChatConversationType.dms,
       status: rawStatus == 'resolved' || rawStatus == 'closed'
           ? ChatConversationStatus.resolved
           : ChatConversationStatus.open,
@@ -144,8 +145,7 @@ class WhatsAppMessageMapper {
     return ConversationThread(
       conversation: conversation,
       messages: const [],
-      summary: str(value['description'],
-          fallback: str(value['category'])),
+      summary: str(value['description'], fallback: str(value['category'])),
     );
   }
 

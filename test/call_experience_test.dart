@@ -48,9 +48,10 @@ void main() {
     expect(container.read(callSessionControllerProvider).hasCall, isFalse);
   });
 
-  test('outgoing call does not recreate the removed timer-driven demo flow',
-      () {
-    final container = ProviderContainer();
+  test('outgoing call uses the server originate contract without a demo timer',
+      () async {
+    final api = _FakeCallApi();
+    final container = _liveContainer(api: api);
     addTearDown(container.dispose);
     final controller = container.read(callSessionControllerProvider.notifier);
 
@@ -59,13 +60,17 @@ void main() {
         displayName: 'Caller',
         phoneNumber: '+254700000001',
       )),
-      isFalse,
+      isTrue,
     );
+    expect(container.read(callSessionControllerProvider).phase,
+        CallPhase.outgoingPreparing);
+    await Future<void>.delayed(Duration.zero);
+    expect(api.outboundInitiated, isTrue);
+    // Registration confirmation arrives asynchronously from native.
+    await Future<void>.delayed(const Duration(milliseconds: 100));
     expect(container.read(callSessionControllerProvider).lifecycle,
-        CallLifecycle.idle);
-    expect(container.read(callSessionControllerProvider).hasCall, isFalse);
-    expect(container.read(callSessionControllerProvider).failureMessage,
-        contains('Outgoing calling'));
+        CallLifecycle.outgoingRinging);
+    expect(container.read(callSessionControllerProvider).startedAt, isNull);
   });
 
   test('live incoming offer follows accept, media-ready, then native connect',
@@ -195,6 +200,7 @@ class _FakeCallApi implements CallApi {
   bool deliveryAcknowledged = false;
   bool accepted = false;
   bool mediaReadySent = false;
+  bool outboundInitiated = false;
 
   @override
   Future<void> acknowledgeDelivery({
@@ -232,6 +238,21 @@ class _FakeCallApi implements CallApi {
   Future<void> end({required String callId, required String reason}) async {}
 
   @override
+  Future<void> completeOutbound({
+    required String callSid,
+    required Duration connectedDuration,
+  }) async {}
+
+  @override
+  Future<OutboundCallResult> initiateOutbound({
+    required String toNumber,
+    String? ticketId,
+  }) async {
+    outboundInitiated = true;
+    return const OutboundCallResult(callSid: 'AT-call-sess-initiated');
+  }
+
+  @override
   Future<ActiveCallSnapshot?> getActiveCall() async => null;
 
   @override
@@ -245,8 +266,11 @@ class _FakeCallApi implements CallApi {
         endpointType: 'mobile',
         sipUri: 'sip:agent@example.test',
         sipUsername: 'agent',
+        sipAuthUsername: 'agent',
         sipPassword: 'short-lived',
         registrar: 'example.test',
+        sipDomain: 'example.test',
+        sipProxy: 'example.test:5061',
         sipTransport: 'tls',
         port: 5061,
         supportsHold: true,
@@ -272,7 +296,6 @@ class _FakeCallApi implements CallApi {
 class _FakeNativeCallService implements NativeCallService {
   final _events = StreamController<NativeCallEvent>.broadcast();
   bool registered = false;
-  String? _callId;
 
   @override
   Stream<NativeCallEvent> get events => _events.stream;
@@ -293,16 +316,37 @@ class _FakeNativeCallService implements NativeCallService {
   Future<void> endMedia(String callId) async {}
 
   @override
-  Future<void> presentIncoming(CallOffer offer) async => _callId = offer.callId;
+  Future<void> presentIncoming(CallOffer offer) async {}
 
   @override
-  Future<void> registerMedia(CallMediaConfig config) async {
+  Future<String> ensureRegistered(
+    CallMediaConfig config, {
+    String? incomingCallId,
+  }) async {
     registered = true;
-    _events.add(NativeCallEvent(
-      type: NativeCallEventType.connected,
-      callId: _callId!,
-    ));
+    if (incomingCallId != null) {
+      _events.add(NativeCallEvent(
+        type: NativeCallEventType.connected,
+        callId: incomingCallId,
+      ));
+      return 'media-incoming-1';
+    }
+    // Outgoing: the real adapter confirms registration asynchronously via a
+    // `registered` native event. Mirror that so registration gating resolves.
+    const session = 'media-outgoing-1';
+    Timer.run(() => _events.add(const NativeCallEvent(
+          type: NativeCallEventType.registered,
+          mediaSessionId: session,
+        )));
+    return session;
   }
+
+  @override
+  Future<String> startOutgoingMedia({
+    required String callSid,
+    required String targetSipUri,
+  }) async =>
+      'media-outgoing-1';
 
   @override
   Future<void> sendDtmf(String digit) async {}

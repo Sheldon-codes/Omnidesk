@@ -5,7 +5,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'call_models.dart';
 
-enum NativeCallEventType { answer, decline, end, connected, disconnected }
+enum NativeCallEventType {
+  answer,
+  decline,
+  end,
+  registered,
+  ringing,
+  connected,
+  held,
+  disconnected,
+  failed,
+}
 
 class NativeCallUnavailable implements Exception {
   const NativeCallUnavailable(this.message);
@@ -15,11 +25,15 @@ class NativeCallUnavailable implements Exception {
 class NativeCallEvent {
   const NativeCallEvent({
     required this.type,
-    required this.callId,
+    this.callId,
+    this.callSid,
+    this.mediaSessionId,
     this.reason,
-  });
+  }) : assert(callId != null || callSid != null || mediaSessionId != null);
   final NativeCallEventType type;
-  final CallId callId;
+  final CallId? callId;
+  final String? callSid;
+  final String? mediaSessionId;
   final String? reason;
 }
 
@@ -35,8 +49,18 @@ abstract class NativeCallService {
   Future<NativeCallEvent?> takePendingAction();
   Future<void> presentIncoming(CallOffer offer);
   Future<void> dismiss(CallId callId);
-  Future<void> registerMedia(CallMediaConfig config);
-  Future<void> endMedia(CallId callId);
+
+  /// Registers the one foreground workspace SIP account. The returned ID is
+  /// opaque and only correlates native events with the Dart call session.
+  Future<String> ensureRegistered(
+    CallMediaConfig config, {
+    CallId? incomingCallId,
+  });
+  Future<String> startOutgoingMedia({
+    required String callSid,
+    required String targetSipUri,
+  });
+  Future<void> endMedia(String mediaSessionId);
   Future<void> setMuted(bool enabled);
   Future<void> setSpeaker(bool enabled);
   Future<void> setHeld(bool enabled);
@@ -107,19 +131,36 @@ class MethodChannelNativeCallService implements NativeCallService {
       _invoke('dismiss', {'callId': callId}, allowMissingPlugin: true);
 
   @override
-  Future<void> registerMedia(CallMediaConfig config) =>
-      _invoke('registerMedia', {
+  Future<String> ensureRegistered(
+    CallMediaConfig config, {
+    CallId? incomingCallId,
+  }) =>
+      _invokeForString('ensureRegistered', {
         'uri': config.sipUri,
         'username': config.sipUsername,
+        'authUsername': config.sipAuthUsername,
         'password': config.sipPassword,
         'registrar': config.registrar,
+        'domain': config.sipDomain,
+        'proxy': config.sipProxy,
         'transport': config.sipTransport,
         'port': config.port,
+        if (incomingCallId != null) 'callId': incomingCallId,
       });
 
   @override
-  Future<void> endMedia(CallId callId) =>
-      _invoke('endMedia', {'callId': callId});
+  Future<String> startOutgoingMedia({
+    required String callSid,
+    required String targetSipUri,
+  }) =>
+      _invokeForString('startOutgoingMedia', {
+        'callSid': callSid,
+        'targetSipUri': targetSipUri,
+      });
+
+  @override
+  Future<void> endMedia(String mediaSessionId) =>
+      _invoke('endMedia', {'mediaSessionId': mediaSessionId});
 
   @override
   Future<void> setMuted(bool enabled) =>
@@ -149,6 +190,25 @@ class MethodChannelNativeCallService implements NativeCallService {
           'Native call media is not installed on this device.',
         );
       }
+    }
+  }
+
+  Future<String> _invokeForString(
+    String method,
+    Map<String, Object?> arguments,
+  ) async {
+    try {
+      final value = await _channel.invokeMethod<String>(method, arguments);
+      if (value == null || value.isEmpty) {
+        throw const NativeCallUnavailable(
+          'The native call service did not return a media session.',
+        );
+      }
+      return value;
+    } on MissingPluginException {
+      throw const NativeCallUnavailable(
+        'Native call media is not installed on this device.',
+      );
     }
   }
 
@@ -184,19 +244,31 @@ class MethodChannelNativeCallService implements NativeCallService {
             : const <dynamic, dynamic>{})
         .map((key, value) => MapEntry('$key', value));
     final callId = args['callId']?.toString();
-    if (callId == null || callId.isEmpty) return;
+    final callSid = args['callSid']?.toString();
+    final mediaSessionId = args['mediaSessionId']?.toString();
+    if ((callId == null || callId.isEmpty) &&
+        (callSid == null || callSid.isEmpty) &&
+        (mediaSessionId == null || mediaSessionId.isEmpty)) {
+      return;
+    }
     final type = switch (call.method) {
       'answer' => NativeCallEventType.answer,
       'decline' => NativeCallEventType.decline,
       'end' => NativeCallEventType.end,
+      'registered' => NativeCallEventType.registered,
+      'ringing' => NativeCallEventType.ringing,
       'connected' => NativeCallEventType.connected,
+      'held' => NativeCallEventType.held,
       'disconnected' => NativeCallEventType.disconnected,
+      'failed' => NativeCallEventType.failed,
       _ => null,
     };
     if (type != null) {
       _events.add(NativeCallEvent(
         type: type,
         callId: callId,
+        callSid: callSid,
+        mediaSessionId: mediaSessionId,
         reason: args['reason']?.toString(),
       ));
     }

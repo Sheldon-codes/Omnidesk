@@ -11,6 +11,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 
 import 'components/digistem_bottom_nav/digistem_bottom_nav.dart';
 import 'components/call_experience/call_experience_host.dart';
+import 'services/calls/webview_call_media_service.dart';
 import 'firebase_options.dart';
 import 'flutter_flow/flutter_flow_theme.dart';
 import 'flutter_flow/nav/nav.dart';
@@ -139,7 +140,7 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
       themeMode: themeMode,
       routerConfig: ref.watch(goRouterProvider),
       builder: (context, child) =>
-          CallExperienceHost(child: child ?? const SizedBox.shrink()),
+          _AppCallOverlay(child: child ?? const SizedBox.shrink()),
     );
   }
 
@@ -179,6 +180,34 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
           labelLarge: flowTheme.labelLarge,
         ),
       );
+}
+
+/// App-root call overlay: the existing CallKit experience plus the hidden
+/// WebView media engine. The engine view is always mounted (1px, offscreen)
+/// so a `transport: "webrtc"` media-config works with zero warm-up delay;
+/// the page itself is inert until the media service initializes it, and the
+/// Baresip track runs with no behavioral change.
+class _AppCallOverlay extends ConsumerWidget {
+  const _AppCallOverlay({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return CallExperienceHost(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Behind the UI: full-screen transparent so WebKit treats the
+          // media engine as visible (mic capture never settles in a
+          // zero/hidden view); IgnorePointer + near-zero opacity keep it
+          // untouchable and invisible.
+          const HiddenCallWebView(),
+          child,
+        ],
+      ),
+    );
+  }
 }
 
 /// Root-owned authenticated navigation, following OPDP's NavBarPage pattern.

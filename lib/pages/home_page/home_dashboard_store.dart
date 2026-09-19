@@ -174,7 +174,9 @@ class ApiHomeDashboardRepository implements HomeDashboardRepository {
 
   @override
   Future<void> heartbeat() async {
-    await _api.post('/agent/heartbeat', const {});
+    // Heartbeat reporting is disabled product-wide: the mobile app must never
+    // call POST /agent/heartbeat. Kept as a no-op so lifecycle callers and
+    // repository fakes don't churn if reporting is ever reintroduced.
   }
 
   DashboardStats _parseStats(Map<String, dynamic> json) {
@@ -356,8 +358,6 @@ final homeDashboardProvider =
 
 class HomeDashboardController extends Notifier<HomeDashboardState> {
   Future<void>? _loadFuture;
-  Timer? _heartbeatTimer;
-  bool _heartbeatInFlight = false;
 
   @override
   HomeDashboardState build() {
@@ -365,7 +365,6 @@ class HomeDashboardController extends Notifier<HomeDashboardState> {
     Future.microtask(load);
     ref.onDispose(() {
       _loadFuture = null;
-      _heartbeatTimer?.cancel();
     });
     return state;
   }
@@ -436,26 +435,11 @@ class HomeDashboardController extends Notifier<HomeDashboardState> {
     }
   }
 
-  void startHeartbeat() {
-    _heartbeatTimer ??=
-        Timer.periodic(const Duration(seconds: 45), (_) => _sendHeartbeat());
-    unawaited(_sendHeartbeat());
-  }
+  /// Heartbeat reporting is disabled product-wide (see
+  /// [HomeDashboardRepository.heartbeat]). Kept so app-lifecycle callers
+  /// don't churn; intentionally does nothing.
+  void startHeartbeat() {}
 
-  void stopHeartbeat() {
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = null;
-  }
-
-  Future<void> _sendHeartbeat() async {
-    if (_heartbeatInFlight) return;
-    _heartbeatInFlight = true;
-    try {
-      await ref.read(homeDashboardRepositoryProvider).heartbeat();
-    } catch (_) {
-      // Heartbeats are liveness hints; transient failures must not interrupt UI.
-    } finally {
-      _heartbeatInFlight = false;
-    }
-  }
+  /// See [startHeartbeat].
+  void stopHeartbeat() {}
 }

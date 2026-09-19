@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omnidesk_agent/services/api_service.dart';
 import 'package:omnidesk_agent/services/calls/call_api.dart';
+import 'package:omnidesk_agent/services/calls/call_models.dart';
 
 class _CallAdapter implements HttpClientAdapter {
   final requests = <RequestOptions>[];
@@ -25,8 +26,11 @@ class _CallAdapter implements HttpClientAdapter {
           'sip': {
             'uri': 'sip:agent@sip.example.test',
             'username': 'agent',
+            'auth_username': 'agent-auth',
             'password': 'ephemeral-secret',
             'registrar': 'sip.example.test',
+            'domain': 'sip.example.test',
+            'proxy': 'sip.example.test:5061',
             'transport': 'tls',
             'port': 5061,
           },
@@ -48,18 +52,35 @@ class _CallAdapter implements HttpClientAdapter {
           'data': [
             {
               'call_id': 'call-log-1',
+              'call_sid': 'AT-call-sess-9921',
               'direction': 'inbound',
               'status': 'completed',
               'from_number': '+254700000002',
               'to_number': '0743379990',
-              'customer_name': 'Live customer',
-              'duration_seconds': 83,
-              'ticket_number': 'TKT-42',
+              'customer_phone': '+254700000002',
+              'customer_name': 'Jane Doe',
+              'customer': {
+                'id': 89,
+                'name': 'Jane Doe',
+                'phone_number': '+254700000002',
+                'email': 'jane.doe@example.test',
+              },
+              'duration': 83,
+              'formatted_duration': '1:23',
+              'ticket': {
+                'id': 42,
+                'display_number': '#TKT-42',
+                'subject': 'Billing issue',
+              },
               'recording_url': 'https://recordings.example.test/call-log-1',
               'created_at': '2026-09-09T10:02:00Z',
             },
           ],
           'meta': {'current_page': 1, 'last_page': 2},
+        },
+      '/calls/initiate' => {
+          'success': true,
+          'call_sid': 'AT-call-sess-initiated',
         },
       '/calls/call-1/accept' => {
           'call_id': 'call-1',
@@ -122,6 +143,14 @@ void main() {
       reason: 'agent_declined',
     );
     await calls.end(callId: 'call-1', reason: 'agent_hangup');
+    await calls.completeOutbound(
+      callSid: 'AT-call-sess-initiated',
+      connectedDuration: const Duration(seconds: 18),
+    );
+    final outbound = await calls.initiateOutbound(
+      toNumber: '+254712345678',
+      ticketId: '14',
+    );
 
     expect(
         adapter.requests.map((request) => request.path),
@@ -131,9 +160,16 @@ void main() {
           '/calls/call-1/media-ready',
           '/calls/call-1/decline',
           '/calls/call-1/end',
+          '/calls/complete',
+          '/calls/initiate',
         ]));
     expect(adapter.requests[2].data,
         {'installation_id': 'install-1', 'offer_id': 'offer-1'});
+    expect(outbound.callSid, 'AT-call-sess-initiated');
+    expect(adapter.requests.last.data,
+        {'to_number': '+254712345678', 'ticket_id': 14});
+    expect(adapter.requests[6].data,
+        {'call_sid': 'AT-call-sess-initiated', 'duration': 18});
   });
 
   test('media config and active recovery retain server call identity',
@@ -149,6 +185,8 @@ void main() {
     final config = await calls.getMediaConfig();
     expect(config.canAuthenticate, isTrue);
     expect(config.port, 5061);
+    expect(config.sipAuthUsername, 'agent-auth');
+    expect(config.sipProxy, 'sip.example.test:5061');
     final active = await calls.getActiveCall();
     expect(active?.callId, 'call-1');
     expect(active?.customerName, 'Aloise');
@@ -172,10 +210,35 @@ void main() {
         adapter.requests.single.queryParameters, {'page': 1, 'per_page': 20});
     expect(adapter.requests.single.headers['X-Workspace-Id'], 'workspace-7');
     expect(page.hasMore, isTrue);
-    expect(page.records.single.customerName, 'Live customer');
+    expect(page.records.single.customerName, 'Jane Doe');
     expect(page.records.single.phoneNumber, '+254700000002');
     expect(page.records.single.duration, const Duration(seconds: 83));
+    expect(page.records.single.formattedDuration, '1:23');
+    expect(page.records.single.ticketNumber, '#TKT-42');
+    expect(page.records.single.ticketSubject, 'Billing issue');
     expect(page.records.single.recordingUrl,
         'https://recordings.example.test/call-log-1');
+  });
+
+  test('call log mapper uses the resolved customer phone for outbound calls',
+      () {
+    final record = CallLogRecord.fromJson({
+      'id': 12,
+      'direction': 'outbound',
+      'status': 'completed',
+      'from_number': '+254709369917',
+      'to_number': '0743379990',
+      'customer_phone': '+254712345678',
+      'customer_name': 'Jane Doe',
+      'duration': 142,
+      'formatted_duration': '2:22',
+      'ticket': {'display_number': '#TKT-14', 'subject': 'Billing issue'},
+      'created_at': '2026-09-04T16:25:00+03:00',
+    });
+
+    expect(record.customerName, 'Jane Doe');
+    expect(record.phoneNumber, '+254712345678');
+    expect(record.ticketNumber, '#TKT-14');
+    expect(record.duration, const Duration(seconds: 142));
   });
 }

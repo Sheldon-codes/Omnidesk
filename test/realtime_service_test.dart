@@ -5,6 +5,7 @@ import 'package:omnidesk_agent/services/realtime/realtime_config.dart';
 import 'package:omnidesk_agent/services/realtime/realtime_event.dart';
 import 'package:omnidesk_agent/services/realtime/realtime_service.dart';
 import 'package:omnidesk_agent/services/realtime/realtime_transport.dart';
+import 'package:omnidesk_agent/services/realtime/reverb_transport.dart';
 import 'package:omnidesk_agent/services/realtime/whatsapp_outbox.dart';
 
 class FakeTransport implements RealtimeTransport {
@@ -46,6 +47,52 @@ class FakeTransport implements RealtimeTransport {
   Future<void> dispose() async {
     await _states.close();
     await _events.close();
+  }
+}
+
+class ControlledPusherFacade implements PusherFacade {
+  final _events = StreamController<FacadeEvent>.broadcast();
+  final _states = StreamController<String>.broadcast();
+  final subscribed = <String>[];
+  Completer<void>? pauseNextSubscribe;
+
+  @override
+  Stream<FacadeEvent> get onEvent => _events.stream;
+
+  @override
+  Stream<String> get onConnectionStateChange => _states.stream;
+
+  @override
+  Future<void> init({
+    required String apiKey,
+    required String cluster,
+    bool? useTLS,
+    String? authEndpoint,
+    String? host,
+    int? wsPort,
+    int? wssPort,
+  }) async {}
+
+  @override
+  Future<void> connect() async {}
+
+  @override
+  Future<void> disconnect() async {}
+
+  @override
+  Future<void> subscribe({required String channelName}) async {
+    subscribed.add(channelName);
+    final pause = pauseNextSubscribe;
+    pauseNextSubscribe = null;
+    if (pause != null) await pause.future;
+  }
+
+  @override
+  Future<void> unsubscribe({required String channelName}) async {}
+
+  Future<void> dispose() async {
+    await _events.close();
+    await _states.close();
   }
 }
 
@@ -123,5 +170,46 @@ void main() {
     expect(config.useTls, isFalse);
     expect(config.wssPort, 8086);
     expect(config.wsPort, 8086);
+  });
+
+  test('realtime config rejects an invalid websocket port', () {
+    final config = RealtimeConfig.fromEnv({
+      'API_BASE_URL': 'https://app.omnidesk.africa/api/v1',
+      'REVERB_WSS_PORT': '0',
+    });
+
+    expect(config.wssPort, 443);
+  });
+
+  test('resubscribe tolerates channels being removed during async I/O',
+      () async {
+    final facade = ControlledPusherFacade();
+    final transport = ReverbTransport(
+      const RealtimeConfig(
+        enabled: true,
+        appKey: 'k',
+        cluster: 'mt1',
+        host: '127.0.0.1',
+        wsPort: 8086,
+        wssPort: 8086,
+        useTls: false,
+        httpAuthEndpoint: null,
+      ),
+      facade,
+    );
+    await transport.subscribe('tickets');
+    await transport.subscribe('ticket.14');
+
+    final pause = Completer<void>();
+    facade.pauseNextSubscribe = pause;
+    final resubscribe = transport.resubscribeAll();
+    await Future<void>.delayed(Duration.zero);
+    await transport.unsubscribe('ticket.14');
+    pause.complete();
+    await resubscribe;
+
+    expect(facade.subscribed, ['tickets', 'ticket.14', 'tickets']);
+    await transport.dispose();
+    await facade.dispose();
   });
 }

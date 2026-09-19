@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:just_audio/just_audio.dart';
 
 import '../../components/call_experience/call_session_controller.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
@@ -242,9 +243,9 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
                 context,
                 CallParty(displayName: recent.name, phoneNumber: recent.phone),
               ),
-              onPlay: () => _showComingSoon(context),
+              onPlay: () => _openRecording(context, recent),
               showCallAction: true,
-              showPlayAction: recent.isAnswered,
+              showPlayAction: recent.hasRecording,
               child: _RecentRow(recent: recent, theme: theme),
             );
           },
@@ -327,6 +328,20 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(const SnackBar(content: Text('Coming soon')));
+  }
+
+  void _openRecording(BuildContext context, PhoneRecent recent) {
+    final recordingUrl = recent.recordingUrl;
+    if (recordingUrl == null || !recent.hasRecording) return;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => _PhoneRecordingSheet(
+        title: recent.name,
+        subtitle: '${recent.phone} · ${recent.detail}',
+        recordingUrl: recordingUrl,
+      ),
+    );
   }
 }
 
@@ -698,6 +713,139 @@ class _RecentRow extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               ),
             ),
+    );
+  }
+}
+
+class _PhoneRecordingSheet extends StatefulWidget {
+  const _PhoneRecordingSheet({
+    required this.title,
+    required this.subtitle,
+    required this.recordingUrl,
+  });
+
+  final String title;
+  final String subtitle;
+  final String recordingUrl;
+
+  @override
+  State<_PhoneRecordingSheet> createState() => _PhoneRecordingSheetState();
+}
+
+class _PhoneRecordingSheetState extends State<_PhoneRecordingSheet> {
+  final _player = AudioPlayer();
+  var _prepared = false;
+  var _playing = false;
+  var _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _player.playerStateStream.listen((state) {
+      if (mounted) setState(() => _playing = state.playing);
+    });
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  Future<void> _toggle() async {
+    if (_loading) return;
+    try {
+      if (_playing) {
+        await _player.pause();
+        return;
+      }
+      if (!_prepared) {
+        setState(() {
+          _loading = true;
+          _error = null;
+        });
+        await _player.setUrl(widget.recordingUrl);
+        if (!mounted) return;
+        setState(() {
+          _prepared = true;
+          _loading = false;
+        });
+      }
+      await _player.play();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Unable to load this call recording.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FlutterFlowTheme.of(context);
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              widget.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.titleMedium.override(
+                fontFamily: theme.titleMediumFamily,
+                color: theme.primaryText,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              widget.subtitle,
+              style: theme.bodySmall.override(
+                fontFamily: theme.bodySmallFamily,
+                color: theme.secondaryText,
+              ),
+            ),
+            const SizedBox(height: 20),
+            IconButton.filled(
+              tooltip: _playing ? 'Pause recording' : 'Play recording',
+              onPressed: _toggle,
+              style: IconButton.styleFrom(
+                backgroundColor: theme.primary,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(56, 56),
+              ),
+              icon: _loading
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(_playing
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: theme.bodySmall.override(
+                  fontFamily: theme.bodySmallFamily,
+                  color: theme.error,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

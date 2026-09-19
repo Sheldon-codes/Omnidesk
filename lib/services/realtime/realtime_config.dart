@@ -34,8 +34,13 @@ class RealtimeConfig {
       return value.trim();
     }
 
-    int readPort(String key, int fallback) =>
-        int.tryParse(read(key, '$fallback')) ?? fallback;
+    int readPort(String key, int fallback) {
+      final port = int.tryParse(read(key, '$fallback'));
+      // A URI with port 0 is syntactically valid but never a usable remote
+      // WebSocket endpoint. Treat malformed/out-of-range environment values
+      // as absent so production defaults (80/443) still apply.
+      return port != null && port > 0 && port <= 65535 ? port : fallback;
+    }
 
     bool readBool(String key, bool fallback) {
       final raw = read(key, fallback ? 'true' : 'false').toLowerCase();
@@ -64,9 +69,8 @@ class RealtimeConfig {
     bool has(String key) =>
         env.containsKey(key) && (env[key] ?? '').trim().isNotEmpty;
     final host = read('REVERB_HOST', defaultHost);
-    final hostIsLoopback = host == '127.0.0.1' ||
-        host == 'localhost' ||
-        host == '10.0.2.2';
+    final hostIsLoopback =
+        host == '127.0.0.1' || host == 'localhost' || host == '10.0.2.2';
 
     return RealtimeConfig(
       enabled: readBool('REALTIME_ENABLED', true),
@@ -74,10 +78,10 @@ class RealtimeConfig {
       cluster: read('REVERB_CLUSTER', 'mt1'),
       host: host,
       wsPort: has('REVERB_WS_PORT')
-          ? readPort('REVERB_WS_PORT', 8086)
+          ? readPort('REVERB_WS_PORT', hostIsLoopback ? 8086 : 80)
           : (hostIsLoopback ? 8086 : 80),
       wssPort: has('REVERB_WSS_PORT')
-          ? readPort('REVERB_WSS_PORT', 8086)
+          ? readPort('REVERB_WSS_PORT', hostIsLoopback ? 8086 : 443)
           : (hostIsLoopback ? 8086 : 443),
       useTls: useTls,
       httpAuthEndpoint: (() {

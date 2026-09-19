@@ -1,6 +1,7 @@
 import CallKit
 import Flutter
 import PushKit
+import os.log
 import UIKit
 
 /// PushKit must report an offer to CallKit promptly rather than waiting for
@@ -17,6 +18,8 @@ import UIKit
 
   private var voipRegistry: PKPushRegistry?
   private var callChannel: FlutterMethodChannel?
+  private var mediaAdapter: OmniDeskBaresipAdapter?
+  private let mediaLogger = Logger(subsystem: "com.bigbrainzsolutions.omnidesk", category: "NativeCallMedia")
   private lazy var callProvider: CXProvider = {
     let configuration = CXProviderConfiguration(localizedName: "OmniDesk")
     configuration.supportsVideo = false
@@ -46,6 +49,9 @@ import UIKit
       self?.handleFlutterCall(call, result: result)
     }
     callChannel = channel
+    mediaAdapter = OmniDeskBaresipAdapter { [weak self] type, reason in
+      self?.emitMediaEvent(type: type, reason: reason)
+    }
   }
 
   private func configureVoipPush() {
@@ -182,15 +188,74 @@ import UIKit
       }
       callProvider.reportCall(with: uuid(for: callId), endedAt: Date(), reason: .remoteEnded)
       result(nil)
-    case "registerMedia", "endMedia", "setMuted", "setSpeaker", "setHeld", "sendDtmf":
-      result(FlutterError(
-        code: "native_media_not_configured",
-        message: "The native SIP media transport is not configured.",
-        details: nil
-      ))
+    case "ensureRegistered":
+      guard let args = call.arguments as? [String: Any],
+        let uri = args["uri"] as? String,
+        let username = args["username"] as? String,
+        let authUsername = args["authUsername"] as? String,
+        let password = args["password"] as? String,
+        let registrar = args["registrar"] as? String,
+        let domain = args["domain"] as? String,
+        let proxy = args["proxy"] as? String,
+        let transport = args["transport"] as? String,
+        let port = args["port"] as? Int
+      else {
+        result(FlutterError(code: "invalid_media_config", message: "Incomplete SIP media configuration.", details: nil))
+        return
+      }
+      guard let adapter = mediaAdapter else {
+        result(FlutterError(code: "native_media_not_configured", message: "The native SIP media transport is not configured on iOS.", details: nil))
+        return
+      }
+      var error: NSError?
+      let session = adapter.ensureRegistered(withUri: uri, username: username, authUsername: authUsername,
+                                              password: password, registrar: registrar, domain: domain, proxy: proxy,
+                                              transport: transport, port: port, incomingCallId: args["callId"] as? String,
+                                              error: &error)
+      if let error { result(FlutterError(code: "native_media_error", message: error.localizedDescription, details: nil)) }
+      else { result(session) }
+    case "startOutgoingMedia":
+      guard let args = call.arguments as? [String: Any], let callSid = args["callSid"] as? String,
+        let targetSipUri = args["targetSipUri"] as? String, let adapter = mediaAdapter else {
+        result(FlutterError(code: "invalid_media_config", message: "Missing outbound SIP call data.", details: nil)); return
+      }
+      var error: NSError?
+      let session = adapter.startOutgoing(withCallSid: callSid, targetSipUri: targetSipUri, error: &error)
+      if let error { result(FlutterError(code: "native_media_error", message: error.localizedDescription, details: nil)) }
+      else { result(session) }
+    case "endMedia":
+      guard let args = call.arguments as? [String: Any], let session = args["mediaSessionId"] as? String,
+        let adapter = mediaAdapter else { result(nil); return }
+      do { try adapter.endMedia(session); result(nil) }
+      catch { result(FlutterError(code: "native_media_error", message: error.localizedDescription, details: nil)) }
+    case "setMuted":
+      let enabled = (call.arguments as? [String: Any])?["enabled"] as? Bool ?? false
+      do { try mediaAdapter?.setMuted(enabled); result(nil) }
+      catch { result(FlutterError(code: "native_media_error", message: error.localizedDescription, details: nil)) }
+    case "setHeld":
+      let enabled = (call.arguments as? [String: Any])?["enabled"] as? Bool ?? false
+      do { try mediaAdapter?.setHeld(enabled); result(nil) }
+      catch { result(FlutterError(code: "native_media_error", message: error.localizedDescription, details: nil)) }
+    case "sendDtmf":
+      let digit = (call.arguments as? [String: Any])?["digit"] as? String ?? ""
+      do { try mediaAdapter?.sendDtmf(digit); result(nil) }
+      catch { result(FlutterError(code: "native_media_error", message: error.localizedDescription, details: nil)) }
+    case "setSpeaker":
+      // CallKit owns the audio session route; the adapter will receive route
+      // changes through AVAudioSession once the call is active.
+      result(nil)
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+
+  private func emitMediaEvent(type: String, reason: String?) {
+    var payload: [String: Any] = [:]
+    if let callId = mediaAdapter?.callId { payload["callId"] = callId }
+    if let callSid = mediaAdapter?.callSid { payload["callSid"] = callSid }
+    if let session = mediaAdapter?.mediaSessionId { payload["mediaSessionId"] = session }
+    if let reason { payload["reason"] = reason }
+    callChannel?.invokeMethod(type, arguments: payload)
   }
 
   private func uuid(for callId: String) -> UUID {

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<!--
+  Hidden AT WebRTC bridge (POC).
+  Loaded once into an offscreen WebView; never visible to the agent.
+  Speaks the Africa's Talking browser voice client and reports a small,
+  versioned event protocol to Dart over the `OmniDeskBridge` JS channel.
+
+  Dart -> JS commands (window.OmniDesk.call.*):
+    init({token, gatewayUrl, clientName, callSid})
+    dial(phoneNumber, callSid)
+    answer(callSid)
+    hangup()
+    mute(bool) / hold(bool) / dtmf(digit)
+
+  JS -> Dart events (OmniDeskBridge.postMessage, JSON):
+    {v:1, event:'ready'}                                  engine connected
+    {v:1, event:'incoming', callSid, from}                provider ringing us
+    {v:1, event:'ringing', callSid}                       outbound ringing
+    {v:1, event:'connected', callSid}                     two-way audio live
+    {v:1, event:'ended', callSid, reason}                 call torn down
+    {v:1, event:'error', callSid, reason}                 fatal engine error
+    {v:1, event:'heartbeat', callSid}                     engine-alive ping
+
+  RISK (POC Gate 1): getUserMedia inside a backgrounded WKWebView may be
+  suspended by iOS, and asset-scheme pages may not count as a secure
+  context for microphone capture. If init/answer fails here while the same
+  token works in desktop Chrome, the fallback is a backend-hosted https
+  page running this exact script (one static file, no backend logic).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OmniDesk Call Bridge</title>
+<script src="https://unpkg.com/africastalking-client@1.0.7/build/africastalking.js"></script>
+</head>
+<body>
+<script>
+(function () {
+  'use strict';
+
+  function emit(obj) {
+    try {
+      obj.v = 1;
+      if (obj.sessionId == null) { obj.sessionId = activeSessionId; }
+      if (obj.callSid == null && activeCallSid != null) {
+        obj.callSid = activeCallSid;
+      }
+      if (obj.event) { lastEvent = obj.event; eventCount += 1; }
+      OmniDeskBridge.postMessage(JSON.stringify(obj));
+    } catch (e) { /* channel unavailable: Dart treats silence as failure */ }
+  }
+
+  // Async failures inside client.call() (rejected media promises, SDP
+  // errors) bypass the try/catch around the call site. Surface them —
+  // otherwise a dead dial looks identical to a slow one.
+  window.addEventListener('error', function (event) {
+    try {
+      console.log(
+        '[bridge] window.error: ' + (event.message || 'unknown') +
+        ' @' + (event.filename || '?') + ':' + (event.lineno || '?')
+      );
+    } catch (e) {}
+  });
+  window.addEventListener('unhandledrejection', function (event) {
+    try {
+      var reason = event.reason;
+      var text = (reason && (reason.name || reason.message))
+        ? ((reason.name || '') + ': ' + (reason.message || ''))
+        : String(reason);
+      console.log('[bridge] unhandledrejection: ' + text);
+    } catch (e) {}
+  });
+
+  var client = null;
+  var pendingIncoming = null;
+  var heartbeatTimer = null;
+  var activeSessionId = null;
+  var activeCallSid = null;
+  var lastEvent = 'page_ready';
+  var eventCount = 0;
+
+  function startHeartbeat(callSid) {
+    stopHeartbeat();
+    heartbeatTimer = setInterval(function () {
+      emit({ event: 'heartbeat', callSid: callSid || null });
+    }, 5000);
+  }
+
+  function stopHeartbeat() {
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+  }
+
+  function bindClientEvents() {
+    // Mirrors the browser softphone subscription set: ready, incomingcall,
+    // calling/outbound progress, callaccepted, hangup, offline/error.
+    client.on('ready', function () { emit({ event: 'ready' }); });
+    client.on('incomingcall', function (params) {
+      params = params || {};
+      pendingIncoming = params;
+      emit({
+        event: 'incoming',
+        from: params.from || params.callerNumber || null,
+        sessionId: params.sessionId || params.callSessionId || null,
+      });
+    });
+    client.on('calling', function (params) {
+      emit({ event: 'ringing', callSid: (params && params.callSid) || null });
+    });
+    client.on('callaccepted', function (params) {
+      emit({ event: 'connected', callSid: (params && params.callSid) || null });
+    });
+    client.on('hangup', function (params) {
+      stopHeartbeat();
+      pendingIncoming = null;
+      emit({
+        event: 'ended',
+        callSid: (params && params.callSid) || null,
+        reason: (params && (params.code || params.reason)) || null,
+      });
+    });
+    client.on('missedcall', function (params) {
+      stopHeartbeat();
+      pendingIncoming = null;
+      emit({
+        event: 'ended',
+        callSid: (params && params.callSid) || null,
+        reason: 'missed',
+      });
+    });
+    client.on('offline', function () { emit({ event: 'error', reason: 'token_expired' }); });
+    client.on('error', function (err) {
+      emit({ event: 'error', reason: (err && (err.message || err.cause)) || 'client_error' });
+    });
+    client.on('disconnect', function () { emit({ event: 'error', reason: 'client_disconnected' }); });
+    client.on('closed', function () { emit({ event: 'ended', reason: 'connection_closed' }); });
+    client.on('notready', function () { emit({ event: 'ended', reason: 'media_unregistered' }); });
+  }
+
+  window.OmniDesk = window.OmniDesk || {};
+  // The AT client gates its gateway connection on legacy
+  // `navigator.getUserMedia`, which modern WebKit no longer provides
+  // (only `navigator.mediaDevices.getUserMedia` remains). Without this
+  // shim its support check fails silently and no connection is attempted.
+  if (typeof navigator.getUserMedia === 'undefined' &&
+      navigator.mediaDevices &&
+      typeof navigator.mediaDevices.getUserMedia === 'function') {
+    navigator.getUserMedia = function (constraints, success, failure) {
+      navigator.mediaDevices.getUserMedia(constraints).then(
+        function (stream) {
+          emit({ event: 'mic', mic: 'granted', detail: 'SDK capture granted' });
+          if (typeof success === 'function') { success(stream); }
+        },
+        function (error) {
+          var detail = (error && (error.name + ': ' + error.message)) || 'SDK capture rejected';
+          emit({ event: 'error', reason: 'microphone: ' + detail });
+          if (typeof failure === 'function') { failure(error); }
+        }
+      );
+    };
+  }
+  window.OmniDesk.call = {
+    init: function (args) {
+      args = args || {};
+      activeSessionId = args.sessionId || null;
+      activeCallSid = args.callSid || null;
+      if (typeof window.Africastalking === 'undefined') {
+        emit({ event: 'error', reason: 'at_client_missing' });
+        return;
+      }
+      // NOTE: africastalking-client@1.0.7 hardcodes its gateway to
+      // wss://webrtc.africastalking.com/connect. The constructor only
+      // accepts {iceServers, sounds}; there is no gatewayUrl or server
+      // option. Any backend-provided gateway URL (e.g. :4443 — TCP-dead per
+      // device nc test) cannot be forwarded to the SDK.
+      try {
+        if (client && typeof client.hangup === 'function') {
+          try { client.hangup(); } catch (e) {}
+        }
+        // Pass sounds:{} to suppress the SDK's CDN-hosted ringtone/dialing
+        // MP3s. Flutter owns all audio feedback; letting the SDK fetch and
+        // play sounds from a headless WebView produces ghost audio.
+        client = new window.Africastalking.Client(args.token, { sounds: {} });
+        bindClientEvents();
+        startHeartbeat(args.callSid);
+        // 'ready' arrives via the client event above once media connects.
+      } catch (e) {
+        emit({ event: 'error', reason: (e && e.message) || 'init_failed' });
+      }
+    },
+    dial: function (phoneNumber, callSid) {
+      activeCallSid = callSid || null;
+      if (!client || typeof client.call !== 'function') {
+        emit({ event: 'error', callSid: callSid || null, reason: 'not_initialized' });
+        return;
+      }
+      try {
+        startHeartbeat(callSid);
+        client.call(phoneNumber);
+      } catch (e) {
+        emit({ event: 'error', callSid: callSid || null, reason: (e && e.message) || 'dial_failed' });
+      }
+    },
+    answer: function (callSid) {
+      activeCallSid = callSid || activeCallSid;
+      if (!client || typeof client.answer !== 'function') {
+        emit({ event: 'error', callSid: callSid || null, reason: 'not_initialized' });
+        return;
+      }
+      try {
+        startHeartbeat(callSid);
+        client.answer();
+        pendingIncoming = null;
+      } catch (e) {
+        emit({ event: 'error', callSid: callSid || null, reason: (e && e.message) || 'answer_failed' });
+      }
+    },
+    hangup: function () {
+      try {
+        if (client && typeof client.hangup === 'function') client.hangup();
+      } catch (e) {}
+      stopHeartbeat();
+      pendingIncoming = null;
+      activeCallSid = null;
+    },
+    mute: function (enabled) {
+      // The client exposes muteAudio/unmuteAudio (no mute/unmute); the
+      // wrong names throw inside a swallowed catch, muting silently never.
+      try {
+        if (!client) return;
+        if (enabled && typeof client.muteAudio === 'function') client.muteAudio();
+        else if (!enabled && typeof client.unmuteAudio === 'function') client.unmuteAudio();
+      } catch (e) {}
+    },
+    hold: function (enabled) {
+      try {
+        if (!client) return;
+        if (enabled && typeof client.hold === 'function') client.hold();
+        else if (!enabled && typeof client.unhold === 'function') client.unhold();
+      } catch (e) {}
+    },
+    dtmf: function (digit) {
+      try {
+        if (client && typeof client.dtmf === 'function') client.dtmf(digit);
+      } catch (e) {}
+    },
+    // Probes microphone capture without keeping the stream: the AT client's
+    // createOffer fails silently (no-op logger) when capture is unavailable,
+    // so Dart checks this explicitly instead of waiting out a dead dial.
+    // The verdict arrives as a mic event; the return value is meaningless
+    // because JS promises do not cross the native bridge.
+    micCheck: function () {
+      function report(mic, detail) {
+        emit({ event: 'mic', mic: mic, detail: detail });
+      }
+      try {
+        console.log('[Bridge] micCheck start: isSecureContext=' + window.isSecureContext + ' origin=' + location.origin + ' href=' + location.href);
+        if (!(navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function')) {
+          report('unavailable', 'mediaDevices.getUserMedia missing (secure=' + window.isSecureContext + ')');
+          return;
+        }
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(
+          function (stream) {
+            var audioTracks = stream.getAudioTracks ? stream.getAudioTracks() : [];
+            var count = audioTracks.length;
+            var state = (count > 0 && audioTracks[0].readyState) || 'unknown';
+            console.log('[Bridge] getUserMedia success: tracks=' + count + ' state=' + state);
+            try {
+              stream.getTracks().forEach(function (t) { t.stop(); });
+            } catch (e) {}
+            if (count > 0) {
+              report('granted', 'tracks=' + count + ' state=' + state + ' secure=' + window.isSecureContext);
+            } else {
+              report('unavailable', 'zero audio tracks returned');
+            }
+          },
+          function (err) {
+            console.error('[Bridge] getUserMedia error: ' + (err && (err.name + ': ' + err.message)));
+            report('denied', (err && (err.name + ': ' + err.message)) || 'getUserMedia rejected');
+          }
+        );
+      } catch (e) {
+        console.error('[Bridge] micCheck threw: ' + (e && e.message));
+        report('unavailable', (e && e.message) || 'probe threw');
+      }
+    },
+    status: function () {
+      var md = navigator.mediaDevices;
+      return {
+        bridge: true,
+        atLib: typeof window.Africastalking,
+        hasClient: !!client,
+        lastEvent: lastEvent,
+        eventCount: eventCount,
+        // Replicates the AT client's own gate: RTCPeerConnection plus
+        // LEGACY navigator.getUserMedia (not mediaDevices.*). When false the
+        // client never opens its gateway socket and emits nothing.
+        rtcPeerConnection: typeof window.RTCPeerConnection,
+        legacyGetUserMedia: typeof navigator.getUserMedia,
+        mediaDevicesGUM: typeof (md && md.getUserMedia),
+        isSecureContext: window.isSecureContext,
+        origin: location.origin,
+        href: location.href,
+      };
+    },
+  };
+
+  // Signal page liveness so Dart can distinguish "bridge loaded" from silence.
+  emit({ event: 'page_ready' });
+})();
+</script>
+</body>
+</html>

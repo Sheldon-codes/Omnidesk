@@ -118,6 +118,14 @@ abstract class CallApi {
     required String reason,
   });
   Future<void> end({required CallId callId, required String reason});
+  Future<void> completeOutbound({
+    required String callSid,
+    required Duration connectedDuration,
+  });
+  Future<OutboundCallResult> initiateOutbound({
+    required String toNumber,
+    String? ticketId,
+  });
   Future<ActiveCallSnapshot?> getActiveCall();
   Future<CallLogPage> getCallLogs({int page = 1, int perPage = 20});
 }
@@ -188,6 +196,46 @@ class RemoteCallApi implements CallApi {
   @override
   Future<void> end({required CallId callId, required String reason}) =>
       _post('/calls/$callId/end', {'reason': reason});
+
+  @override
+  Future<void> completeOutbound({
+    required String callSid,
+    required Duration connectedDuration,
+  }) =>
+      _post('/calls/complete', {
+        'call_sid': callSid,
+        'duration': connectedDuration.inSeconds,
+      });
+
+  @override
+  Future<OutboundCallResult> initiateOutbound({
+    required String toNumber,
+    String? ticketId,
+  }) async {
+    final normalizedNumber = toNumber.trim();
+    if (normalizedNumber.isEmpty) {
+      throw const CallApiException(
+        CallApiErrorKind.validation,
+        'Enter a phone number before starting a call.',
+      );
+    }
+    final parsedTicketId = int.tryParse(ticketId?.trim() ?? '');
+    final response = await _post('/calls/initiate', {
+      'to_number': normalizedNumber,
+      if (parsedTicketId != null) 'ticket_id': parsedTicketId,
+    });
+    if (response['success'] != true) {
+      throw const CallApiException(
+        CallApiErrorKind.server,
+        'The call service did not accept the outbound call.',
+      );
+    }
+    try {
+      return OutboundCallResult.fromJson(response);
+    } on FormatException catch (error) {
+      throw CallApiException(CallApiErrorKind.malformed, error.message);
+    }
+  }
 
   @override
   Future<ActiveCallSnapshot?> getActiveCall() async {

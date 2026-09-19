@@ -111,13 +111,19 @@ class CallMediaConfig {
     required this.endpointType,
     required this.sipUri,
     required this.sipUsername,
+    required this.sipAuthUsername,
     required this.registrar,
+    required this.sipDomain,
+    required this.sipProxy,
     required this.sipTransport,
     required this.port,
     required this.supportsHold,
     required this.supportsDtmf,
     required this.supportsNativeIncoming,
     this.sipPassword,
+    this.webrtcToken,
+    this.webrtcGatewayUrl,
+    this.webrtcClientName,
   });
 
   final String provider;
@@ -125,7 +131,10 @@ class CallMediaConfig {
   final String endpointType;
   final String sipUri;
   final String sipUsername;
+  final String sipAuthUsername;
   final String registrar;
+  final String sipDomain;
+  final String sipProxy;
   final String sipTransport;
   final int port;
   final String? sipPassword;
@@ -133,14 +142,37 @@ class CallMediaConfig {
   final bool supportsDtmf;
   final bool supportsNativeIncoming;
 
-  /// A native SIP stack cannot authenticate safely without a short-lived
-  /// credential. The documented sample omits it, so callers must surface a
-  /// configuration failure rather than attempting anonymous registration.
-  bool get canAuthenticate => sipPassword != null && sipPassword!.isNotEmpty;
+  /// Africa's Talking WebRTC gateway credentials (browser-softphone path).
+  /// Null unless the backend returns a `webrtc` block; the hidden-WebView
+  /// media engine consumes these, never the SIP fields above.
+  final String? webrtcToken;
+  final String? webrtcGatewayUrl;
+  final String? webrtcClientName;
+
+  /// A native SIP stack must reject incomplete configuration rather than
+  /// falling back to anonymous or non-TLS registration. These credentials are
+  /// deliberately ephemeral and are never persisted by the Dart layer.
+  bool get canAuthenticate =>
+      provider == 'africas_talking' &&
+      transport == 'sip' &&
+      endpointType == 'mobile' &&
+      sipUri.isNotEmpty &&
+      sipUsername.isNotEmpty &&
+      sipAuthUsername.isNotEmpty &&
+      sipPassword != null &&
+      sipPassword!.isNotEmpty &&
+      registrar.isNotEmpty &&
+      sipDomain.isNotEmpty &&
+      sipProxy.isNotEmpty &&
+      sipTransport.toLowerCase() == 'tls' &&
+      port > 0;
 
   factory CallMediaConfig.fromJson(Map<String, dynamic> json) {
     final sip = json['sip'] is Map
         ? (json['sip'] as Map).map((key, value) => MapEntry('$key', value))
+        : const <String, dynamic>{};
+    final webrtc = json['webrtc'] is Map
+        ? (json['webrtc'] as Map).map((key, value) => MapEntry('$key', value))
         : const <String, dynamic>{};
     final capabilities = json['capabilities'] is Map
         ? (json['capabilities'] as Map)
@@ -154,7 +186,10 @@ class CallMediaConfig {
       endpointType: '${json['endpoint_type'] ?? ''}',
       sipUri: '${sip['uri'] ?? ''}',
       sipUsername: '${sip['username'] ?? ''}',
+      sipAuthUsername: '${sip['auth_username'] ?? sip['username'] ?? ''}',
       registrar: '${sip['registrar'] ?? ''}',
+      sipDomain: '${sip['domain'] ?? sip['registrar'] ?? ''}',
+      sipProxy: '${sip['proxy'] ?? ''}',
       sipTransport: '${sip['transport'] ?? ''}',
       port: int.tryParse('${sip['port'] ?? ''}') ?? 0,
       sipPassword:
@@ -162,8 +197,20 @@ class CallMediaConfig {
       supportsHold: boolValue(capabilities['hold']),
       supportsDtmf: boolValue(capabilities['dtmf']),
       supportsNativeIncoming: boolValue(capabilities['native_incoming']),
+      webrtcToken: (webrtc['token'])?.toString(),
+      webrtcGatewayUrl: (webrtc['gateway_url'] ?? webrtc['gatewayUrl'])
+          ?.toString(),
+      webrtcClientName:
+          (webrtc['client_name'] ?? webrtc['clientName'])?.toString(),
     );
   }
+
+  /// The hidden-WebView engine is usable when a capability token exists.
+  /// The gateway URL is optional: the AT JS client defaults to the
+  /// production gateway when none is supplied.
+  bool get canUseWebRtc =>
+      provider == 'africas_talking' &&
+      (webrtcToken != null && webrtcToken!.isNotEmpty);
 }
 
 class ActiveCallSnapshot {
@@ -232,7 +279,11 @@ class CallLogRecord {
     this.customerId,
     this.customerName,
     this.duration = Duration.zero,
+    this.formattedDuration,
     this.ticketNumber,
+    this.ticketSubject,
+    this.agentName,
+    this.transcript,
     this.recordingUrl,
   });
 
@@ -244,13 +295,27 @@ class CallLogRecord {
   final String? customerId;
   final String? customerName;
   final Duration duration;
+  final String? formattedDuration;
   final String? ticketNumber;
+  final String? ticketSubject;
+  final String? agentName;
+  final String? transcript;
   final String? recordingUrl;
 
   bool get isAnswered =>
       status == CallLogStatus.completed && duration > Duration.zero;
 
   factory CallLogRecord.fromJson(Map<String, dynamic> json) {
+    String? firstPresent(Iterable<Object?> values) {
+      for (final value in values) {
+        final text = value?.toString().trim();
+        if (text != null && text.isNotEmpty && text.toLowerCase() != 'null') {
+          return text;
+        }
+      }
+      return null;
+    }
+
     final rawStatus =
         '${json['status'] ?? json['call_status'] ?? ''}'.trim().toLowerCase();
     final rawDirection = '${json['direction'] ?? ''}'.trim().toLowerCase();
@@ -275,22 +340,36 @@ class CallLogRecord {
         ? (nestedTicket['customer'] as Map)
             .map((key, value) => MapEntry('$key', value))
         : const <String, dynamic>{};
-    final callerName = json['caller_name']?.toString().trim();
-    final customerName = json['customer_name']?.toString().trim();
-    final resolvedName = (callerName?.isNotEmpty == true
-            ? callerName
-            : customerName?.isNotEmpty == true
-                ? customerName
-                : nestedCustomer['name']?.toString().trim().isNotEmpty == true
-                    ? nestedCustomer['name']?.toString().trim()
-                    : nestedTicketCustomer['name']?.toString().trim()) ??
+    final resolvedName = firstPresent([
+      json['caller_name'],
+      json['customer_name'],
+      nestedCustomer['name'],
+      nestedTicketCustomer['name'],
+    ]);
+    final fromNumber = firstPresent([
+          json['from_number'],
+          json['caller_number'],
+          json['remote_number'],
+        ]) ??
         '';
-    final fromNumber =
-        '${json['from_number'] ?? json['caller_number'] ?? json['remote_number'] ?? ''}'
-            .trim();
-    final toNumber =
-        '${json['to_number'] ?? json['phone_number'] ?? json['remote_number'] ?? ''}'
-            .trim();
+    final toNumber = firstPresent([
+          json['to_number'],
+          json['phone_number'],
+          json['remote_number'],
+        ]) ??
+        '';
+    // The API resolves the actual customer phone independently of call
+    // direction. Prefer it over the agent's device number in both inbound and
+    // outbound entries; legacy responses fall back to the directional number.
+    final customerPhone = firstPresent([
+      json['customer_phone'],
+      nestedCustomer['phone_number'],
+      nestedCustomer['phone'],
+      nestedTicketCustomer['phone_number'],
+      nestedTicketCustomer['phone'],
+    ]);
+    final remoteNumber = customerPhone ??
+        (direction == CallDirection.outbound ? toNumber : fromNumber);
     return CallLogRecord(
       id: '${json['call_id'] ?? json['id'] ?? ''}',
       direction: direction,
@@ -303,16 +382,63 @@ class CallLogRecord {
       },
       // For outbound calls the customer is the destination; for inbound
       // calls the customer is the originating number.
-      phoneNumber: direction == CallDirection.outbound ? toNumber : fromNumber,
+      phoneNumber: remoteNumber,
       occurredAt: timestamp,
       customerId: json['customer_id']?.toString() ??
           nestedCustomer['id']?.toString() ??
           nestedTicketCustomer['id']?.toString(),
-      customerName: resolvedName.isEmpty ? null : resolvedName,
+      customerName: resolvedName,
       duration: Duration(seconds: durationSeconds.clamp(0, 31536000).toInt()),
-      ticketNumber:
-          (json['ticket_number'] ?? json['ticket_display_number'])?.toString(),
-      recordingUrl: json['recording_url']?.toString(),
+      formattedDuration: firstPresent([json['formatted_duration']]),
+      ticketNumber: firstPresent([
+        json['ticket_number'],
+        json['ticket_display_number'],
+        nestedTicket['display_number'],
+      ]),
+      ticketSubject:
+          firstPresent([nestedTicket['subject'], json['ticket_subject']]),
+      agentName:
+          firstPresent([json['agent_name'], (json['agent'] as Map?)?['name']]),
+      transcript: firstPresent([json['transcript']]),
+      recordingUrl: firstPresent([json['recording_url']]),
+    );
+  }
+}
+
+/// Result returned after the server has accepted an outbound originate request.
+/// The provider session ID is useful for observability, but is deliberately
+/// kept separate from [CallId]: lifecycle endpoints require the canonical call
+/// ID when the backend eventually returns one.
+class OutboundCallResult {
+  const OutboundCallResult({
+    required this.callSid,
+    this.callId,
+    this.sipUri,
+    this.normalizedToNumber,
+  });
+
+  final String callSid;
+  final CallId? callId;
+
+  /// Backend-provided destination for the native SIP INVITE.
+  final String? sipUri;
+  final String? normalizedToNumber;
+
+  factory OutboundCallResult.fromJson(Map<String, dynamic> json) {
+    final callSid = '${json['call_sid'] ?? ''}'.trim();
+    if (callSid.isEmpty) {
+      throw const FormatException(
+        'The call service did not return an outbound call session ID.',
+      );
+    }
+    final callId = '${json['call_id'] ?? ''}'.trim();
+    final sipUri = '${json['sip_uri'] ?? ''}'.trim();
+    final normalized = '${json['normalized_to_number'] ?? ''}'.trim();
+    return OutboundCallResult(
+      callSid: callSid,
+      callId: callId.isEmpty ? null : callId,
+      sipUri: sipUri.isEmpty ? null : sipUri,
+      normalizedToNumber: normalized.isEmpty ? null : normalized,
     );
   }
 }

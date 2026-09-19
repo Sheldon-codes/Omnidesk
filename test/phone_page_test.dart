@@ -41,6 +41,26 @@ void main() {
     expect(container.read(phonePageProvider).viewMode, PhoneViewMode.list);
   });
 
+  test('Phone call history exposes playback only for a server recording URL',
+      () {
+    const unavailable = PhoneRecent(
+      name: 'Caller',
+      phone: '+254700000001',
+      time: '12:00',
+      detail: '0:18',
+    );
+    const available = PhoneRecent(
+      name: 'Caller',
+      phone: '+254700000001',
+      time: '12:00',
+      detail: '0:18',
+      recordingUrl: 'https://recordings.example.test/call-1.mp3',
+    );
+
+    expect(unavailable.hasRecording, isFalse);
+    expect(available.hasRecording, isTrue);
+  });
+
   testWidgets('Phone search appears below tabs and filters contacts',
       (tester) async {
     await tester.pumpWidget(
@@ -107,8 +127,7 @@ void main() {
     expect(find.byTooltip('Add contact'), findsOneWidget);
   });
 
-  testWidgets(
-      'dial pad reports unavailable when no live outbound contract exists',
+  testWidgets('dial pad hands a non-empty number to the global call session',
       (tester) async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
@@ -126,12 +145,8 @@ void main() {
     await tester.pump();
 
     final call = container.read(callSessionControllerProvider);
-    expect(call.lifecycle, CallLifecycle.idle);
-    expect(call.party, isNull);
-    expect(container.read(phonePageProvider).viewMode, PhoneViewMode.dialPad);
-    expect(
-        find.text('Outgoing calling is not enabled by the call service yet.'),
-        findsOneWidget);
+    expect(call.party?.phoneNumber, '71');
+    expect(container.read(phonePageProvider).viewMode, PhoneViewMode.list);
     container.read(callSessionControllerProvider.notifier).end();
   });
 

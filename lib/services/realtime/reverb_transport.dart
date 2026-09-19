@@ -2,8 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 
-import 'package:pusher_channels_flutter/pusher_channels_flutter.dart'
-    as pusher;
+import 'package:pusher_channels_flutter/pusher_channels_flutter.dart' as pusher;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'realtime_config.dart';
@@ -154,8 +153,7 @@ class ReverbSocketFacade implements PusherFacade {
   Uri _uri() {
     final scheme = _useTls ? 'wss' : 'ws';
     final defaultPort = _useTls ? 443 : 80;
-    final authority =
-        _port == defaultPort ? _host : '$_host:$_port';
+    final authority = _port == defaultPort ? _host : '$_host:$_port';
     return Uri.parse(
         '$scheme://$authority/app/$_apiKey?protocol=7&client=omidesk-flutter&version=1.0&flash=false');
   }
@@ -163,40 +161,87 @@ class ReverbSocketFacade implements PusherFacade {
   @override
   Future<void> connect() async {
     if (_disposed) return;
-    await _sub?.cancel();
-    try {
-      _channel?.sink.close();
-    } catch (_) {}
+    await _closeActiveConnection();
     _states.add('CONNECTING');
+    WebSocketChannel? channel;
     try {
       final uri = _uri();
       developer.log('Reverb dial $uri', name: 'ReverbTransport');
-      _channel = WebSocketChannel.connect(uri);
-      _sub = _channel!.stream.listen(
+      channel = WebSocketChannel.connect(uri);
+
+      // `connect` returns before the HTTP Upgrade handshake has completed.
+      // Its `ready` future carries handshake failures (including a proxy
+      // returning a normal HTTP response). Always consume that future here;
+      // otherwise it becomes an unhandled asynchronous exception and can
+      // terminate the Flutter error zone.
+      await channel.ready.timeout(const Duration(seconds: 15));
+      if (_disposed) {
+        _startClose(channel);
+        return;
+      }
+
+      _channel = channel;
+      _sub = channel.stream.listen(
         _onData,
         onError: (Object e) {
           developer.log('Reverb socket error: $e', name: 'ReverbTransport');
-          _states.add('DISCONNECTED');
+          _handleSocketClosed(channel!);
         },
         onDone: () {
           developer.log('Reverb socket closed (onDone)',
               name: 'ReverbTransport');
-          _states.add('DISCONNECTED');
-          _pingTimer?.cancel();
+          _handleSocketClosed(channel!);
         },
         cancelOnError: false,
       );
     } catch (error) {
       developer.log('Reverb dial failed: $error', name: 'ReverbTransport');
+      if (channel != null) _startClose(channel);
       _states.add('DISCONNECTED');
     }
+  }
+
+  /// Closes only the currently active socket. Late callbacks from a replaced
+  /// socket must not disconnect a newer successful connection.
+  void _handleSocketClosed(WebSocketChannel channel) {
+    if (!identical(_channel, channel)) return;
+    _pingTimer?.cancel();
+    _pingTimer = null;
+    _channel = null;
+    _sub = null;
+    _states.add('DISCONNECTED');
+  }
+
+  Future<void> _closeActiveConnection() async {
+    _pingTimer?.cancel();
+    _pingTimer = null;
+    final sub = _sub;
+    final channel = _channel;
+    _sub = null;
+    _channel = null;
+    try {
+      await sub?.cancel();
+    } catch (_) {}
+    if (channel != null) _startClose(channel);
+  }
+
+  /// Socket shutdown may wait for a peer's close frame. It must never delay
+  /// reconnecting or block a UI lifecycle callback; the error is still fully
+  /// consumed inside [_closeChannel].
+  void _startClose(WebSocketChannel channel) {
+    unawaited(_closeChannel(channel));
+  }
+
+  Future<void> _closeChannel(WebSocketChannel channel) async {
+    try {
+      await channel.sink.close();
+    } catch (_) {}
   }
 
   void _onData(dynamic raw) {
     Map<String, dynamic> msg;
     try {
-      msg = (jsonDecode('$raw') as Map)
-          .map((k, v) => MapEntry('$k', v));
+      msg = (jsonDecode('$raw') as Map).map((k, v) => MapEntry('$k', v));
     } catch (_) {
       return;
     }
@@ -264,18 +309,13 @@ class ReverbSocketFacade implements PusherFacade {
 
   @override
   Future<void> disconnect() async {
-    _pingTimer?.cancel();
-    try {
-      await _sub?.cancel();
-      await _channel?.sink.close();
-    } catch (_) {}
+    await _closeActiveConnection();
     _states.add('DISCONNECTED');
   }
 
   Future<void> dispose() async {
     _disposed = true;
-    _pingTimer?.cancel();
-    await _sub?.cancel();
+    await _closeActiveConnection();
     await _events.close();
     await _states.close();
   }
@@ -335,8 +375,7 @@ class ReverbTransport implements RealtimeTransport {
     if (normalized.contains('CONNECTED')) {
       return RealtimeConnectionState.connected;
     }
-    if (normalized.contains('CONNECTING') ||
-        normalized.contains('RECONNECT')) {
+    if (normalized.contains('CONNECTING') || normalized.contains('RECONNECT')) {
       return RealtimeConnectionState.connecting;
     }
     return RealtimeConnectionState.disconnected;
@@ -433,7 +472,14 @@ class ReverbTransport implements RealtimeTransport {
 
   /// Force the socket back onto desired channels (used after reconnect).
   Future<void> resubscribeAll() async {
-    for (final channel in _refCounts.keys) {
+    // Each subscribe awaits platform I/O, during which chat-list scrolling can
+    // add or remove watched channels. Iterate a point-in-time snapshot rather
+    // than the live map view to avoid a concurrent-modification exception.
+    // A channel removed after the snapshot is skipped; a channel added later
+    // is subscribed through [subscribe].
+    final channels = _refCounts.keys.toList(growable: false);
+    for (final channel in channels) {
+      if (_disposed || !_refCounts.containsKey(channel)) continue;
       try {
         await _facade.subscribe(channelName: channel);
       } catch (_) {}
