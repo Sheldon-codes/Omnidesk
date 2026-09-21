@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'call_models.dart';
-import 'native_call_service.dart';
+import 'deprecated_baresip_media_bridge.dart';
 
 /// Media-engine events. Deliberately transport-agnostic: the session
 /// controller drives the same state machine whether audio flows through
@@ -48,10 +48,9 @@ class MediaUnavailable implements Exception {
 
 /// Transport-agnostic voice media boundary.
 ///
-/// Baresip SIP and the experimental hidden-WebView AT client both implement
-/// this. Native CallKit/Telecom UI, push handling, and device tokens stay on
-/// [NativeCallService]; only microphone/speaker media moves behind this seam
-/// so the POC is genuinely replaceable.
+/// The hidden-WebView AT client implements this in production. The deprecated
+/// Baresip compatibility adapter remains temporarily unselected until its
+/// native build artifacts are removed in a dedicated cleanup change.
 abstract class CallMediaService {
   Stream<CallMediaEvent> get events;
 
@@ -82,17 +81,17 @@ abstract class CallMediaService {
   Future<void> dispose();
 }
 
-/// Production SIP path: thin adapter over the native Baresip channel.
-/// Behavior is unchanged from the pre-seam controller flow.
+/// Deprecated SIP compatibility path. It is never selected in production.
+@Deprecated('Baresip is deprecated and unreachable in production.')
 class BaresipCallMediaService implements CallMediaService {
-  BaresipCallMediaService({required NativeCallService native})
-      : _native = native {
-    _nativeSub = native.events.listen(_onNativeEvent);
+  BaresipCallMediaService({required DeprecatedBaresipMediaBridge bridge})
+      : _bridge = bridge {
+    _nativeSub = bridge.events.listen(_onNativeEvent);
   }
 
-  final NativeCallService _native;
+  final DeprecatedBaresipMediaBridge _bridge;
   final _events = StreamController<CallMediaEvent>.broadcast();
-  StreamSubscription<NativeCallEvent>? _nativeSub;
+  StreamSubscription<DeprecatedBaresipMediaEvent>? _nativeSub;
   Completer<void>? _ready;
   String? _sessionId;
   CallMediaConfig? _config;
@@ -106,7 +105,7 @@ class BaresipCallMediaService implements CallMediaService {
       {CallId? incomingCallId}) async {
     _config = config;
     _ready = Completer<void>();
-    final sessionId = await _native.ensureRegistered(
+    final sessionId = await _bridge.ensureRegistered(
       config,
       incomingCallId: incomingCallId,
     );
@@ -138,7 +137,7 @@ class BaresipCallMediaService implements CallMediaService {
     if (target == null || target.isEmpty) {
       throw const MediaUnavailable('A valid SIP call target is required.');
     }
-    return _native
+    return _bridge
         .startOutgoingMedia(callSid: callSid, targetSipUri: target)
         .then((sessionId) {
       // The controller correlates by callSid; Baresip reports the same
@@ -155,42 +154,41 @@ class BaresipCallMediaService implements CallMediaService {
 
   @override
   Future<void> endMedia(String mediaSessionId) =>
-      _native.endMedia(mediaSessionId);
+      _bridge.endMedia(mediaSessionId);
 
   @override
-  Future<void> setMuted(bool enabled) => _native.setMuted(enabled);
+  Future<void> setMuted(bool enabled) => _bridge.setMuted(enabled);
 
   @override
-  Future<void> setHeld(bool enabled) => _native.setHeld(enabled);
+  Future<void> setHeld(bool enabled) => _bridge.setHeld(enabled);
 
   @override
-  Future<void> sendDtmf(String digit) => _native.sendDtmf(digit);
+  Future<void> sendDtmf(String digit) => _bridge.sendDtmf(digit);
 
   void _completeReady() {
     final ready = _ready;
     if (ready != null && !ready.isCompleted) ready.complete();
   }
 
-  void _onNativeEvent(NativeCallEvent event) {
+  void _onNativeEvent(DeprecatedBaresipMediaEvent event) {
     if (_disposed) return;
     switch (event.type) {
-      case NativeCallEventType.registered:
+      case DeprecatedBaresipMediaEventType.registered:
         _completeReady();
         _events.add(const CallMediaEvent(type: CallMediaEventType.ready));
-      case NativeCallEventType.ringing:
+      case DeprecatedBaresipMediaEventType.ringing:
         _events.add(const CallMediaEvent(type: CallMediaEventType.ringing));
-      case NativeCallEventType.connected:
+      case DeprecatedBaresipMediaEventType.connected:
         // Connected implies a usable engine (media already flowing), so it
         // also satisfies a pending initialize — the inbound path never emits
         // a separate `registered` event.
         _completeReady();
         _events.add(const CallMediaEvent(type: CallMediaEventType.connected));
-      case NativeCallEventType.held:
+      case DeprecatedBaresipMediaEventType.held:
         _events.add(const CallMediaEvent(type: CallMediaEventType.held));
-      case NativeCallEventType.disconnected:
-      case NativeCallEventType.end:
+      case DeprecatedBaresipMediaEventType.disconnected:
         _events.add(const CallMediaEvent(type: CallMediaEventType.ended));
-      case NativeCallEventType.failed:
+      case DeprecatedBaresipMediaEventType.failed:
         final ready = _ready;
         if (ready != null && !ready.isCompleted) {
           ready.completeError(MediaUnavailable(
@@ -201,10 +199,6 @@ class BaresipCallMediaService implements CallMediaService {
           type: CallMediaEventType.error,
           reason: event.reason,
         ));
-      case NativeCallEventType.answer:
-      case NativeCallEventType.decline:
-        // CallKit actions stay with the session controller's native listener.
-        break;
     }
   }
 
@@ -229,7 +223,7 @@ class BaresipCallMediaService implements CallMediaService {
 final baresipCallMediaServiceProvider = Provider<BaresipCallMediaService>(
   (ref) {
     final service = BaresipCallMediaService(
-      native: ref.read(nativeCallServiceProvider),
+      bridge: ref.read(deprecatedBaresipMediaBridgeProvider),
     );
     ref.onDispose(() => unawaited(service.dispose()));
     return service;

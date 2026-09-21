@@ -65,14 +65,24 @@ class FcmService {
       return;
     }
     try {
-      await messaging.requestPermission(alert: true, badge: true, sound: true);
+      final permissions = await messaging.requestPermission(
+          alert: true, badge: true, sound: true);
       _token = await messaging.getToken();
       _apnsToken = await messaging.getAPNSToken();
       _tokenChanges.add(_token);
+      developer.log(
+        'FCM initialized: permission=${permissions.authorizationStatus.name}, '
+        'fcmTokenAvailable=${_token?.isNotEmpty == true}, '
+        'apnsTokenAvailable=${_apnsToken?.isNotEmpty == true}.',
+        name: 'FcmService',
+      );
       messaging.onTokenRefresh.listen((token) {
         _token = token;
         _tokenChanges.add(token);
-        developer.log('FCM token refreshed', name: 'FcmService');
+        developer.log(
+          'FCM token refreshed: fcmTokenAvailable=${token.isNotEmpty}.',
+          name: 'FcmService',
+        );
       });
       // Static-only in this firebase_messaging release; guarded by the
       // surrounding try/catch when no Firebase app exists.
@@ -108,6 +118,10 @@ class FcmService {
     if (token == _voipPushToken) return;
     _voipPushToken = token;
     _tokenChanges.add(_token);
+    developer.log(
+      'Native push token updated: tokenAvailable=${token.isNotEmpty}.',
+      name: 'FcmService',
+    );
   }
 
   Future<void> dispose() async {

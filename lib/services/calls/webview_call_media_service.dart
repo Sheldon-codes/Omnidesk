@@ -149,16 +149,21 @@ class WebViewCallMediaService implements CallMediaService {
   String _bridgeNote = 'engine never started';
   bool _pageLoaded = false;
   Completer<void>? _pageReady;
+  Completer<void>? _attached;
   // Tail of the page's own console (AT client internals, resource errors).
   // Bounded; the latest line is attached to timeout failures.
   final List<String> _consoleTail = <String>[];
 
   void _log(String message) => developer.log(message, name: 'WebViewMedia');
 
+  bool get hasController => _controller != null;
+
   /// The host widget calls this exactly once with the live controller.
   void attachController(WebViewController controller) {
     if (_controller != null) return;
     _controller = controller;
+    final attached = _attached;
+    if (attached != null && !attached.isCompleted) attached.complete();
     controller.addJavaScriptChannel(
       atBridgeChannel,
       onMessageReceived: _onBridgeMessage,
@@ -171,6 +176,19 @@ class WebViewCallMediaService implements CallMediaService {
     );
     _log('hidden engine mounted; loading bridge page');
     unawaited(_loadBridgePage(controller));
+  }
+
+  /// Mounting the platform WebView is deferred until the first call so it
+  /// cannot block Android's initial splash frame.
+  Future<void> waitForController() async {
+    if (_controller != null) return;
+    _attached ??= Completer<void>();
+    await _attached!.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => throw const MediaUnavailable(
+        'The call engine could not be mounted.',
+      ),
+    );
   }
 
   Future<void> _loadBridgePage(WebViewController controller) async {
@@ -237,6 +255,7 @@ class WebViewCallMediaService implements CallMediaService {
   @override
   Future<String> initialize(CallMediaConfig config,
       {CallId? incomingCallId}) async {
+    await waitForController();
     final token = config.webrtcToken;
     if (token == null || token.isEmpty) {
       throw const MediaUnavailable(

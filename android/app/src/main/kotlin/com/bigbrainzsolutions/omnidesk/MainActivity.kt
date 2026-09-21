@@ -1,5 +1,6 @@
 package com.bigbrainzsolutions.omnidesk
 
+import android.util.Log
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodCall
@@ -8,39 +9,52 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val callsChannel = "africa.omnidesk/calls"
     private lateinit var channel: MethodChannel
-    private lateinit var media: BaresipMediaCoordinator
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, callsChannel)
-        media = BaresipMediaCoordinator(applicationContext) { event ->
-            runOnUiThread { channel.invokeMethod(event.type, event.arguments) }
-        }
+        AndroidCallEventBridge.attach(channel)
         channel.setMethodCallHandler(::handleCallMethod)
+        Log.i(logTag, "Call method channel configured")
     }
 
     private fun handleCallMethod(call: MethodCall, result: MethodChannel.Result) {
         val args = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
+        val callId = args["callId"]?.toString() ?: "none"
+        val callSid = args["callSid"]?.toString() ?: "none"
+        Log.i(logTag, "Flutter native call method=${call.method} callId=$callId callSid=$callSid")
         when (call.method) {
-            "ensureRegistered" -> media.ensureRegistered(
-                MediaConfig.from(args), args.string("callId"),
-                onReady = result::success,
-                onFailure = { error -> result.error(error.code, error.message, null) },
-            )
-            "startOutgoingMedia" -> media.startOutgoing(
-                callSid = args.requiredString("callSid"),
-                targetSipUri = args.requiredString("targetSipUri"),
-                onReady = result::success,
-                onFailure = { error -> result.error(error.code, error.message, null) },
-            )
-            "endMedia" -> media.end(args.requiredString("mediaSessionId"), result)
-            "setMuted" -> media.setMuted(args["enabled"] == true, result)
-            "setSpeaker" -> media.setSpeaker(args["enabled"] == true, result)
-            "setHeld" -> media.setHeld(args["enabled"] == true, result)
-            "sendDtmf" -> media.sendDtmf(args.requiredString("digit"), result)
+            // Gate 1 system-call boundary. Android Telecom takes ownership in
+            // Gate 3; these no-op acknowledgements keep the established
+            // Flutter/WebRTC path functional while no SIP method is exposed
+            // through NativeCallService any longer.
+            "readNativePushToken" -> result.success(IncomingCallStateStore.readFcmToken(applicationContext))
+            "takePendingOffer" -> result.success(IncomingCallStateStore.takeOffer(applicationContext))
+            "takePendingAction" -> result.success(IncomingCallStateStore.takeAction(applicationContext))
+            "presentIncoming" -> {
+                try {
+                    val receipt = OmniDeskTelecomManager.presentIncoming(applicationContext, args.mapNotNull { (key, value) -> value?.toString()?.let { key.toString() to it } }.toMap())
+                    result.success(receipt.toMap())
+                } catch (error: Throwable) { result.error("telecom_presentation_failed", error.message, null) }
+            }
+            "beginOutgoingSystemCall" -> {
+                try { OmniDeskTelecomManager.beginOutgoing(applicationContext, args.mapNotNull { (key, value) -> value?.toString()?.let { key.toString() to it } }.toMap()); result.success(null) }
+                catch (error: Throwable) { result.error("telecom_outgoing_failed", error.message, null) }
+            }
+            "markSystemCallActive" -> { OmniDeskTelecomManager.markActive(applicationContext, callId); result.success(null) }
+            "markSystemCallFailed" -> { OmniDeskTelecomManager.markFailed(applicationContext, callId, args["reason"]?.toString()); result.success(null) }
+            "dismissSystemCall" -> { OmniDeskTelecomManager.dismiss(applicationContext, callId); result.success(null) }
+            "setSystemSpeaker" -> { OmniDeskTelecomManager.setSpeaker(applicationContext, args["enabled"] == true); result.success(null) }
             else -> result.notImplemented()
         }
     }
-}
 
-private fun Map<*, *>.string(name: String): String? = this[name]?.toString()?.takeIf { it.isNotBlank() }
+    override fun onDestroy() {
+        if (::channel.isInitialized) AndroidCallEventBridge.detach(channel)
+        super.onDestroy()
+    }
+
+    private companion object {
+        const val logTag = "OmniDeskCallPush"
+    }
+}

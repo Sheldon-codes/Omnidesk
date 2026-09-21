@@ -99,7 +99,10 @@ abstract class CallApi {
   Future<CallMediaConfig> getMediaConfig();
   Future<void> acknowledgeDelivery({
     required CallId callId,
+    required CallOfferId offerId,
     required String installationId,
+    required DateTime receivedAt,
+    required DateTime nativePresentedAt,
   });
   Future<ActiveCallSnapshot> accept({
     required CallId callId,
@@ -152,9 +155,17 @@ class RemoteCallApi implements CallApi {
   @override
   Future<void> acknowledgeDelivery({
     required CallId callId,
+    required CallOfferId offerId,
     required String installationId,
+    required DateTime receivedAt,
+    required DateTime nativePresentedAt,
   }) =>
-      _post('/calls/$callId/delivery-ack', {'installation_id': installationId});
+      _post('/calls/$callId/delivery-ack', {
+        'offer_id': offerId,
+        'installation_id': installationId,
+        'received_at': receivedAt.toUtc().toIso8601String(),
+        'native_presented_at': nativePresentedAt.toUtc().toIso8601String(),
+      });
 
   @override
   Future<ActiveCallSnapshot> accept({
@@ -178,6 +189,7 @@ class RemoteCallApi implements CallApi {
       _post('/calls/$callId/media-ready', {
         'installation_id': installationId,
         'offer_id': offerId,
+        'transport': 'webrtc',
       });
 
   @override

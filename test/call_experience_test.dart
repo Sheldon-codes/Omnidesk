@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omnidesk_agent/components/call_experience/call_experience_host.dart';
 import 'package:omnidesk_agent/components/call_experience/call_session_controller.dart';
 import 'package:omnidesk_agent/services/calls/call_api.dart';
+import 'package:omnidesk_agent/services/calls/call_media_provider.dart';
+import 'package:omnidesk_agent/services/calls/call_media_service.dart';
 import 'package:omnidesk_agent/services/calls/call_models.dart';
 import 'package:omnidesk_agent/services/calls/device_installation_service.dart';
 import 'package:omnidesk_agent/services/calls/native_call_service.dart';
@@ -66,7 +68,7 @@ void main() {
         CallPhase.outgoingPreparing);
     await Future<void>.delayed(Duration.zero);
     expect(api.outboundInitiated, isTrue);
-    // Registration confirmation arrives asynchronously from native.
+    // The WebRTC bridge reports ringing; no fabricated active timer starts.
     await Future<void>.delayed(const Duration(milliseconds: 100));
     expect(container.read(callSessionControllerProvider).lifecycle,
         CallLifecycle.outgoingRinging);
@@ -90,12 +92,11 @@ void main() {
     expect(api.deliveryAcknowledged, isTrue);
     expect(api.accepted, isTrue);
     expect(api.mediaReadySent, isTrue);
-    expect(native.registered, isTrue);
     expect(container.read(callSessionControllerProvider).lifecycle,
         CallLifecycle.active);
   });
 
-  testWidgets('incoming fullscreen answers and minimizes to call bar',
+  testWidgets('native incoming ringing does not duplicate Flutter UI',
       (tester) async {
     final container = _liveContainer();
     addTearDown(container.dispose);
@@ -113,14 +114,14 @@ void main() {
     ));
     await tester.pump();
 
-    expect(find.text('Incoming call'), findsOneWidget);
-    expect(find.byIcon(Icons.close_fullscreen_rounded), findsOneWidget);
-    expect(find.bySemanticsLabel('Answer'), findsOneWidget);
-    expect(find.bySemanticsLabel('Decline'), findsOneWidget);
+    // Android Telecom owns incoming ringing. Flutter only takes over after
+    // the native Answer action begins the WebRTC connection lifecycle.
+    expect(find.text('Incoming call'), findsNothing);
+    expect(find.bySemanticsLabel('Answer'), findsNothing);
     expect(find.text('App content'), findsOneWidget);
 
-    await tester.tap(find.bySemanticsLabel('Answer'));
-    await tester.pump();
+    unawaited(container.read(callSessionControllerProvider.notifier).answer());
+    await tester.pump(const Duration(milliseconds: 10));
     expect(find.text('00:00'), findsOneWidget);
     expect(find.bySemanticsLabel('Minimize call'), findsOneWidget);
 
@@ -161,9 +162,9 @@ void main() {
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    expect(find.bySemanticsLabel('Answer'), findsOneWidget);
-    await tester.tap(find.bySemanticsLabel('Answer'));
-    await tester.pump();
+    expect(find.bySemanticsLabel('Answer'), findsNothing);
+    unawaited(container.read(callSessionControllerProvider.notifier).answer());
+    await tester.pump(const Duration(milliseconds: 10));
     expect(tester.takeException(), isNull);
     expect(find.bySemanticsLabel('Minimize call'), findsOneWidget);
     await container.read(callSessionControllerProvider.notifier).end();
@@ -178,6 +179,7 @@ ProviderContainer _liveContainer({
     callApiProvider.overrideWithValue(api ?? _FakeCallApi()),
     nativeCallServiceProvider
         .overrideWithValue(native ?? _FakeNativeCallService()),
+    callMediaServiceProvider.overrideWithValue(_FakeMedia()),
     callInstallationIdProvider.overrideWithValue(() async => 'installation-1'),
   ]);
 }
@@ -205,7 +207,10 @@ class _FakeCallApi implements CallApi {
   @override
   Future<void> acknowledgeDelivery({
     required String callId,
+    required String offerId,
     required String installationId,
+    required DateTime receivedAt,
+    required DateTime nativePresentedAt,
   }) async =>
       deliveryAcknowledged = true;
 
@@ -262,20 +267,20 @@ class _FakeCallApi implements CallApi {
   @override
   Future<CallMediaConfig> getMediaConfig() async => const CallMediaConfig(
         provider: 'africas_talking',
-        transport: 'sip',
+        transport: 'webrtc',
         endpointType: 'mobile',
-        sipUri: 'sip:agent@example.test',
-        sipUsername: 'agent',
-        sipAuthUsername: 'agent',
-        sipPassword: 'short-lived',
-        registrar: 'example.test',
-        sipDomain: 'example.test',
-        sipProxy: 'example.test:5061',
-        sipTransport: 'tls',
-        port: 5061,
+        sipUri: '',
+        sipUsername: '',
+        sipAuthUsername: '',
+        registrar: '',
+        sipDomain: '',
+        sipProxy: '',
+        sipTransport: '',
+        port: 0,
         supportsHold: true,
         supportsDtmf: true,
         supportsNativeIncoming: true,
+        webrtcToken: 'ATCAPtkn_test',
       );
 
   @override
@@ -295,13 +300,12 @@ class _FakeCallApi implements CallApi {
 
 class _FakeNativeCallService implements NativeCallService {
   final _events = StreamController<NativeCallEvent>.broadcast();
-  bool registered = false;
 
   @override
   Stream<NativeCallEvent> get events => _events.stream;
 
   @override
-  Future<String?> readVoipPushToken() async => null;
+  Future<String?> readNativePushToken() async => null;
 
   @override
   Future<CallOffer?> takePendingOffer() async => null;
@@ -310,53 +314,73 @@ class _FakeNativeCallService implements NativeCallService {
   Future<NativeCallEvent?> takePendingAction() async => null;
 
   @override
-  Future<void> dismiss(String callId) async {}
+  Future<void> dismiss(NativeCallIdentity identity) async {}
 
   @override
-  Future<void> endMedia(String callId) async {}
+  Future<NativeIncomingPresentationReceipt> presentIncoming(
+          CallOffer offer) async =>
+      NativeIncomingPresentationReceipt(
+        receivedAt: offer.receivedAt,
+        nativePresentedAt: DateTime.now().toUtc(),
+      );
 
   @override
-  Future<void> presentIncoming(CallOffer offer) async {}
+  Future<void> beginOutgoing(NativeCallIdentity identity) async {}
 
   @override
-  Future<String> ensureRegistered(
-    CallMediaConfig config, {
-    String? incomingCallId,
-  }) async {
-    registered = true;
+  Future<void> markActive(NativeCallIdentity identity) async {}
+
+  @override
+  Future<void> markFailed(NativeCallIdentity identity,
+      {String? reason}) async {}
+
+  @override
+  Future<void> setSystemSpeaker(bool enabled) async {}
+}
+
+class _FakeMedia implements CallMediaService {
+  final _events = StreamController<CallMediaEvent>.broadcast();
+
+  @override
+  Stream<CallMediaEvent> get events => _events.stream;
+
+  @override
+  Future<String> initialize(CallMediaConfig config,
+      {CallId? incomingCallId}) async {
+    Timer.run(() =>
+        _events.add(const CallMediaEvent(type: CallMediaEventType.ready)));
     if (incomingCallId != null) {
-      _events.add(NativeCallEvent(
-        type: NativeCallEventType.connected,
-        callId: incomingCallId,
-      ));
-      return 'media-incoming-1';
+      Future<void>.delayed(const Duration(milliseconds: 5), () {
+        _events.add(const CallMediaEvent(type: CallMediaEventType.incoming));
+      });
     }
-    // Outgoing: the real adapter confirms registration asynchronously via a
-    // `registered` native event. Mirror that so registration gating resolves.
-    const session = 'media-outgoing-1';
-    Timer.run(() => _events.add(const NativeCallEvent(
-          type: NativeCallEventType.registered,
-          mediaSessionId: session,
-        )));
-    return session;
+    return 'webview-test-1';
   }
 
   @override
-  Future<String> startOutgoingMedia({
-    required String callSid,
-    required String targetSipUri,
-  }) async =>
-      'media-outgoing-1';
+  Future<String> dial(
+      {required String callSid,
+      required String phoneNumber,
+      String? sipTargetUri}) async {
+    Timer.run(() => _events.add(
+        CallMediaEvent(type: CallMediaEventType.ringing, callSid: callSid)));
+    return 'webview-test-1';
+  }
 
   @override
-  Future<void> sendDtmf(String digit) async {}
+  Future<void> answerIncoming({required String callSid}) async {
+    _events.add(
+        CallMediaEvent(type: CallMediaEventType.connected, callSid: callSid));
+  }
 
+  @override
+  Future<void> endMedia(String mediaSessionId) async {}
   @override
   Future<void> setHeld(bool enabled) async {}
-
   @override
   Future<void> setMuted(bool enabled) async {}
-
   @override
-  Future<void> setSpeaker(bool enabled) async {}
+  Future<void> sendDtmf(String digit) async {}
+  @override
+  Future<void> dispose() async => _events.close();
 }

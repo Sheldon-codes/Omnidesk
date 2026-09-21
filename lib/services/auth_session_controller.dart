@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../models/auth/auth_models.dart';
@@ -77,6 +79,7 @@ class AuthSessionController extends _$AuthSessionController {
 
   Future<void> _bootstrap() async {
     state = const AuthState(status: AuthStatus.bootstrapping);
+    AuthSession? provisionalSession;
     try {
       final store = ref.read(authTokenStoreProvider);
       final cachedSession = await store.readSession();
@@ -89,7 +92,7 @@ class AuthSessionController extends _$AuthSessionController {
         return;
       }
 
-      final provisionalSession = cachedSession ?? _placeholderSession(token);
+      provisionalSession = cachedSession ?? _placeholderSession(token);
       // Publish the verified-once snapshot immediately so the router can
       // restore the last workspace without waiting on the network. The
       // `/auth/me` request below refreshes this state in the background.
@@ -98,6 +101,10 @@ class AuthSessionController extends _$AuthSessionController {
         session: provisionalSession,
         bootstrapComplete: true,
         isOffline: true,
+      );
+      developer.log(
+        'Restored cached authenticated session; verifying in background.',
+        name: 'AuthSession',
       );
       final result = await ref.read(authRepositoryProvider).fetchMe();
       switch (result) {
@@ -109,10 +116,26 @@ class AuthSessionController extends _$AuthSessionController {
             session: verifiedSession,
             bootstrapComplete: true,
           );
+          developer.log(
+            'Cached session verified successfully.',
+            name: 'AuthSession',
+          );
         case AuthFailureResult<AuthUser>(failure: final failure):
-          await _applyBootstrapFailure(failure, cachedSession);
+          await _applyBootstrapFailure(failure, provisionalSession);
       }
     } catch (_) {
+      if (provisionalSession != null) {
+        state = AuthState(
+          status: AuthStatus.authenticated,
+          session: provisionalSession,
+          failure: const AuthFailure(
+            type: AuthFailureType.unknown,
+            message: 'We could not refresh your saved session yet.',
+          ),
+          bootstrapComplete: true,
+        );
+        return;
+      }
       state = const AuthState(
         status: AuthStatus.error,
         failure: AuthFailure(
@@ -126,26 +149,26 @@ class AuthSessionController extends _$AuthSessionController {
 
   Future<void> _applyBootstrapFailure(
     AuthFailure failure,
-    AuthSession? cachedSession,
+    AuthSession cachedSession,
   ) async {
     if (failure.statusCode == 401 || failure.statusCode == 403) {
       await _clearLocalSession();
       return;
     }
-    if (failure.type == AuthFailureType.network && cachedSession != null) {
-      state = AuthState(
-        status: AuthStatus.authenticated,
-        session: cachedSession,
-        failure: failure,
-        bootstrapComplete: true,
-        isOffline: true,
-      );
-      return;
-    }
+    // A cached session has already restored the authenticated route. Only an
+    // explicit authorization response may revoke it. A transient server or
+    // protocol failure must not send an active agent through onboarding/login
+    // while the background revalidation is retried on resume.
     state = AuthState(
-      status: AuthStatus.error,
+      status: AuthStatus.authenticated,
+      session: cachedSession,
       failure: failure,
       bootstrapComplete: true,
+      isOffline: failure.type == AuthFailureType.network,
+    );
+    developer.log(
+      'Cached session verification deferred: ${failure.type.name}.',
+      name: 'AuthSession',
     );
   }
 

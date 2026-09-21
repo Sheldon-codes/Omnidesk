@@ -19,7 +19,9 @@ class CallExperienceHost extends ConsumerWidget {
       fit: StackFit.expand,
       children: [
         child,
-        if (state.presentation == CallPresentation.fullscreen)
+        if (state.presentation == CallPresentation.fullscreen &&
+            !(state.lifecycle == CallLifecycle.incomingRinging &&
+                state.nativeIncomingSurfaceActive))
           Positioned.fill(
             key: const ValueKey('fullscreen-call-position'),
             child: AnimatedSwitcher(
@@ -32,7 +34,8 @@ class CallExperienceHost extends ConsumerWidget {
               ),
             ),
           )
-        else
+        else if (!(state.lifecycle == CallLifecycle.incomingRinging &&
+            state.nativeIncomingSurfaceActive))
           Positioned(
             key: const ValueKey('collapsed-call-position'),
             top: MediaQuery.paddingOf(context).top + 8,

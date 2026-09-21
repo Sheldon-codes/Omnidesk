@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omnidesk_agent/services/calls/call_media_provider.dart';
 import 'package:omnidesk_agent/services/calls/call_media_service.dart';
 import 'package:omnidesk_agent/services/calls/call_models.dart';
-import 'package:omnidesk_agent/services/calls/native_call_service.dart';
+import 'package:omnidesk_agent/services/calls/deprecated_baresip_media_bridge.dart';
 import 'package:omnidesk_agent/services/calls/webview_call_media_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -31,23 +31,13 @@ Map<String, dynamic> _dualBlockConfig() => {
       'capabilities': {'hold': true, 'dtmf': true, 'native_incoming': true},
     };
 
-class _FakeNative implements NativeCallService {
-  final _events = StreamController<NativeCallEvent>.broadcast();
+class _FakeBaresipBridge implements DeprecatedBaresipMediaBridge {
+  final _events = StreamController<DeprecatedBaresipMediaEvent>.broadcast();
   final calls = <String>[];
   Map<String, Object?>? lastArgs;
 
   @override
-  Stream<NativeCallEvent> get events => _events.stream;
-  @override
-  Future<String?> readVoipPushToken() async => null;
-  @override
-  Future<CallOffer?> takePendingOffer() async => null;
-  @override
-  Future<NativeCallEvent?> takePendingAction() async => null;
-  @override
-  Future<void> presentIncoming(CallOffer offer) async {}
-  @override
-  Future<void> dismiss(CallId callId) async {}
+  Stream<DeprecatedBaresipMediaEvent> get events => _events.stream;
   @override
   Future<String> ensureRegistered(CallMediaConfig config,
       {CallId? incomingCallId}) async {
@@ -68,13 +58,12 @@ class _FakeNative implements NativeCallService {
   @override
   Future<void> setMuted(bool enabled) async {}
   @override
-  Future<void> setSpeaker(bool enabled) async {}
   @override
   Future<void> setHeld(bool enabled) async {}
   @override
   Future<void> sendDtmf(String digit) async {}
 
-  void emit(NativeCallEvent event) => _events.add(event);
+  void emit(DeprecatedBaresipMediaEvent event) => _events.add(event);
 }
 
 void main() {
@@ -142,14 +131,14 @@ void main() {
   });
 
   test('baresip media service preserves register-then-dial flow', () async {
-    final fake = _FakeNative();
-    final service = BaresipCallMediaService(native: fake);
+    final fake = _FakeBaresipBridge();
+    final service = BaresipCallMediaService(bridge: fake);
     final config = CallMediaConfig.fromJson(_dualBlockConfig());
 
     final init = service.initialize(config);
     await Future<void>.delayed(Duration.zero);
-    fake.emit(const NativeCallEvent(
-      type: NativeCallEventType.registered,
+    fake.emit(const DeprecatedBaresipMediaEvent(
+      type: DeprecatedBaresipMediaEventType.registered,
       mediaSessionId: 'media-1',
     ));
     expect(await init, 'media-1');
@@ -172,13 +161,13 @@ void main() {
   });
 
   test('baresip media service surfaces registration failure', () async {
-    final fake = _FakeNative();
-    final service = BaresipCallMediaService(native: fake);
+    final fake = _FakeBaresipBridge();
+    final service = BaresipCallMediaService(bridge: fake);
     final init =
         service.initialize(CallMediaConfig.fromJson(_dualBlockConfig()));
     await Future<void>.delayed(Duration.zero);
-    fake.emit(const NativeCallEvent(
-      type: NativeCallEventType.failed,
+    fake.emit(const DeprecatedBaresipMediaEvent(
+      type: DeprecatedBaresipMediaEventType.failed,
       mediaSessionId: 'media-1',
       reason: 'nope',
     ));
@@ -218,12 +207,9 @@ void main() {
     expect(event?.mediaSessionId, 'webview-media-1');
   });
 
-  test('media provider defaults to baresip, switches on flag', () {
+  test('supported WebRTC selection rejects the deprecated SIP transport', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);
-    expect(container.read(callMediaServiceProvider),
-        isA<BaresipCallMediaService>());
-    container.read(useWebViewMediaProvider.notifier).setEnabled(true);
     expect(container.read(callMediaServiceProvider),
         isA<WebViewCallMediaService>());
   });
@@ -239,21 +225,12 @@ void main() {
       'capabilities': {'webrtc': true},
     });
     expect(
-      useWebViewEngine(forceWebView: false, config: webrtcOnly),
+      usesSupportedWebViewMedia(webrtcOnly),
       isTrue,
     );
     expect(
-      useWebViewEngine(
-          forceWebView: false,
-          config: CallMediaConfig.fromJson(_dualBlockConfig())),
+      usesSupportedWebViewMedia(CallMediaConfig.fromJson(_dualBlockConfig())),
       isFalse,
-    );
-    // Manual POC override wins over everything, including SIP configs.
-    expect(
-      useWebViewEngine(
-          forceWebView: true,
-          config: CallMediaConfig.fromJson(_dualBlockConfig())),
-      isTrue,
     );
   });
 }

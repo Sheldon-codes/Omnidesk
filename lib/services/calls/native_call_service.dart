@@ -6,13 +6,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'call_models.dart';
 
 enum NativeCallEventType {
+  offerAvailable,
+  nativePushTokenChanged,
   answer,
   decline,
   end,
-  registered,
-  ringing,
-  connected,
-  held,
+  incomingPresented,
+  outgoingDialing,
+  active,
   disconnected,
   failed,
 }
@@ -29,7 +30,12 @@ class NativeCallEvent {
     this.callSid,
     this.mediaSessionId,
     this.reason,
-  }) : assert(callId != null || callSid != null || mediaSessionId != null);
+  }) : assert(
+          type == NativeCallEventType.nativePushTokenChanged ||
+              callId != null ||
+              callSid != null ||
+              mediaSessionId != null,
+        );
   final NativeCallEventType type;
   final CallId? callId;
   final String? callSid;
@@ -37,34 +43,71 @@ class NativeCallEvent {
   final String? reason;
 }
 
-/// Boundary for CallKit/Android Telecom and the native SIP implementation.
+/// Records the moment Android Telecom accepted responsibility for presenting
+/// an offer. This is telemetry, never a backend claim of the call.
+class NativeIncomingPresentationReceipt {
+  const NativeIncomingPresentationReceipt({
+    required this.receivedAt,
+    required this.nativePresentedAt,
+  });
+
+  final DateTime receivedAt;
+  final DateTime nativePresentedAt;
+
+  factory NativeIncomingPresentationReceipt.fromMap(Map<String, dynamic> map,
+      {required DateTime fallbackReceivedAt}) {
+    DateTime parse(Object? value, DateTime fallback) =>
+        DateTime.tryParse(value?.toString() ?? '')?.toUtc() ?? fallback;
+    return NativeIncomingPresentationReceipt(
+      receivedAt: parse(map['receivedAt'], fallbackReceivedAt),
+      nativePresentedAt:
+          parse(map['nativePresentedAt'], DateTime.now().toUtc()),
+    );
+  }
+}
+
+/// Platform-neutral boundary for the operating system's call surface.
 ///
-/// The Flutter UI never needs to know whether the platform uses PJSIP or a
-/// provider SDK. Platform channels also allow a PushKit background callback to
-/// report an offer before Flutter's widget tree exists.
+/// Android implements this with self-managed Telecom; iOS can implement the
+/// same contract with CallKit. It deliberately contains no SIP, RTP, WebRTC,
+/// or audio-device operation: those belong exclusively to [CallMediaService].
+/// This lets the session controller keep one lifecycle regardless of which
+/// platform owns the system UI or which engine supplies the media.
 abstract class NativeCallService {
   Stream<NativeCallEvent> get events;
-  Future<String?> readVoipPushToken();
+  Future<String?> readNativePushToken();
   Future<CallOffer?> takePendingOffer();
   Future<NativeCallEvent?> takePendingAction();
-  Future<void> presentIncoming(CallOffer offer);
-  Future<void> dismiss(CallId callId);
+  Future<NativeIncomingPresentationReceipt> presentIncoming(CallOffer offer);
+  Future<void> beginOutgoing(NativeCallIdentity identity);
+  Future<void> markActive(NativeCallIdentity identity);
+  Future<void> markFailed(NativeCallIdentity identity, {String? reason});
+  Future<void> dismiss(NativeCallIdentity identity);
+  Future<void> setSystemSpeaker(bool enabled);
+}
 
-  /// Registers the one foreground workspace SIP account. The returned ID is
-  /// opaque and only correlates native events with the Dart call session.
-  Future<String> ensureRegistered(
-    CallMediaConfig config, {
-    CallId? incomingCallId,
-  });
-  Future<String> startOutgoingMedia({
-    required String callSid,
-    required String targetSipUri,
-  });
-  Future<void> endMedia(String mediaSessionId);
-  Future<void> setMuted(bool enabled);
-  Future<void> setSpeaker(bool enabled);
-  Future<void> setHeld(bool enabled);
-  Future<void> sendDtmf(String digit);
+/// Identity used only to correlate a system call with Flutter's backend and
+/// media session. [callId] is canonical for inbound lifecycle APIs; [callSid]
+/// identifies an outbound provider leg. Neither is interchangeable.
+class NativeCallIdentity {
+  const NativeCallIdentity({
+    this.callId,
+    this.callSid,
+    required this.displayName,
+    required this.phoneNumber,
+  }) : assert(callId != null || callSid != null);
+
+  final CallId? callId;
+  final String? callSid;
+  final String displayName;
+  final String phoneNumber;
+
+  Map<String, Object?> toMap() => {
+        if (callId != null) 'callId': callId,
+        if (callSid != null) 'callSid': callSid,
+        'displayName': displayName,
+        'phoneNumber': phoneNumber,
+      };
 }
 
 class MethodChannelNativeCallService implements NativeCallService {
@@ -80,8 +123,8 @@ class MethodChannelNativeCallService implements NativeCallService {
   Stream<NativeCallEvent> get events => _events.stream;
 
   @override
-  Future<String?> readVoipPushToken() =>
-      _readString('readVoipPushToken', allowMissingPlugin: true);
+  Future<String?> readNativePushToken() =>
+      _readString('readNativePushToken', allowMissingPlugin: true);
 
   @override
   Future<CallOffer?> takePendingOffer() async {
@@ -115,67 +158,48 @@ class MethodChannelNativeCallService implements NativeCallService {
   }
 
   @override
-  Future<void> presentIncoming(CallOffer offer) => _invoke(
+  Future<NativeIncomingPresentationReceipt> presentIncoming(
+      CallOffer offer) async {
+    final value = await _readMapFromInvoke(
       'presentIncoming',
       {
         'callId': offer.callId,
         'offerId': offer.offerId,
         'callerName': offer.callerName,
         'callerNumber': offer.callerNumber,
+        'receivedAt': offer.receivedAt.toIso8601String(),
         'expiresAt': offer.expiresAt.toIso8601String(),
       },
-      allowMissingPlugin: true);
+      allowMissingPlugin: true,
+    );
+    return NativeIncomingPresentationReceipt.fromMap(
+      value ?? const {},
+      fallbackReceivedAt: offer.receivedAt,
+    );
+  }
 
   @override
-  Future<void> dismiss(CallId callId) =>
-      _invoke('dismiss', {'callId': callId}, allowMissingPlugin: true);
+  Future<void> beginOutgoing(NativeCallIdentity identity) =>
+      _invoke('beginOutgoingSystemCall', identity.toMap());
 
   @override
-  Future<String> ensureRegistered(
-    CallMediaConfig config, {
-    CallId? incomingCallId,
-  }) =>
-      _invokeForString('ensureRegistered', {
-        'uri': config.sipUri,
-        'username': config.sipUsername,
-        'authUsername': config.sipAuthUsername,
-        'password': config.sipPassword,
-        'registrar': config.registrar,
-        'domain': config.sipDomain,
-        'proxy': config.sipProxy,
-        'transport': config.sipTransport,
-        'port': config.port,
-        if (incomingCallId != null) 'callId': incomingCallId,
+  Future<void> markActive(NativeCallIdentity identity) =>
+      _invoke('markSystemCallActive', identity.toMap());
+
+  @override
+  Future<void> markFailed(NativeCallIdentity identity, {String? reason}) =>
+      _invoke('markSystemCallFailed', {
+        ...identity.toMap(),
+        if (reason != null) 'reason': reason,
       });
 
   @override
-  Future<String> startOutgoingMedia({
-    required String callSid,
-    required String targetSipUri,
-  }) =>
-      _invokeForString('startOutgoingMedia', {
-        'callSid': callSid,
-        'targetSipUri': targetSipUri,
-      });
+  Future<void> dismiss(NativeCallIdentity identity) =>
+      _invoke('dismissSystemCall', identity.toMap(), allowMissingPlugin: true);
 
   @override
-  Future<void> endMedia(String mediaSessionId) =>
-      _invoke('endMedia', {'mediaSessionId': mediaSessionId});
-
-  @override
-  Future<void> setMuted(bool enabled) =>
-      _invoke('setMuted', {'enabled': enabled});
-
-  @override
-  Future<void> setSpeaker(bool enabled) =>
-      _invoke('setSpeaker', {'enabled': enabled});
-
-  @override
-  Future<void> setHeld(bool enabled) =>
-      _invoke('setHeld', {'enabled': enabled});
-
-  @override
-  Future<void> sendDtmf(String digit) => _invoke('sendDtmf', {'digit': digit});
+  Future<void> setSystemSpeaker(bool enabled) =>
+      _invoke('setSystemSpeaker', {'enabled': enabled});
 
   Future<void> _invoke(
     String method,
@@ -190,25 +214,6 @@ class MethodChannelNativeCallService implements NativeCallService {
           'Native call media is not installed on this device.',
         );
       }
-    }
-  }
-
-  Future<String> _invokeForString(
-    String method,
-    Map<String, Object?> arguments,
-  ) async {
-    try {
-      final value = await _channel.invokeMethod<String>(method, arguments);
-      if (value == null || value.isEmpty) {
-        throw const NativeCallUnavailable(
-          'The native call service did not return a media session.',
-        );
-      }
-      return value;
-    } on MissingPluginException {
-      throw const NativeCallUnavailable(
-        'Native call media is not installed on this device.',
-      );
     }
   }
 
@@ -238,6 +243,21 @@ class MethodChannelNativeCallService implements NativeCallService {
     }
   }
 
+  Future<Map<String, dynamic>?> _readMapFromInvoke(
+    String method,
+    Map<String, Object?> arguments, {
+    required bool allowMissingPlugin,
+  }) async {
+    try {
+      final value = await _channel.invokeMethod<dynamic>(method, arguments);
+      if (value is! Map) return null;
+      return value.map((key, nested) => MapEntry('$key', nested));
+    } on MissingPluginException {
+      if (allowMissingPlugin) return null;
+      rethrow;
+    }
+  }
+
   Future<void> _handleMethodCall(MethodCall call) async {
     final args = (call.arguments is Map
             ? call.arguments as Map
@@ -246,24 +266,32 @@ class MethodChannelNativeCallService implements NativeCallService {
     final callId = args['callId']?.toString();
     final callSid = args['callSid']?.toString();
     final mediaSessionId = args['mediaSessionId']?.toString();
-    if ((callId == null || callId.isEmpty) &&
+    if (call.method != 'nativePushTokenChanged' &&
+        (callId == null || callId.isEmpty) &&
         (callSid == null || callSid.isEmpty) &&
         (mediaSessionId == null || mediaSessionId.isEmpty)) {
       return;
     }
     final type = switch (call.method) {
+      'offerAvailable' => NativeCallEventType.offerAvailable,
+      'nativePushTokenChanged' => NativeCallEventType.nativePushTokenChanged,
       'answer' => NativeCallEventType.answer,
       'decline' => NativeCallEventType.decline,
       'end' => NativeCallEventType.end,
-      'registered' => NativeCallEventType.registered,
-      'ringing' => NativeCallEventType.ringing,
-      'connected' => NativeCallEventType.connected,
-      'held' => NativeCallEventType.held,
+      'incomingPresented' => NativeCallEventType.incomingPresented,
+      'outgoingDialing' => NativeCallEventType.outgoingDialing,
+      'active' => NativeCallEventType.active,
       'disconnected' => NativeCallEventType.disconnected,
       'failed' => NativeCallEventType.failed,
       _ => null,
     };
-    if (type != null) {
+    // A token update is intentionally identity-free; all other system events
+    // require a call correlation key.
+    if (type == NativeCallEventType.nativePushTokenChanged) {
+      _events.add(const NativeCallEvent(
+        type: NativeCallEventType.nativePushTokenChanged,
+      ));
+    } else if (type != null) {
       _events.add(NativeCallEvent(
         type: type,
         callId: callId,

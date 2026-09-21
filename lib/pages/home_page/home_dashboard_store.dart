@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/api_service.dart';
+import '../../services/auth_session_controller.dart';
 
 class DashboardGreeting {
   const DashboardGreeting({
@@ -303,6 +307,211 @@ class HomeDashboardState {
   static const _keep = Object();
 }
 
+/// A non-sensitive, per-agent/workspace dashboard snapshot. The access token
+/// remains exclusively in secure storage; this cache contains only content the
+/// Home screen already renders. Scoping is essential because a device can be
+/// used by more than one agent or workspace.
+class HomeDashboardCache {
+  static const _prefix = 'omnidesk_home_dashboard_v1';
+
+  Future<HomeDashboardState?> read(String scope) async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final raw = preferences.getString('$_prefix.$scope');
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      return _stateFromJson(
+        decoded.map((key, value) => MapEntry('$key', value)),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> write(String scope, HomeDashboardState state) async {
+    if (!state.hasData) return;
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setString(
+        '$_prefix.$scope',
+        jsonEncode(_stateToJson(state)),
+      );
+    } catch (_) {
+      // The network response remains valid when cache persistence fails.
+    }
+  }
+
+  Map<String, dynamic> _stateToJson(HomeDashboardState state) => {
+        'stats': _statsToJson(state.stats!),
+        'tickets': state.tickets.map(_ticketToJson).toList(growable: false),
+        'lastUpdated': state.lastUpdated?.toIso8601String(),
+      };
+
+  HomeDashboardState? _stateFromJson(Map<String, dynamic> json) {
+    try {
+      final stats = json['stats'];
+      final tickets = json['tickets'];
+      if (stats is! Map || tickets is! List) return null;
+      return HomeDashboardState(
+        stats: _statsFromJson(_map(stats)),
+        tickets: tickets
+            .whereType<Map>()
+            .map((value) => _ticketFromJson(_map(value)))
+            .toList(growable: false),
+        lastUpdated: DateTime.tryParse(json['lastUpdated']?.toString() ?? ''),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Map<String, dynamic> _statsToJson(DashboardStats stats) => {
+        'greeting': {
+          'agentName': stats.greeting.agentName,
+          'totalTickets': stats.greeting.totalTickets,
+          'urgentCount': stats.greeting.urgentCount,
+          'overdueCount': stats.greeting.overdueCount,
+          'isAvailable': stats.greeting.isAvailable,
+        },
+        'channels': {
+          'calls': _channelToJson(stats.channels.calls),
+          'whatsapp': _channelToJson(stats.channels.whatsapp),
+          'email': _channelToJson(stats.channels.email),
+          'widget': _channelToJson(stats.channels.widget),
+        },
+        'recentCalls': stats.recentCalls
+            .map((value) => {
+                  'label': value.label,
+                  'timestamp': value.timestamp?.toIso8601String(),
+                  'ticketId': value.ticketId,
+                  'duration': value.duration,
+                  'missed': value.missed,
+                })
+            .toList(growable: false),
+        'recentCallers': stats.recentCallers
+            .map((value) => {
+                  'label': value.label,
+                  'phone': value.phone,
+                  'timestamp': value.timestamp?.toIso8601String(),
+                  'ticketId': value.ticketId,
+                  'customerId': value.customerId,
+                })
+            .toList(growable: false),
+        'myOpen': stats.myOpen,
+        'myPending': stats.myPending,
+        'myResolvedToday': stats.myResolvedToday,
+        'allUnassigned': stats.allUnassigned,
+        'overdue': stats.overdue,
+        'unreadMessages': stats.unreadMessages,
+      };
+
+  static Map<String, dynamic> _channelToJson(ChannelStats stats) => {
+        'open': stats.open,
+        'inProgress': stats.inProgress,
+        'resolved': stats.resolved,
+        'overdue': stats.overdue,
+      };
+
+  static Map<String, dynamic> _ticketToJson(DashboardTicket ticket) => {
+        'id': ticket.id,
+        'displayNumber': ticket.displayNumber,
+        'subject': ticket.subject,
+        'status': ticket.status,
+        'priority': ticket.priority,
+        'source': ticket.source,
+        'isOverdue': ticket.isOverdue,
+        'customerName': ticket.customerName,
+        'customerPhone': ticket.customerPhone,
+        'createdAt': ticket.createdAt?.toIso8601String(),
+        'customerId': ticket.customerId,
+      };
+
+  static DashboardStats _statsFromJson(Map<String, dynamic> json) {
+    final greeting = _map(json['greeting']);
+    final channels = _map(json['channels']);
+    return DashboardStats(
+      greeting: DashboardGreeting(
+        agentName: _string(greeting['agentName']),
+        totalTickets: _int(greeting['totalTickets']),
+        urgentCount: _int(greeting['urgentCount']),
+        overdueCount: _int(greeting['overdueCount']),
+        isAvailable: greeting['isAvailable'] == true,
+      ),
+      channels: DashboardChannels(
+        calls: _channelFromJson(_map(channels['calls'])),
+        whatsapp: _channelFromJson(_map(channels['whatsapp'])),
+        email: _channelFromJson(_map(channels['email'])),
+        widget: _channelFromJson(_map(channels['widget'])),
+      ),
+      recentCalls: (_list(json['recentCalls'])).whereType<Map>().map((value) {
+        final item = _map(value);
+        return RecentCall(
+          label: _string(item['label']),
+          timestamp: DateTime.tryParse(item['timestamp']?.toString() ?? ''),
+          ticketId: _nullableString(item['ticketId']),
+          duration: _string(item['duration'], fallback: '0:00'),
+          missed: item['missed'] == true,
+        );
+      }).toList(growable: false),
+      recentCallers:
+          (_list(json['recentCallers'])).whereType<Map>().map((value) {
+        final item = _map(value);
+        return RecentCaller(
+          label: _string(item['label']),
+          phone: _string(item['phone']),
+          timestamp: DateTime.tryParse(item['timestamp']?.toString() ?? ''),
+          ticketId: _nullableString(item['ticketId']),
+          customerId: _nullableString(item['customerId']),
+        );
+      }).toList(growable: false),
+      myOpen: _int(json['myOpen']),
+      myPending: _int(json['myPending']),
+      myResolvedToday: _int(json['myResolvedToday']),
+      allUnassigned: _int(json['allUnassigned']),
+      overdue: _int(json['overdue']),
+      unreadMessages: _int(json['unreadMessages']),
+    );
+  }
+
+  static ChannelStats _channelFromJson(Map<String, dynamic> json) =>
+      ChannelStats(
+        open: _int(json['open']),
+        inProgress: _int(json['inProgress']),
+        resolved: _int(json['resolved']),
+        overdue: _int(json['overdue']),
+      );
+
+  static DashboardTicket _ticketFromJson(Map<String, dynamic> json) =>
+      DashboardTicket(
+        id: _string(json['id']),
+        displayNumber: _string(json['displayNumber']),
+        subject: _string(json['subject']),
+        status: _string(json['status']),
+        priority: _string(json['priority']),
+        source: _string(json['source']),
+        isOverdue: json['isOverdue'] == true,
+        customerName: _string(json['customerName']),
+        customerPhone: _string(json['customerPhone']),
+        createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
+        customerId: _nullableString(json['customerId']),
+      );
+
+  static Map<String, dynamic> _map(dynamic value) => value is Map
+      ? value.map((key, nested) => MapEntry('$key', nested))
+      : <String, dynamic>{};
+  static List<dynamic> _list(dynamic value) => value is List ? value : const [];
+  static String _string(dynamic value, {String fallback = ''}) =>
+      value?.toString() ?? fallback;
+  static String? _nullableString(dynamic value) {
+    final string = value?.toString();
+    return string == null || string.isEmpty ? null : string;
+  }
+
+  static int _int(dynamic value) =>
+      value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+}
+
 final homeDashboardRepositoryProvider =
     Provider<HomeDashboardRepository>((ref) {
   final api = ref.read(apiServiceProvider);
@@ -358,20 +567,29 @@ final homeDashboardProvider =
 
 class HomeDashboardController extends Notifier<HomeDashboardState> {
   Future<void>? _loadFuture;
+  final _cache = HomeDashboardCache();
+  String? _activeScope;
+  int _generation = 0;
 
   @override
   HomeDashboardState build() {
-    final state = const HomeDashboardState(loading: true);
-    Future.microtask(load);
+    ref.listen<AuthState>(authSessionControllerProvider, (_, next) {
+      // A notifier may not mutate its state synchronously while its own
+      // `build` is executing. Scheduling also coalesces the bootstrap's
+      // provisional-session and verified-session updates.
+      Future.microtask(() => _handleAuthChanged(next));
+    }, fireImmediately: true);
     ref.onDispose(() {
       _loadFuture = null;
+      _generation++;
     });
-    return state;
+    return const HomeDashboardState();
   }
 
   Future<void> load({bool force = false}) {
+    if (_activeScope == null) return Future.value();
     if (!force && _loadFuture != null) return _loadFuture!;
-    final task = _load();
+    final task = _refresh(_activeScope!, _generation);
     _loadFuture = task;
     task.whenComplete(() {
       if (identical(_loadFuture, task)) {
@@ -381,7 +599,41 @@ class HomeDashboardController extends Notifier<HomeDashboardState> {
     return task;
   }
 
-  Future<void> _load() async {
+  void _handleAuthChanged(AuthState auth) {
+    if (!auth.isAuthenticated) {
+      _activeScope = null;
+      _generation++;
+      _loadFuture = null;
+      if (state.hasData || state.loading || state.failure != null) {
+        state = const HomeDashboardState();
+      }
+      return;
+    }
+    final user = auth.session!.user;
+    final workspaceId = user.activeWorkspace?.id ?? 'no-workspace';
+    final scope = '${user.id}.$workspaceId';
+    if (scope == _activeScope) return;
+    _activeScope = scope;
+    final generation = ++_generation;
+    _loadFuture = _hydrateThenRefresh(scope, generation);
+  }
+
+  Future<void> _hydrateThenRefresh(String scope, int generation) async {
+    state = const HomeDashboardState(loading: true);
+    final cached = await _cache.read(scope);
+    if (generation != _generation || scope != _activeScope) return;
+    if (cached != null && cached.hasData) {
+      state = cached.copyWith(refreshing: true, failure: null);
+      developer.log(
+        'Restored cached dashboard for the active workspace; refreshing.',
+        name: 'HomeDashboard',
+      );
+    }
+    await _refresh(scope, generation);
+  }
+
+  Future<void> _refresh(String scope, int generation) async {
+    if (generation != _generation || scope != _activeScope) return;
     final hadData = state.hasData;
     state =
         state.copyWith(loading: !hadData, refreshing: hadData, failure: null);
@@ -391,13 +643,25 @@ class HomeDashboardController extends Notifier<HomeDashboardState> {
         repository.loadStats(),
         repository.loadMyTickets(),
       ]);
-      state = HomeDashboardState(
+      final next = HomeDashboardState(
         stats: results[0] as DashboardStats,
         tickets: results[1] as List<DashboardTicket>,
         lastUpdated: DateTime.now(),
       );
+      if (generation != _generation || scope != _activeScope) return;
+      state = next;
+      unawaited(_cache.write(scope, next));
+      developer.log(
+        'Dashboard refresh completed and cache was scheduled for update.',
+        name: 'HomeDashboard',
+      );
     } catch (error) {
+      if (generation != _generation || scope != _activeScope) return;
       state = state.copyWith(loading: false, refreshing: false, failure: error);
+      developer.log(
+        'Dashboard refresh failed: ${error.runtimeType}.',
+        name: 'HomeDashboard',
+      );
     }
   }
 
@@ -408,7 +672,7 @@ class HomeDashboardController extends Notifier<HomeDashboardState> {
           .updateAvailability(isAvailable);
       final current = state.stats;
       if (current != null) {
-        state = state.copyWith(
+        final next = state.copyWith(
             stats: DashboardStats(
           greeting: DashboardGreeting(
             agentName: current.greeting.agentName,
@@ -427,6 +691,9 @@ class HomeDashboardController extends Notifier<HomeDashboardState> {
           overdue: current.overdue,
           unreadMessages: current.unreadMessages,
         ));
+        state = next;
+        final scope = _activeScope;
+        if (scope != null) unawaited(_cache.write(scope, next));
       }
       return true;
     } catch (error) {

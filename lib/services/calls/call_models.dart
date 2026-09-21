@@ -38,6 +38,7 @@ class CallOffer {
     required this.workspaceId,
     required this.receivedAt,
     required this.expiresAt,
+    this.eventId,
     this.providerCallId,
     this.callerName,
     this.customerId,
@@ -59,6 +60,10 @@ class CallOffer {
   final String workspaceId;
   final DateTime receivedAt;
   final DateTime expiresAt;
+
+  /// Transport identity. It is intentionally distinct from the offer identity:
+  /// cancellation events refer to the same offer but must still be processed.
+  final String? eventId;
 
   bool get isExpired => !expiresAt.isAfter(DateTime.now().toUtc());
 
@@ -83,6 +88,7 @@ class CallOffer {
         json['expires_at'],
         fallback: now.add(const Duration(seconds: 30)),
       ),
+      eventId: json['event_id']?.toString(),
     );
   }
 
@@ -101,6 +107,7 @@ class CallOffer {
         'workspace_id': workspaceId,
         'timestamp': receivedAt.toIso8601String(),
         'expires_at': expiresAt.toIso8601String(),
+        if (eventId != null) 'event_id': eventId,
       };
 }
 
@@ -198,8 +205,8 @@ class CallMediaConfig {
       supportsDtmf: boolValue(capabilities['dtmf']),
       supportsNativeIncoming: boolValue(capabilities['native_incoming']),
       webrtcToken: (webrtc['token'])?.toString(),
-      webrtcGatewayUrl: (webrtc['gateway_url'] ?? webrtc['gatewayUrl'])
-          ?.toString(),
+      webrtcGatewayUrl:
+          (webrtc['gateway_url'] ?? webrtc['gatewayUrl'])?.toString(),
       webrtcClientName:
           (webrtc['client_name'] ?? webrtc['clientName'])?.toString(),
     );

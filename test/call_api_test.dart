@@ -131,7 +131,18 @@ void main() {
     expect(adapter.requests.single.headers['X-Workspace-Id'], 'workspace-7');
 
     await calls.acknowledgeDelivery(
-        callId: 'call-1', installationId: 'install-1');
+      callId: 'call-1',
+      offerId: 'offer-1',
+      installationId: 'install-1',
+      receivedAt: DateTime.utc(2026, 9, 19, 15, 25, 41, 184),
+      nativePresentedAt: DateTime.utc(2026, 9, 19, 15, 25, 41, 390),
+    );
+    expect(adapter.requests.last.data, {
+      'offer_id': 'offer-1',
+      'installation_id': 'install-1',
+      'received_at': '2026-09-19T15:25:41.184Z',
+      'native_presented_at': '2026-09-19T15:25:41.390Z',
+    });
     await calls.accept(
         callId: 'call-1', offerId: 'offer-1', installationId: 'install-1');
     await calls.mediaReady(

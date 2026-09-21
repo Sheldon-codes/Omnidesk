@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:developer' as developer;
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -119,11 +120,24 @@ class DeviceRegistry {
 
   Future<void> register() async {
     final id = await installationId();
+    // Android owns `MESSAGING_EVENT` natively so Firebase's Flutter plugin
+    // is not guaranteed to receive every token callback. The native service
+    // persists the same FCM token, which is the authoritative fallback here.
+    // It is deliberately sent as `fcm_token` on Android, never as an iOS
+    // VoIP token.
+    final nativePushToken = await _native.readNativePushToken();
+    final nativeFcmToken = defaultTargetPlatform == TargetPlatform.android
+        ? nativePushToken
+        : null;
+    final fcmToken = _fcm.currentToken ?? nativeFcmToken;
     final registration = await _installation.registration(
       installationId: id,
-      fcmToken: _fcm.currentToken,
+      fcmToken: fcmToken,
       apnsToken: _fcm.apnsToken,
-      voipPushToken: _fcm.voipPushToken ?? await _native.readVoipPushToken(),
+      voipPushToken: _fcm.voipPushToken ??
+          (defaultTargetPlatform == TargetPlatform.iOS
+              ? nativePushToken
+              : null),
     );
     // The server can only route a mobile offer after it has a platform-native
     // wake token. Avoid registering a misleading, non-routable installation.
@@ -134,13 +148,43 @@ class DeviceRegistry {
         (registration.platform == 'ios' &&
             (registration.voipPushToken == null ||
                 registration.voipPushToken!.isEmpty))) {
+      developer.log(
+        'Device registration skipped: platform=${registration.platform}, '
+        'fcmTokenAvailable=${registration.fcmToken?.isNotEmpty == true}, '
+        'voipTokenAvailable=${registration.voipPushToken?.isNotEmpty == true}.',
+        name: 'PushRegistration',
+      );
       return;
     }
     final fingerprint = '${registration.platform}|${registration.appVersion}|'
         '${registration.fcmToken}|${registration.apnsToken}|${registration.voipPushToken}';
-    if (fingerprint == _registeredFingerprint) return;
-    await _api.registerDevice(registration);
-    _registeredFingerprint = fingerprint;
+    if (fingerprint == _registeredFingerprint) {
+      developer.log(
+        'Device registration already current for ${registration.platform}.',
+        name: 'PushRegistration',
+      );
+      return;
+    }
+    developer.log(
+      'Registering device with backend: platform=${registration.platform}, '
+      'fcmTokenAvailable=${registration.fcmToken?.isNotEmpty == true}, '
+      'voipTokenAvailable=${registration.voipPushToken?.isNotEmpty == true}.',
+      name: 'PushRegistration',
+    );
+    try {
+      await _api.registerDevice(registration);
+      _registeredFingerprint = fingerprint;
+      developer.log(
+        'Device registration completed for ${registration.platform}.',
+        name: 'PushRegistration',
+      );
+    } catch (error) {
+      developer.log(
+        'Device registration failed: ${error.runtimeType}.',
+        name: 'PushRegistration',
+      );
+      rethrow;
+    }
   }
 
   Future<void> unregister() async {

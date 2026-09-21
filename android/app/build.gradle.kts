@@ -29,25 +29,6 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
-        // Baresip is built and validated for the 64-bit device and emulator
-        // ABIs only. Avoid asking CMake for an unsupported 32-bit archive.
-        ndk {
-            abiFilters.clear()
-            abiFilters.add("arm64-v8a")
-            abiFilters.add("x86_64")
-        }
-
-        externalNativeBuild {
-            cmake {
-                cppFlags += listOf("-DANDROID")
-            }
-        }
-    }
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-        }
     }
 
     buildTypes {
@@ -61,24 +42,16 @@ android {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // The app owns the native FCM entry point, so it needs the Firebase
+    // Messaging API directly rather than relying on the Flutter plugin's
+    // non-transitive implementation dependency.
+    implementation("com.google.firebase:firebase-messaging:25.1.3")
 }
 
-// Baresip, Libre, and OpenSSL are pinned source submodules. The build script
-// produces only ignored JNI artifacts, so source control never contains SIP
-// credentials or host-specific native outputs.
-val buildBaresipAndroid by tasks.registering(Exec::class) {
-    workingDir(rootProject.projectDir.parentFile)
-    commandLine("bash", "android/scripts/build_baresip_android.sh")
-    inputs.files(
-        fileTree("${rootProject.projectDir.parent}/third_party/baresip"),
-        fileTree("${rootProject.projectDir.parent}/third_party/re"),
-        fileTree("${rootProject.projectDir.parent}/third_party/openssl"),
-    )
-    outputs.dir("src/main/jniLibs")
-    outputs.dir("src/main/cpp/generated/include")
-}
-
-tasks.named("preBuild").configure { dependsOn(buildBaresipAndroid) }
+// The historical Baresip integration is intentionally not part of the active
+// Android build. Its sources stay checked in until the dedicated cleanup pass
+// after Android Telecom + WebRTC acceptance; normal builds must never compile,
+// package, or invoke it.
 
 kotlin {
     compilerOptions {

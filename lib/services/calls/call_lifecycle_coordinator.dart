@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -33,6 +34,7 @@ class CallLifecycleCoordinator {
   final CallSessionController Function() _controller;
   StreamSubscription<CallOffer>? _offers;
   StreamSubscription<String?>? _tokenChanges;
+  StreamSubscription<NativeCallEvent>? _nativeEvents;
   String? _workspaceId;
   bool _active = false;
   bool _recovering = false;
@@ -41,13 +43,17 @@ class CallLifecycleCoordinator {
     if (!auth.isAuthenticated || _active) return;
     _active = true;
     _workspaceId = auth.session?.user.activeWorkspace?.id;
+    developer.log(
+      'Call lifecycle started workspace=${_workspaceId ?? "none"}.',
+      name: 'CallLifecycle',
+    );
     _offers = _fcm.incomingCallOffers.listen(_onOffer);
+    _nativeEvents = _native.events.listen(_onNativeEvent);
     _tokenChanges = _fcm.tokenChanges.listen((_) {
       unawaited(_register());
     });
     await _register();
-    final nativeOffer = await _native.takePendingOffer();
-    if (nativeOffer != null) await _onOffer(nativeOffer);
+    await _drainNativeOffer();
     final action = await _native.takePendingAction();
     if (action?.type == NativeCallEventType.answer) {
       await _controller().answer();
@@ -79,9 +85,13 @@ class CallLifecycleCoordinator {
     if (!_active) return;
     try {
       await _registry.register();
-    } catch (_) {
+    } catch (error) {
       // Registration failure is recoverable: FCM token refresh/resume will
       // retry. It must not sign the agent out or block normal app navigation.
+      developer.log(
+        'Push-device registration will retry: ${error.runtimeType}.',
+        name: 'PushRegistration',
+      );
     }
   }
 
@@ -99,15 +109,70 @@ class CallLifecycleCoordinator {
   }
 
   Future<void> _onOffer(CallOffer offer) async {
-    if (!_active || offer.isExpired) return;
+    developer.log(
+      'Incoming offer received in Flutter callId=${offer.callId} '
+      'offerId=${offer.offerId} workspace=${offer.workspaceId} '
+      'expired=${offer.isExpired}.',
+      name: 'CallLifecycle',
+    );
+    if (!_active || offer.isExpired) {
+      developer.log(
+        'Incoming offer ignored: active=$_active expired=${offer.isExpired}.',
+        name: 'CallLifecycle',
+      );
+      return;
+    }
     // An offer belongs to one workspace. Never surface stale/background data
     // for a workspace the agent has switched away from.
     if (_workspaceId != null &&
         _workspaceId!.isNotEmpty &&
         offer.workspaceId != _workspaceId) {
+      developer.log(
+        'Incoming offer ignored: workspace mismatch.',
+        name: 'CallLifecycle',
+      );
       return;
     }
-    await _controller().handleIncomingOffer(offer);
+    final handled = await _controller().handleIncomingOffer(offer);
+    developer.log(
+      'Incoming offer handed to session controller handled=$handled.',
+      name: 'CallLifecycle',
+    );
+  }
+
+  Future<void> _onNativeEvent(NativeCallEvent event) async {
+    developer.log(
+      'Native call event type=${event.type.name} callId=${event.callId ?? "none"} '
+      'callSid=${event.callSid ?? "none"} mediaSession=${event.mediaSessionId ?? "none"} '
+      'reason=${event.reason ?? "none"}.',
+      name: 'CallLifecycle',
+    );
+    switch (event.type) {
+      case NativeCallEventType.offerAvailable:
+        await _drainNativeOffer();
+      case NativeCallEventType.nativePushTokenChanged:
+        await _register();
+      case NativeCallEventType.answer:
+      case NativeCallEventType.decline:
+      case NativeCallEventType.end:
+      case NativeCallEventType.incomingPresented:
+      case NativeCallEventType.outgoingDialing:
+      case NativeCallEventType.active:
+      case NativeCallEventType.disconnected:
+      case NativeCallEventType.failed:
+        break;
+    }
+  }
+
+  Future<void> _drainNativeOffer() async {
+    developer.log('Draining pending native incoming offer.',
+        name: 'CallLifecycle');
+    final offer = await _native.takePendingOffer();
+    developer.log(
+      'Pending native offer ${offer == null ? "not found" : "found callId=${offer.callId}"}.',
+      name: 'CallLifecycle',
+    );
+    if (offer != null) await _onOffer(offer);
   }
 
   Future<void> stop() async {
@@ -115,8 +180,10 @@ class CallLifecycleCoordinator {
     _workspaceId = null;
     await _offers?.cancel();
     await _tokenChanges?.cancel();
+    await _nativeEvents?.cancel();
     _offers = null;
     _tokenChanges = null;
+    _nativeEvents = null;
   }
 
   Future<void> dispose() => stop();

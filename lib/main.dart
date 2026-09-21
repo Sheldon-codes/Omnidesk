@@ -11,6 +11,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 
 import 'components/digistem_bottom_nav/digistem_bottom_nav.dart';
 import 'components/call_experience/call_experience_host.dart';
+import 'components/call_experience/call_session_controller.dart';
 import 'services/calls/webview_call_media_service.dart';
 import 'firebase_options.dart';
 import 'flutter_flow/flutter_flow_theme.dart';
@@ -33,19 +34,18 @@ Future<void> main() async {
   await FlutterFlowTheme.initialize();
   await dotenv.load(fileName: '.env');
   var fcmEnabled = false;
-  if (dotenv.env['ENABLE_FCM'] == 'true') {
-    try {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-      fcmEnabled = true;
-    } catch (error) {
-      developer.log(
-        'FCM was enabled but Firebase configuration is unavailable: $error',
-        name: 'MainApp',
-      );
-    }
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    fcmEnabled = true;
+  } catch (error) {
+    developer.log(
+      'FCM initialization failed; push features are unavailable: '
+      '${error.runtimeType}.',
+      name: 'MainApp',
+    );
   }
   runApp(ProviderScope(child: OmnideskAgentApp(fcmEnabled: fcmEnabled)));
 }
@@ -100,6 +100,12 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
     );
     if (widget.fcmEnabled) {
       Future.microtask(() => ref.read(fcmServiceProvider).initialize());
+    } else {
+      developer.log(
+        'Skipping Flutter FCM initialization because Firebase failed to '
+        'initialize; native push registration may be unavailable.',
+        name: 'MainApp',
+      );
     }
   }
 
@@ -194,15 +200,23 @@ class _AppCallOverlay extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final callState = ref.watch(callSessionControllerProvider);
+    final media = ref.read(webViewCallMediaServiceProvider);
     return CallExperienceHost(
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // Behind the UI: full-screen transparent so WebKit treats the
-          // media engine as visible (mic capture never settles in a
-          // zero/hidden view); IgnorePointer + near-zero opacity keep it
-          // untouchable and invisible.
-          const HiddenCallWebView(),
+          // Mount lazily on the first call. Creating Chromium's platform view
+          // and loading the bridge during startup blocks Android's first
+          // frames, especially on emulators. Keep it alive after first use.
+          // An incoming offer is only a system/UI ringing state. Do not pay
+          // the Chromium startup cost until the agent answers and media is
+          // actually being prepared. Outbound calls mount immediately while
+          // connecting. Once mounted, retain the engine for later calls.
+          if ((callState.hasCall &&
+                  callState.lifecycle != CallLifecycle.incomingRinging) ||
+              media.hasController)
+            const HiddenCallWebView(),
           child,
         ],
       ),
