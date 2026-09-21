@@ -64,7 +64,19 @@ object OmniDeskTelecomManager {
         IncomingCallStateStore.savePresentationReceipt(
             context, callId, offerId, receipt.receivedAt, receipt.nativePresentedAt
         )
-        OmniDeskCallNotification.showIncoming(context, values)
+        try {
+            OmniDeskCallNotification.showIncoming(context, values)
+        } catch (error: Throwable) {
+            // Do not leave a Telecom call/presentation reservation behind if
+            // Android rejects the notification (for example, permission or
+            // OEM notification policy). A stale reservation blocks the next
+            // incoming call through isIncomingCallPermitted().
+            connections.remove(callId)?.setDisconnected(
+                android.telecom.DisconnectCause(android.telecom.DisconnectCause.ERROR, "notification_failed")
+            )
+            IncomingCallStateStore.clearPresentation(context, callId, offerId)
+            throw error
+        }
         // Full-screen presentation is owned by the CallStyle notification.
         // Starting an Activity directly from an FCM service is blocked on
         // modern Android and would bypass the system's full-screen policy.
@@ -111,7 +123,14 @@ object OmniDeskTelecomManager {
 
     fun markActive(context: Context, callId: String) {
         connections[callId]?.setActive()
-        OmniDeskCallForegroundService.start(context, callId)
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            OmniDeskCallForegroundService.start(context, callId)
+        } else {
+            Log.w(logTag, "Skipping call foreground service: RECORD_AUDIO is not granted")
+        }
         AndroidCallEventBridge.emitActive(callId)
     }
 
@@ -125,7 +144,6 @@ object OmniDeskTelecomManager {
         OmniDeskCallNotification.dismissIncoming(context, callId)
         IncomingCallStateStore.saveAction(context, callId, "answer")
         connections[callId]?.setInitializing()
-        OmniDeskCallForegroundService.start(context, callId)
         AndroidCallEventBridge.emitAction("answer", callId)
         launchFlutter(context)
     }
@@ -186,6 +204,10 @@ object OmniDeskTelecomManager {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             context.startActivity(this)
         }
+    }
+
+    fun notifyIncomingOpened(callId: String) {
+        AndroidCallEventBridge.emitIncomingOpened(callId)
     }
 
     private fun phoneAccountHandle(context: Context) = PhoneAccountHandle(

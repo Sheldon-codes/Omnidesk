@@ -664,6 +664,12 @@ class CallSessionController extends _$CallSessionController {
       case NativeCallEventType.end:
         unawaited(end());
       case NativeCallEventType.incomingPresented:
+      case NativeCallEventType.incomingOpened:
+        if (event.type == NativeCallEventType.incomingOpened &&
+            state.lifecycle == CallLifecycle.incomingRinging) {
+          state = state.copyWith(nativeIncomingSurfaceActive: false);
+        }
+        break;
       case NativeCallEventType.outgoingDialing:
       case NativeCallEventType.active:
       case NativeCallEventType.failed:

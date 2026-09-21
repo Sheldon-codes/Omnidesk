@@ -16,6 +16,21 @@ class MainActivity : FlutterActivity() {
         AndroidCallEventBridge.attach(channel)
         channel.setMethodCallHandler(::handleCallMethod)
         Log.i(logTag, "Call method channel configured")
+        notifyIncomingIntent(intent)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notifyIncomingIntent(intent)
+    }
+
+    private fun notifyIncomingIntent(intent: android.content.Intent?) {
+        val callId = intent?.getStringExtra(OmniDeskTelecomManager.extraCallId).orEmpty()
+        if (callId.isNotBlank()) {
+            Log.i(logTag, "Flutter opened from incoming-call notification callId=$callId")
+            OmniDeskTelecomManager.notifyIncomingOpened(callId)
+        }
     }
 
     private fun handleCallMethod(call: MethodCall, result: MethodChannel.Result) {

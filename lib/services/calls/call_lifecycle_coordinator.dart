@@ -156,6 +156,7 @@ class CallLifecycleCoordinator {
       case NativeCallEventType.decline:
       case NativeCallEventType.end:
       case NativeCallEventType.incomingPresented:
+      case NativeCallEventType.incomingOpened:
       case NativeCallEventType.outgoingDialing:
       case NativeCallEventType.active:
       case NativeCallEventType.disconnected:

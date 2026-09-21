@@ -28,6 +28,7 @@ object AndroidCallEventBridge {
     }
 
     fun emitIncomingPresented(callId: String) = emit("incomingPresented", mapOf("callId" to callId))
+    fun emitIncomingOpened(callId: String) = emit("incomingOpened", mapOf("callId" to callId))
     fun emitOutgoingDialing(callId: String) = emit("outgoingDialing", mapOf("callId" to callId))
     fun emitActive(callId: String) = emit("active", mapOf("callId" to callId))
     fun emitDisconnected(callId: String, reason: String) = emit("disconnected", mapOf("callId" to callId, "reason" to reason))

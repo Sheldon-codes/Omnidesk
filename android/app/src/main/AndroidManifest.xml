@@ -53,14 +53,9 @@
             android:name=".OmniDeskCallForegroundService"
             android:exported="false"
             android:foregroundServiceType="microphone|phoneCall" />
-        <activity
-            android:name=".OmniDeskIncomingCallActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:launchMode="singleTop"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true"
-            android:theme="@style/NormalTheme" />
+        <receiver
+            android:name=".OmniDeskCallActionReceiver"
+            android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -62,7 +62,12 @@ class OmniDeskMessagingService : FirebaseMessagingService() {
             "call_cancelled" -> {
                 val callId = normalizedPayload["call_id"].orEmpty()
                 if (callId.isNotBlank()) {
-                    OmniDeskTelecomManager.cancel(applicationContext, callId, normalizedPayload["offer_id"], normalizedPayload["reason"])
+                    OmniDeskTelecomManager.cancel(
+                        applicationContext,
+                        callId,
+                        normalizedPayload["offer_id"]?.takeIf { it.isNotBlank() },
+                        normalizedPayload["reason"],
+                    )
                     Log.i(logTag, "Cancellation processed callId=$callId eventId=$eventId reason=${normalizedPayload["reason"] ?: "none"}")
                 }
             }

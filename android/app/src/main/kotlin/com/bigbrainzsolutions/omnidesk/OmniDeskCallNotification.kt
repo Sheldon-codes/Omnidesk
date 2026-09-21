@@ -34,9 +34,17 @@ object OmniDeskCallNotification {
         ensureChannels(context)
         val callId = values["callId"].orEmpty()
         val name = values["callerName"].orEmpty().ifBlank { values["callerNumber"].orEmpty() }
-        val fullScreen = PendingIntent.getActivity(context, requestCode(callId), OmniDeskIncomingCallActivity.intent(context, values), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val answer = action(context, callId, OmniDeskIncomingCallActivity.answerAction)
-        val decline = action(context, callId, OmniDeskIncomingCallActivity.declineAction)
+        val flutterIntent = Intent(context, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra(OmniDeskTelecomManager.extraCallId, callId)
+            putExtra(OmniDeskTelecomManager.extraOfferId, values["offerId"])
+        }
+        val contentIntent = PendingIntent.getActivity(
+            context, requestCode("content:$callId"), flutterIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val answer = action(context, callId, OmniDeskCallActionReceiver.answerAction)
+        val decline = action(context, callId, OmniDeskCallActionReceiver.declineAction)
         val notification = NotificationCompat.Builder(context, incomingChannel)
             .setSmallIcon(android.R.drawable.sym_action_call)
             .setContentTitle(name)
@@ -44,7 +52,13 @@ object OmniDeskCallNotification {
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setOngoing(true)
-            .setFullScreenIntent(fullScreen, true)
+            // Android 14+ rejects CallStyle notifications without either a
+            // foreground-service association or a full-screen intent. The
+            // full-screen target is the existing Flutter activity, never a
+            // separate native ringing activity. Tapping it still only opens
+            // Flutter; it does not answer or dismiss the Telecom call.
+            .setFullScreenIntent(contentIntent, true)
+            .setContentIntent(contentIntent)
             .setStyle(NotificationCompat.CallStyle.forIncomingCall(
                 Person.Builder().setName(name).build(), decline, answer
             ))
@@ -56,8 +70,16 @@ object OmniDeskCallNotification {
         NotificationManagerCompat.from(context).cancel(notificationId(callId))
     }
 
-    private fun action(context: Context, callId: String, action: String): PendingIntent =
-        PendingIntent.getActivity(context, requestCode("$callId:$action"), OmniDeskIncomingCallActivity.intent(context, mapOf("callId" to callId), action), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    private fun action(context: Context, callId: String, action: String): PendingIntent {
+        val intent = Intent(context, OmniDeskCallActionReceiver::class.java).apply {
+            this.action = action
+            putExtra(OmniDeskTelecomManager.extraCallId, callId)
+        }
+        return PendingIntent.getBroadcast(
+            context, requestCode("$callId:$action"), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
 
     private fun notificationId(callId: String) = 41000 + (callId.hashCode() and 0x0fff)
     private fun requestCode(value: String) = value.hashCode()
