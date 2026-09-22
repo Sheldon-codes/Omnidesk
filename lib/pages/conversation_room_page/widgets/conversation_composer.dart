@@ -14,6 +14,7 @@ class ConversationComposer extends StatelessWidget {
     required this.onCancelReply,
     required this.onAttach,
     required this.onSend,
+    this.canAttach = true,
   });
 
   final TextEditingController controller;
@@ -23,6 +24,7 @@ class ConversationComposer extends StatelessWidget {
   final VoidCallback onCancelReply;
   final VoidCallback onAttach;
   final VoidCallback onSend;
+  final bool canAttach;
 
   @override
   Widget build(BuildContext context) => SafeArea(
@@ -46,16 +48,17 @@ class ConversationComposer extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Semantics(
-                      button: true,
-                      label: 'Add attachment',
-                      child: IconButton(
-                        onPressed: onAttach,
-                        tooltip: 'Attach',
-                        icon: Icon(Icons.add_rounded,
-                            color: theme.secondaryText, size: 25),
+                    if (canAttach)
+                      Semantics(
+                        button: true,
+                        label: 'Add attachment',
+                        child: IconButton(
+                          onPressed: onAttach,
+                          tooltip: 'Attach',
+                          icon: Icon(Icons.add_rounded,
+                              color: theme.secondaryText, size: 25),
+                        ),
                       ),
-                    ),
                     Expanded(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(minHeight: 44),

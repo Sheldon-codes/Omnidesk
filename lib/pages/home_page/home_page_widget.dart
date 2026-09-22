@@ -153,35 +153,48 @@ class HomePageWidget extends ConsumerWidget {
                   ],
                 ),
                 const SizedBox(height: 28),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _QuickActionButton(
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final columns = constraints.maxWidth < 440 ? 2 : 4;
+                    final spacing = 8.0;
+                    final itemWidth =
+                        (constraints.maxWidth - spacing * (columns - 1)) /
+                            columns;
+                    final actions = <Widget>[
+                      _QuickActionButton(
                         theme: theme,
                         icon: IconsaxPlusBroken.call,
                         label: 'Call',
                         onTap: () {},
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _QuickActionButton(
+                      _QuickActionButton(
                         theme: theme,
                         icon: IconsaxPlusBroken.messages,
                         label: 'Chat',
                         onTap: () {},
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _QuickActionButton(
+                      _QuickActionButton(
                         theme: theme,
                         icon: IconsaxPlusBroken.sms,
                         label: 'Email',
                         onTap: () {},
                       ),
-                    ),
-                  ],
+                      _QuickActionButton(
+                        theme: theme,
+                        icon: IconsaxPlusBroken.people,
+                        label: 'Customers',
+                        onTap: () => context.push('/customers'),
+                      ),
+                    ];
+                    return Wrap(
+                      spacing: spacing,
+                      runSpacing: spacing,
+                      children: [
+                        for (final action in actions)
+                          SizedBox(width: itemWidth, child: action),
+                      ],
+                    );
+                  },
                 ),
                 if (dashboard.tickets.isNotEmpty) ...[
                   const SizedBox(height: 28),

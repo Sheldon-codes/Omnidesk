@@ -18,6 +18,7 @@ import '../../services/realtime/typing_presence.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import 'conversation_room_page_model.dart';
 import 'whatsapp_live_store.dart';
+import 'widget_live_store.dart';
 import 'widgets/conversation_composer.dart';
 import 'widgets/conversation_media_widgets.dart';
 import 'widgets/conversation_message_bubble.dart';
@@ -25,12 +26,20 @@ import 'widgets/conversation_message_bubble.dart';
 export 'conversation_room_page_model.dart';
 
 class ConversationRoomPageWidget extends ConsumerStatefulWidget {
-  const ConversationRoomPageWidget({super.key, required this.conversationId});
+  const ConversationRoomPageWidget(
+      {super.key,
+      required this.conversationId,
+      this.channel = ChatChannel.whatsapp,
+      this.initialThread});
 
   static const routeName = 'ConversationRoomPage';
   static const routePath = '/chats/:conversationId';
+  static const liveRouteName = 'LiveConversationRoomPage';
+  static const liveRoutePath = '/chats/:channel/:conversationId';
 
   final String conversationId;
+  final ChatChannel channel;
+  final ConversationThread? initialThread;
 
   @override
   ConsumerState<ConversationRoomPageWidget> createState() =>
@@ -46,6 +55,7 @@ class _ConversationRoomPageWidgetState
   final _audioController = ConversationAudioController();
   final _messageKeys = <String, GlobalKey>{};
   WhatsAppThreadController? _liveStore;
+  WidgetChatThreadController? _widgetLiveStore;
 
   ConversationMessage? _replyingTo;
   String? _highlightedMessageId;
@@ -61,6 +71,8 @@ class _ConversationRoomPageWidgetState
     _composerController.addListener(_scheduleTyping);
     if (_isLiveWhatsApp) {
       _liveStore = ref.read(whatsAppThreadsProvider.notifier);
+    } else if (_isLiveWidget) {
+      _widgetLiveStore = ref.read(widgetChatThreadsProvider.notifier);
     }
     if (_isLiveWhatsApp) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -68,31 +80,58 @@ class _ConversationRoomPageWidgetState
         _liveStore?.load(widget.conversationId);
         _liveStore?.startPolling(widget.conversationId);
       });
+    } else if (_isLiveWidget) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _widgetLiveStore?.load(widget.conversationId);
+        _widgetLiveStore?.startPolling(widget.conversationId);
+      });
     }
   }
 
   void _scheduleTyping() {
-    if (!_isLiveWhatsApp || _composerController.text.trim().isEmpty) return;
+    if ((!_isLiveWhatsApp && !_isLiveWidget) ||
+        _composerController.text.trim().isEmpty) {
+      return;
+    }
     _typingTimer?.cancel();
     _typingTimer = Timer(const Duration(milliseconds: 700), () {
       if (!mounted) return;
-      unawaited(ref
-          .read(whatsAppThreadsProvider.notifier)
-          .sendTyping(widget.conversationId));
+      if (_isLiveWhatsApp) {
+        unawaited(ref
+            .read(whatsAppThreadsProvider.notifier)
+            .sendTyping(widget.conversationId));
+      } else if (_isLiveWidget) {
+        unawaited(ref
+            .read(widgetChatThreadsProvider.notifier)
+            .sendTyping(widget.conversationId));
+      } else {
+        unawaited(ref
+            .read(widgetChatThreadsProvider.notifier)
+            .sendTyping(widget.conversationId));
+      }
     });
   }
 
-  bool get _isLiveWhatsApp => int.tryParse(widget.conversationId) != null;
+  bool get _isLiveWhatsApp => widget.channel == ChatChannel.whatsapp;
+  bool get _isLiveWidget => widget.channel == ChatChannel.widgetChat;
+  bool get _isLive => _isLiveWhatsApp || _isLiveWidget;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!_isLiveWhatsApp) return;
-    final store = _liveStore;
-    if (store == null) return;
+    if (!_isLive) return;
     if (state == AppLifecycleState.resumed) {
-      store.startPolling(widget.conversationId);
+      if (_isLiveWhatsApp) {
+        _liveStore?.startPolling(widget.conversationId);
+      } else {
+        _widgetLiveStore?.startPolling(widget.conversationId);
+      }
     } else {
-      store.stopPolling(widget.conversationId);
+      if (_isLiveWhatsApp) {
+        _liveStore?.stopPolling(widget.conversationId);
+      } else {
+        _widgetLiveStore?.stopPolling(widget.conversationId);
+      }
     }
   }
 
@@ -101,6 +140,8 @@ class _ConversationRoomPageWidgetState
     WidgetsBinding.instance.removeObserver(this);
     if (_isLiveWhatsApp) {
       _liveStore?.stopPolling(widget.conversationId);
+    } else if (_isLiveWidget) {
+      _widgetLiveStore?.stopPolling(widget.conversationId);
     }
     _highlightTimer?.cancel();
     _typingTimer?.cancel();
@@ -235,6 +276,9 @@ class _ConversationRoomPageWidgetState
     final liveState = _isLiveWhatsApp
         ? ref.watch(whatsAppThreadsProvider)[widget.conversationId]
         : null;
+    final widgetLiveState = _isLiveWidget
+        ? ref.watch(widgetChatThreadsProvider)[widget.conversationId]
+        : null;
     final inboxThread = _isLiveWhatsApp
         ? ref
             .watch(whatsAppInboxProvider)
@@ -242,30 +286,49 @@ class _ConversationRoomPageWidgetState
             .where((item) => item.conversation.id == widget.conversationId)
             .firstOrNull
         : null;
-    final thread = _isLiveWhatsApp ? liveState?.thread : localThread;
+    final widgetInboxThread = _isLiveWidget
+        ? ref
+            .watch(widgetChatInboxProvider)
+            .threads
+            .where((item) => item.conversation.id == widget.conversationId)
+            .firstOrNull
+        : null;
+    final thread = _isLive
+        ? (liveState?.thread ?? widgetLiveState?.thread ?? widget.initialThread)
+        : localThread;
     final theme = FlutterFlowTheme.of(context);
-    if (_isLiveWhatsApp && liveState?.error != null && thread == null) {
+    if (_isLive &&
+        (liveState?.error != null || widgetLiveState?.error != null) &&
+        thread == null) {
       return _LiveRoomError(
           theme: theme,
-          onRetry: () => ref
-              .read(whatsAppThreadsProvider.notifier)
-              .load(widget.conversationId));
+          onRetry: () => _isLiveWhatsApp
+              ? ref
+                  .read(whatsAppThreadsProvider.notifier)
+                  .load(widget.conversationId)
+              : ref
+                  .read(widgetChatThreadsProvider.notifier)
+                  .load(widget.conversationId));
     }
-    // Any live room without content yet shows the shimmer — first open,
-    // reload, blank-but-loading timeline, or a stale entry left behind by
-    // a previous visit (e.g. popped mid-load). Never _NotFound here.
-    final showSkeleton = _isLiveWhatsApp &&
-        (thread == null ||
-            (thread.messages.isEmpty &&
-                (liveState == null || liveState.loading)));
+    // The inbox row gives us a complete header immediately. Only a genuine
+    // cold open uses the full-screen skeleton; message loading is represented
+    // within the timeline below.
+    final showSkeleton = _isLive && thread == null;
+    final timelineLoading = _isLive &&
+        thread != null &&
+        thread.messages.isEmpty &&
+        ((_isLiveWhatsApp && (liveState == null || liveState.loading)) ||
+            (_isLiveWidget &&
+                (widgetLiveState == null || widgetLiveState.loading)));
     if (showSkeleton) {
-      return _ConversationRoomSkeleton(theme: theme, knownThread: inboxThread);
+      return _ConversationRoomSkeleton(
+          theme: theme, knownThread: inboxThread ?? widgetInboxThread);
     }
     if (thread == null) return _NotFound(theme: theme);
 
     final conversation = thread.conversation;
     final resolved = conversation.status == ChatConversationStatus.resolved;
-    final typing = _isLiveWhatsApp
+    final typing = _isLive
         ? ref
             .watch(typingPresenceProvider(conversation.id))
             .values
@@ -274,15 +337,19 @@ class _ConversationRoomPageWidgetState
         : null;
     final online = ref.watch(connectionMonitorProvider);
     final connState =
-        _isLiveWhatsApp ? ref.watch(realtimeConnectionProvider).value : null;
-    final degraded = _isLiveWhatsApp &&
+        _isLive ? ref.watch(realtimeConnectionProvider).value : null;
+    final degraded = _isLive &&
         (!online ||
             liveState?.degraded == true ||
+            widgetLiveState?.degraded == true ||
             connState == RealtimeConnectionState.degraded);
     // Auto-scroll when live messages land while the user is near the bottom.
     ref.listen(
-        whatsAppThreadsProvider.select(
-            (m) => m[widget.conversationId]?.thread?.messages.length ?? 0),
+        _isLiveWhatsApp
+            ? whatsAppThreadsProvider.select(
+                (m) => m[widget.conversationId]?.thread?.messages.length ?? 0)
+            : widgetChatThreadsProvider.select(
+                (m) => m[widget.conversationId]?.thread?.messages.length ?? 0),
         (prev, next) {
       if (!mounted || next <= (prev ?? 0)) return;
       if (!_scrollController.hasClients) return;
@@ -362,52 +429,65 @@ class _ConversationRoomPageWidgetState
             Expanded(
               child: ColoredBox(
                 color: theme.secondaryBackground,
-                child: _MessageTimeline(
-                  thread: thread,
-                  controller: _scrollController,
-                  theme: theme,
-                  audioController: _audioController,
-                  messageKeys: _messageKeys,
-                  highlightedMessageId: _highlightedMessageId,
-                  onLoadOlder: () => ref
-                      .read(conversationStoreProvider.notifier)
-                      .loadOlderMessages(conversation.id),
-                  onReply: _startReply,
-                  onQuoteTap: (messageId) => _jumpToMessage(thread, messageId),
-                  onLongPress: (message) =>
-                      _openMessageActions(thread, message),
-                  onReaction: (message, emoji) {
-                    if (_isLiveWhatsApp) {
-                      _showSnack(
-                          'Reactions are not available for this channel');
-                      return;
-                    }
-                    ref
-                        .read(conversationStoreProvider.notifier)
-                        .addReaction(conversation.id, message.id, emoji);
-                  },
-                  onRetry: (message) {
-                    if (_isLiveWhatsApp) {
-                      unawaited(ref
-                          .read(whatsAppThreadsProvider.notifier)
-                          .retry(conversation.id, message.id));
-                      _showSnack('Retrying queued message');
-                      return;
-                    }
-                    ref
-                        .read(conversationStoreProvider.notifier)
-                        .retryMessage(conversation.id, message.id);
-                    _showSnack('Message queued to retry');
-                  },
-                  onLocation: (_) => _showSnack('Map integration coming later'),
-                  onContact: (content) {
-                    if (content.customerId case final customerId?) {
-                      context.push('/customers/$customerId');
-                    } else {
-                      _showSnack('Add contact coming soon');
-                    }
-                  },
-                ),
+                child: timelineLoading
+                    ? _ConversationTimelineSkeleton(theme: theme)
+                    : _MessageTimeline(
+                        thread: thread,
+                        controller: _scrollController,
+                        theme: theme,
+                        audioController: _audioController,
+                        messageKeys: _messageKeys,
+                        highlightedMessageId: _highlightedMessageId,
+                        onLoadOlder: _isLive
+                            ? () {}
+                            : () => ref
+                                .read(conversationStoreProvider.notifier)
+                                .loadOlderMessages(conversation.id),
+                        onReply: _startReply,
+                        onQuoteTap: (messageId) =>
+                            _jumpToMessage(thread, messageId),
+                        onLongPress: (message) =>
+                            _openMessageActions(thread, message),
+                        onReaction: (message, emoji) {
+                          if (_isLive) {
+                            _showSnack(
+                                'Reactions are not available for this channel');
+                            return;
+                          }
+                          ref
+                              .read(conversationStoreProvider.notifier)
+                              .addReaction(conversation.id, message.id, emoji);
+                        },
+                        onRetry: (message) {
+                          if (_isLiveWhatsApp) {
+                            unawaited(ref
+                                .read(whatsAppThreadsProvider.notifier)
+                                .retry(conversation.id, message.id));
+                            _showSnack('Retrying queued message');
+                            return;
+                          }
+                          if (_isLiveWidget) {
+                            unawaited(ref
+                                .read(widgetChatThreadsProvider.notifier)
+                                .retry(conversation.id, message.id));
+                            _showSnack('Retrying message');
+                            return;
+                          }
+                          ref
+                              .read(conversationStoreProvider.notifier)
+                              .retryMessage(conversation.id, message.id);
+                          _showSnack('Message queued to retry');
+                        },
+                        onLocation: (_) =>
+                            _showSnack('Map integration coming later'),
+                        onContact: (content) {
+                          if (content.customerId case final customerId?) {
+                            context.push('/customers/$customerId');
+                          } else {
+                            _showSnack('Add contact coming soon');
+                          }
+                        },
+                      ),
               ),
             ),
             if (resolved)
@@ -424,6 +504,9 @@ class _ConversationRoomPageWidgetState
                 onCancelReply: () => setState(() => _replyingTo = null),
                 onAttach: () => _openAttachments(thread),
                 onSend: () => _send(thread),
+                canAttach: thread.capabilities.canSendImages ||
+                    thread.capabilities.canSendVideo ||
+                    thread.capabilities.canSendDocuments,
               ),
           ],
         ),
@@ -452,28 +535,31 @@ class _ConversationRoomPageWidgetState
                     context.push('/customers/${conversation.customerId}');
                   },
                 ),
-              ListTile(
-                leading: const Icon(IconsaxPlusBroken.call),
-                title: const Text('Call customer'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  final started = ref
-                      .read(callSessionControllerProvider.notifier)
-                      .startOutgoing(CallParty(
-                        customerId: conversation.customerId,
-                        displayName: conversation.name,
-                        phoneNumber:
-                            conversation.contactIdentifier ?? 'Unknown',
-                        avatar: conversation.avatar,
-                      ));
-                  if (!started) {
-                    _showSnack(
-                      ref.read(callSessionControllerProvider).failureMessage ??
-                          'Call already in progress',
-                    );
-                  }
-                },
-              ),
+              if (!_isLiveWidget)
+                ListTile(
+                  leading: const Icon(IconsaxPlusBroken.call),
+                  title: const Text('Call customer'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    final started = ref
+                        .read(callSessionControllerProvider.notifier)
+                        .startOutgoing(CallParty(
+                          customerId: conversation.customerId,
+                          displayName: conversation.name,
+                          phoneNumber:
+                              conversation.contactIdentifier ?? 'Unknown',
+                          avatar: conversation.avatar,
+                        ));
+                    if (!started) {
+                      _showSnack(
+                        ref
+                                .read(callSessionControllerProvider)
+                                .failureMessage ??
+                            'Call already in progress',
+                      );
+                    }
+                  },
+                ),
               if (_isLiveWhatsApp)
                 ListTile(
                   leading: const Icon(IconsaxPlusBroken.document_text),
@@ -483,7 +569,7 @@ class _ConversationRoomPageWidgetState
                     _insertTemplate();
                   },
                 ),
-              if (!_isLiveWhatsApp)
+              if (!_isLive)
                 ListTile(
                   leading: const Icon(IconsaxPlusBroken.message_minus),
                   title: const Text('Mark unread'),
@@ -574,6 +660,11 @@ class _ConversationRoomPageWidgetState
         await ref
             .read(whatsAppThreadsProvider.notifier)
             .status(thread.conversation.id, 'resolved');
+      } else if (_isLiveWidget) {
+        await ref.read(widgetChatThreadsProvider.notifier).status(
+              thread.conversation.id,
+              'resolved',
+            );
       } else {
         ref
             .read(conversationStoreProvider.notifier)
@@ -590,6 +681,11 @@ class _ConversationRoomPageWidgetState
         await ref
             .read(whatsAppThreadsProvider.notifier)
             .status(thread.conversation.id, 'in_progress');
+      } else if (_isLiveWidget) {
+        await ref.read(widgetChatThreadsProvider.notifier).status(
+              thread.conversation.id,
+              'open',
+            );
       } else {
         ref
             .read(conversationStoreProvider.notifier)
@@ -1478,6 +1574,64 @@ class _NotFound extends StatelessWidget {
       );
 }
 
+/// Timeline-only loading state used when the inbox already supplied the room
+/// header. Keeping the surrounding header and composer live prevents a visual
+/// flash back to a full-page skeleton on every navigation.
+class _ConversationTimelineSkeleton extends StatelessWidget {
+  const _ConversationTimelineSkeleton({required this.theme});
+  final FlutterFlowTheme theme;
+
+  @override
+  Widget build(BuildContext context) {
+    final base = theme.alternate.withValues(alpha: .56);
+    return ExcludeSemantics(
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+        children: [
+          Center(child: _RoomSkeletonShape(color: base, width: 52, height: 10)),
+          const SizedBox(height: 14),
+          _TimelineSkeletonBubble(
+            color: base,
+            alignment: Alignment.centerLeft,
+            width: 158,
+            height: 50,
+            withAvatar: true,
+            borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(15),
+                topRight: Radius.circular(15),
+                bottomLeft: Radius.circular(4),
+                bottomRight: Radius.circular(15)),
+          ),
+          const SizedBox(height: 3),
+          _TimelineSkeletonBubble(
+            color: base,
+            alignment: Alignment.centerLeft,
+            width: 212,
+            height: 62,
+            borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(4),
+                topRight: Radius.circular(15),
+                bottomLeft: Radius.circular(4),
+                bottomRight: Radius.circular(15)),
+          ),
+          const SizedBox(height: 14),
+          _TimelineSkeletonBubble(
+            color: base,
+            alignment: Alignment.centerRight,
+            width: 174,
+            height: 54,
+            borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(15),
+                topRight: Radius.circular(15),
+                bottomLeft: Radius.circular(15),
+                bottomRight: Radius.circular(4)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ConversationRoomSkeleton extends StatelessWidget {
   const _ConversationRoomSkeleton({required this.theme, this.knownThread});
 
@@ -1652,17 +1806,23 @@ class _RoomSkeletonShape extends StatelessWidget {
   final BorderRadius? borderRadius;
 
   @override
-  Widget build(BuildContext context) => _RoomShimmer(
+  Widget build(BuildContext context) {
+    // The shimmer must be clipped by the actual component silhouette. A
+    // transparent child lets ShaderMask paint its rectangular bounds, which
+    // makes otherwise rounded bubbles look like square blocks while loading.
+    final radius = borderRadius ?? BorderRadius.circular(round ? width : 12);
+    return ClipRRect(
+      borderRadius: radius,
+      child: _RoomShimmer(
         color: color,
-        child: Container(
+        child: SizedBox(
           width: width,
           height: height,
-          decoration: BoxDecoration(
-            borderRadius:
-                borderRadius ?? BorderRadius.circular(round ? width : 12),
-          ),
+          child: ColoredBox(color: color),
         ),
-      );
+      ),
+    );
+  }
 }
 
 class _TimelineSkeletonBubble extends StatelessWidget {

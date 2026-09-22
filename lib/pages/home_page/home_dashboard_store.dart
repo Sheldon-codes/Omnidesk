@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/api_service.dart';
 import '../../services/auth_session_controller.dart';
+import '../../services/response_cache.dart';
 
 class DashboardGreeting {
   const DashboardGreeting({
@@ -312,30 +313,59 @@ class HomeDashboardState {
 /// Home screen already renders. Scoping is essential because a device can be
 /// used by more than one agent or workspace.
 class HomeDashboardCache {
-  static const _prefix = 'omnidesk_home_dashboard_v1';
+  HomeDashboardCache(this._cache);
 
-  Future<HomeDashboardState?> read(String scope) async {
+  static const _module = 'home';
+  static const _key = 'dashboard';
+  static const _legacyPrefix = 'omnidesk_home_dashboard_v1';
+  final ResponseCache _cache;
+
+  Future<HomeDashboardState?> read(ResponseCacheScope scope) async {
     try {
+      final response =
+          await _cache.read(scope: scope, module: _module, key: _key);
+      final decoded = response?.payload;
+      if (decoded is Map) {
+        return _stateFromJson(
+          decoded.map((key, value) => MapEntry('$key', value)),
+        );
+      }
+      // One-time bridge from the prior dashboard-only preferences cache into
+      // the shared encrypted server cache. Keep the legacy copy unless the
+      // encrypted write succeeds, so interrupted migrations are recoverable.
       final preferences = await SharedPreferences.getInstance();
-      final raw = preferences.getString('$_prefix.$scope');
-      if (raw == null || raw.isEmpty) return null;
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return null;
-      return _stateFromJson(
-        decoded.map((key, value) => MapEntry('$key', value)),
+      final legacyKey = '$_legacyPrefix.${scope.userId}.${scope.workspaceId}';
+      final legacyPayload = preferences.getString(legacyKey);
+      if (legacyPayload == null || legacyPayload.isEmpty) return null;
+      final legacyJson = jsonDecode(legacyPayload);
+      if (legacyJson is! Map) return null;
+      final legacy = _stateFromJson(
+        legacyJson.map((key, value) => MapEntry('$key', value)),
       );
+      if (legacy == null) return null;
+      final migrated = await _cache.write(
+        scope: scope,
+        module: _module,
+        key: _key,
+        payload: _stateToJson(legacy),
+      );
+      if (migrated) await preferences.remove(legacyKey);
+      return legacy;
     } catch (_) {
       return null;
     }
   }
 
-  Future<void> write(String scope, HomeDashboardState state) async {
+  Future<void> write(ResponseCacheScope scope, HomeDashboardState state,
+      {int? expectedEpoch}) async {
     if (!state.hasData) return;
     try {
-      final preferences = await SharedPreferences.getInstance();
-      await preferences.setString(
-        '$_prefix.$scope',
-        jsonEncode(_stateToJson(state)),
+      await _cache.write(
+        scope: scope,
+        module: _module,
+        key: _key,
+        payload: _stateToJson(state),
+        expectedEpoch: expectedEpoch,
       );
     } catch (_) {
       // The network response remains valid when cache persistence fails.
@@ -567,12 +597,15 @@ final homeDashboardProvider =
 
 class HomeDashboardController extends Notifier<HomeDashboardState> {
   Future<void>? _loadFuture;
-  final _cache = HomeDashboardCache();
-  String? _activeScope;
+  late HomeDashboardCache _cache;
+  ResponseCacheScope? _activeScope;
+  ResponseCache? _responseCache;
   int _generation = 0;
 
   @override
   HomeDashboardState build() {
+    _responseCache = ref.watch(responseCacheProvider);
+    _cache = HomeDashboardCache(_responseCache!);
     ref.listen<AuthState>(authSessionControllerProvider, (_, next) {
       // A notifier may not mutate its state synchronously while its own
       // `build` is executing. Scheduling also coalesces the bootstrap's
@@ -587,9 +620,10 @@ class HomeDashboardController extends Notifier<HomeDashboardState> {
   }
 
   Future<void> load({bool force = false}) {
-    if (_activeScope == null) return Future.value();
+    final scope = _activeScope;
+    if (scope == null) return Future.value();
     if (!force && _loadFuture != null) return _loadFuture!;
-    final task = _refresh(_activeScope!, _generation);
+    final task = _refresh(scope, _generation);
     _loadFuture = task;
     task.whenComplete(() {
       if (identical(_loadFuture, task)) {
@@ -610,16 +644,20 @@ class HomeDashboardController extends Notifier<HomeDashboardState> {
       return;
     }
     final user = auth.session!.user;
-    final workspaceId = user.activeWorkspace?.id ?? 'no-workspace';
-    final scope = '${user.id}.$workspaceId';
+    final scope = ResponseCacheScope.fromUser(user);
     if (scope == _activeScope) return;
     _activeScope = scope;
     final generation = ++_generation;
     _loadFuture = _hydrateThenRefresh(scope, generation);
   }
 
-  Future<void> _hydrateThenRefresh(String scope, int generation) async {
-    state = const HomeDashboardState(loading: true);
+  Future<void> _hydrateThenRefresh(
+      ResponseCacheScope scope, int generation) async {
+    state = state.copyWith(
+      loading: !state.hasData,
+      refreshing: state.hasData,
+      failure: null,
+    );
     final cached = await _cache.read(scope);
     if (generation != _generation || scope != _activeScope) return;
     if (cached != null && cached.hasData) {
@@ -632,8 +670,9 @@ class HomeDashboardController extends Notifier<HomeDashboardState> {
     await _refresh(scope, generation);
   }
 
-  Future<void> _refresh(String scope, int generation) async {
+  Future<void> _refresh(ResponseCacheScope scope, int generation) async {
     if (generation != _generation || scope != _activeScope) return;
+    final cacheEpoch = _responseCache?.writeEpoch;
     final hadData = state.hasData;
     state =
         state.copyWith(loading: !hadData, refreshing: hadData, failure: null);
@@ -650,14 +689,18 @@ class HomeDashboardController extends Notifier<HomeDashboardState> {
       );
       if (generation != _generation || scope != _activeScope) return;
       state = next;
-      unawaited(_cache.write(scope, next));
+      unawaited(_cache.write(scope, next, expectedEpoch: cacheEpoch));
       developer.log(
         'Dashboard refresh completed and cache was scheduled for update.',
         name: 'HomeDashboard',
       );
     } catch (error) {
       if (generation != _generation || scope != _activeScope) return;
-      state = state.copyWith(loading: false, refreshing: false, failure: error);
+      state = state.copyWith(
+        loading: false,
+        refreshing: false,
+        failure: hadData ? null : error,
+      );
       developer.log(
         'Dashboard refresh failed: ${error.runtimeType}.',
         name: 'HomeDashboard',
@@ -693,7 +736,10 @@ class HomeDashboardController extends Notifier<HomeDashboardState> {
         ));
         state = next;
         final scope = _activeScope;
-        if (scope != null) unawaited(_cache.write(scope, next));
+        if (scope != null) {
+          unawaited(_cache.write(scope, next,
+              expectedEpoch: _responseCache?.writeEpoch));
+        }
       }
       return true;
     } catch (error) {

@@ -53,6 +53,7 @@ GoRouter goRouter(Ref ref) {
                 location.startsWith('/tickets/') ||
                 location == ProfilePageWidget.routePath ||
                 location == ChangePasswordPageWidget.routePath ||
+                location == CustomersPageWidget.routePath ||
                 location == '/customers/new' ||
                 location.startsWith('/customers/')
             ? null
@@ -125,6 +126,22 @@ GoRouter goRouter(Ref ref) {
         path: ConversationRoomPageWidget.routePath,
         builder: (_, state) => ConversationRoomPageWidget(
           conversationId: state.pathParameters['conversationId']!,
+          initialThread: state.extra is ConversationThread
+              ? state.extra as ConversationThread
+              : null,
+        ),
+      ),
+      GoRoute(
+        name: ConversationRoomPageWidget.liveRouteName,
+        path: ConversationRoomPageWidget.liveRoutePath,
+        builder: (_, state) => ConversationRoomPageWidget(
+          conversationId: state.pathParameters['conversationId']!,
+          channel: state.pathParameters['channel'] == 'widget'
+              ? ChatChannel.widgetChat
+              : ChatChannel.whatsapp,
+          initialThread: state.extra is ConversationThread
+              ? state.extra as ConversationThread
+              : null,
         ),
       ),
       GoRoute(
@@ -201,6 +218,11 @@ GoRouter goRouter(Ref ref) {
         builder: (_, __) => const ChangePasswordPageWidget(),
       ),
       GoRoute(
+        name: CustomersPageWidget.routeName,
+        path: CustomersPageWidget.routePath,
+        builder: (_, __) => const CustomersPageWidget(),
+      ),
+      GoRoute(
         name: 'CustomerCreate',
         path: '/customers/new',
         builder: (_, state) => CustomerEditorPageWidget(
@@ -213,6 +235,9 @@ GoRouter goRouter(Ref ref) {
         path: '/customers/:id',
         builder: (_, state) => CustomerDetailsPageWidget(
           customerId: state.pathParameters['id']!,
+          initialCustomer: state.extra is CustomerRecord
+              ? state.extra as CustomerRecord
+              : null,
         ),
       ),
       GoRoute(

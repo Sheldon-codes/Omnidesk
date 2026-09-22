@@ -103,7 +103,8 @@ class WhatsAppMessageMapper {
 
   /// Inbox row -> thread summary. Prefers `latest_message` + unread counters
   /// when the backend supplies them; falls back to subject/category.
-  ConversationThread summaryToThread(Map<String, dynamic> value) {
+  ConversationThread summaryToThread(Map<String, dynamic> value,
+      {ChatChannel channel = ChatChannel.whatsapp}) {
     final customer = _map(value['customer']);
     final rawStatus = str(value['status'], fallback: 'open');
     final customerName = str(customer['name'], fallback: 'Customer');
@@ -120,18 +121,21 @@ class WhatsAppMessageMapper {
     // `display_id` is the user-facing ticket reference (for example
     // `DGKSL-439`). Keep `display_number` only as a backwards-compatible
     // fallback for older API responses.
-    final displayNumber =
-        strOrNull(value['display_id']) ?? strOrNull(value['display_number']);
+    final displayNumber = strOrNull(value['display_id']) ??
+        strOrNull(value['prefixed_id']) ??
+        strOrNull(value['display_number']);
 
     final conversation = ChatConversation(
       id: '${value['id']}',
-      channel: ChatChannel.whatsapp,
+      channel: channel,
       type: _isGroup(value)
           ? ChatConversationType.groups
           : ChatConversationType.dms,
       status: rawStatus == 'resolved' || rawStatus == 'closed'
           ? ChatConversationStatus.resolved
-          : ChatConversationStatus.open,
+          : rawStatus == 'in_progress'
+              ? ChatConversationStatus.inProgress
+              : ChatConversationStatus.open,
       name: customerName,
       preview: preview,
       time: DateFormat.Hm().format(updated.toLocal()),

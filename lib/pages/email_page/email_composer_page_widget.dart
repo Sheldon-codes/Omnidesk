@@ -6,13 +6,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
+import '../../services/app_local_database.dart';
+import '../../services/auth_session_controller.dart';
 import '../customer_editor_page/customer_editor_page_model.dart';
 import 'email_attachment_picker.dart';
 import 'email_draft_repository.dart';
 import 'email_page_model.dart';
 
 final emailDraftRepositoryProvider = Provider<EmailDraftRepository>(
-  (_) => SqliteEmailDraftRepository(),
+  (ref) {
+    final user = ref.watch(authSessionControllerProvider).session?.user;
+    final scopeKey = user == null
+        ? 'anonymous'
+        : '${user.id}:${user.activeWorkspace?.id ?? 'no-workspace'}';
+    return SqliteEmailDraftRepository(
+      localDatabase: ref.watch(appLocalDatabaseProvider),
+      scopeKey: scopeKey,
+    );
+  },
 );
 
 class EmailComposerPageWidget extends ConsumerStatefulWidget {
@@ -51,6 +62,14 @@ class _EmailComposerPageWidgetState
 
   String get _draftKey =>
       emailDraftKey(threadId: widget.threadId, mode: widget.mode);
+  String get _draftAttachmentKey {
+    final user = ref.read(authSessionControllerProvider).session?.user;
+    final scope = user == null
+        ? 'anonymous'
+        : '${user.id}:${user.activeWorkspace?.id ?? 'no-workspace'}';
+    return '$scope::$_draftKey';
+  }
+
   EmailThread? get _thread => widget.threadId == null
       ? null
       : ref.read(emailStoreProvider.notifier).findById(widget.threadId!);
@@ -226,11 +245,12 @@ class _EmailComposerPageWidgetState
     try {
       final picker = ref.read(emailAttachmentPickerProvider);
       final selected = switch (source) {
-        _AttachmentSource.document => await picker.pickDocuments(_draftKey),
+        _AttachmentSource.document =>
+          await picker.pickDocuments(_draftAttachmentKey),
         _AttachmentSource.photo =>
-          await picker.pickMedia(_draftKey, camera: false),
+          await picker.pickMedia(_draftAttachmentKey, camera: false),
         _AttachmentSource.camera =>
-          await picker.pickMedia(_draftKey, camera: true),
+          await picker.pickMedia(_draftAttachmentKey, camera: true),
       };
       if (!mounted || selected.isEmpty) return;
       setState(() => _attachments = [..._attachments, ...selected]);

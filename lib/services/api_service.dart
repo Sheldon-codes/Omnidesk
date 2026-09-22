@@ -137,9 +137,13 @@ class ApiService {
   }
 
   Future<dynamic> get(String path,
-          {Map<String, dynamic>? queryParameters, bool requiresAuth = true}) =>
+          {Map<String, dynamic>? queryParameters,
+          bool requiresAuth = true,
+          CancelToken? cancelToken}) =>
       _request(() => _dio.get(path,
-          queryParameters: queryParameters, options: _options(requiresAuth)));
+          queryParameters: queryParameters,
+          cancelToken: cancelToken,
+          options: _options(requiresAuth)));
   Future<dynamic> post(String path, Map<String, dynamic> body,
           {bool requiresAuth = true, Map<String, String>? headers}) =>
       _request(() => _dio.post(path,
@@ -178,6 +182,7 @@ class ApiService {
     try {
       return (await request()).data;
     } on DioException catch (error) {
+      if (CancelToken.isCancel(error)) rethrow;
       throw ApiClientException.fromDio(error);
     }
   }

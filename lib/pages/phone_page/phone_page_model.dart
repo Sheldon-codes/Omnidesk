@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../services/calls/call_log_store.dart';
 import '../../services/calls/call_models.dart';
 import '../customer_editor_page/customer_editor_page_model.dart' as customers;
+import '../customers_page/customers_page_model.dart';
 
 part 'phone_page_model.g.dart';
 
@@ -225,10 +228,18 @@ class PhonePageState {
 
 @riverpod
 class PhonePageNotifier extends _$PhonePageNotifier {
+  PhonePageState? _interactionState;
+
   @override
   PhonePageState build() {
     final callHistory = ref.watch(callLogStoreProvider);
+    final interaction = _interactionState;
     return PhonePageState(
+      tab: interaction?.tab ?? PhoneTab.recents,
+      viewMode: interaction?.viewMode ?? PhoneViewMode.list,
+      searchActive: interaction?.searchActive ?? false,
+      query: interaction?.query ?? '',
+      dialedNumber: interaction?.dialedNumber ?? '',
       recents: callHistory.records
           .map(PhoneRecent.fromCallLog)
           .toList(growable: false),
@@ -244,38 +255,49 @@ class PhonePageNotifier extends _$PhonePageNotifier {
     );
   }
 
-  void selectTab(PhoneTab tab) {
-    state = state.copyWith(tab: tab, searchActive: false, query: '');
+  void _update(PhonePageState next) {
+    _interactionState = next;
+    state = next;
   }
 
-  void openDialPad() => state = state.copyWith(
-        viewMode: PhoneViewMode.dialPad,
-        searchActive: false,
-        query: '',
-      );
+  void selectTab(PhoneTab tab) {
+    _update(state.copyWith(tab: tab, searchActive: false, query: ''));
+    if (tab == PhoneTab.contacts) {
+      unawaited(ref.read(customersPageProvider.notifier).load());
+    }
+  }
 
-  void closeDialPad() => state = state.copyWith(
+  void openDialPad() {
+    _update(state.copyWith(
+      viewMode: PhoneViewMode.dialPad,
+      searchActive: false,
+      query: '',
+    ));
+    unawaited(ref.read(customersPageProvider.notifier).load());
+  }
+
+  void closeDialPad() => _update(state.copyWith(
         viewMode: PhoneViewMode.list,
         dialedNumber: '',
-      );
+      ));
 
   void appendDigit(String digit) {
     if (!RegExp(r'^[0-9*#]$').hasMatch(digit)) return;
-    state = state.copyWith(dialedNumber: '${state.dialedNumber}$digit');
+    _update(state.copyWith(dialedNumber: '${state.dialedNumber}$digit'));
   }
 
   void deleteLastDigit() {
     if (state.dialedNumber.isEmpty) return;
-    state = state.copyWith(
+    _update(state.copyWith(
         dialedNumber:
-            state.dialedNumber.substring(0, state.dialedNumber.length - 1));
+            state.dialedNumber.substring(0, state.dialedNumber.length - 1)));
   }
 
-  void clearDialedNumber() => state = state.copyWith(dialedNumber: '');
+  void clearDialedNumber() => _update(state.copyWith(dialedNumber: ''));
 
-  void openSearch() => state = state.copyWith(searchActive: true);
+  void openSearch() => _update(state.copyWith(searchActive: true));
 
-  void closeSearch() => state = state.copyWith(searchActive: false, query: '');
+  void closeSearch() => _update(state.copyWith(searchActive: false, query: ''));
 
-  void setSearchQuery(String value) => state = state.copyWith(query: value);
+  void setSearchQuery(String value) => _update(state.copyWith(query: value));
 }

@@ -13,7 +13,7 @@ extension ChatChannelLabel on ChatChannel {
 
 enum ChatConversationType { all, dms, groups }
 
-enum ChatConversationStatus { all, open, resolved }
+enum ChatConversationStatus { all, open, inProgress, resolved }
 
 class ChatConversation {
   const ChatConversation({
@@ -255,8 +255,9 @@ class ConversationMessage {
         agentName: agentName,
         customerAvatarUrl: customerAvatarUrl,
         fallbackLabel: fallbackLabel,
-        uploadProgress:
-            clearUploadProgress ? null : (uploadProgress ?? this.uploadProgress),
+        uploadProgress: clearUploadProgress
+            ? null
+            : (uploadProgress ?? this.uploadProgress),
       );
 }
 
@@ -292,7 +293,7 @@ class ConversationCapabilities {
   );
   static const widgetChat = ConversationCapabilities(
     canSendText: true,
-    canSendImages: true,
+    canSendImages: false,
     canSendVideo: false,
     canSendDocuments: false,
     canSendLocations: false,

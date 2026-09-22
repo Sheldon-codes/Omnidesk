@@ -42,7 +42,7 @@ final class CallSessionControllerProvider
 }
 
 String _$callSessionControllerHash() =>
-    r'163c47e9670a3a717d72bc98888f8f5ca2da8f7b';
+    r'cf5f5875b18134ec92f9d6d8f55574138177d24d';
 
 abstract class _$CallSessionController extends $Notifier<CallSessionState> {
   CallSessionState build();

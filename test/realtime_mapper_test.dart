@@ -143,4 +143,22 @@ void main() {
     expect(thread.conversation.avatarUrl, 'https://x/a.jpg');
     expect(thread.conversation.ticketId, 'DGKSL-14');
   });
+
+  test(
+      'widget ticket summary preserves source, display id, and in-progress status',
+      () {
+    final thread = mapper.summaryToThread({
+      'id': 439,
+      'display_number': 439,
+      'prefixed_id': 'DGKSL-439',
+      'display_id': 'DGKSL-439',
+      'status': 'in_progress',
+      'subject': 'Payment issue',
+      'customer': {'name': 'Eve'},
+    }, channel: ChatChannel.widgetChat);
+
+    expect(thread.conversation.channel, ChatChannel.widgetChat);
+    expect(thread.conversation.ticketId, 'DGKSL-439');
+    expect(thread.conversation.status, ChatConversationStatus.inProgress);
+  });
 }

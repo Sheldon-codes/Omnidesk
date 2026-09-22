@@ -41,7 +41,7 @@ final class CustomersStoreProvider
   }
 }
 
-String _$customersStoreHash() => r'82f4fab7e2cfcfcd7db4c8edc4b8e53c27478c43';
+String _$customersStoreHash() => r'c973caa4ba08fb1533e8ded3af7819be2407e471';
 
 abstract class _$CustomersStore extends $Notifier<List<CustomerRecord>> {
   List<CustomerRecord> build();

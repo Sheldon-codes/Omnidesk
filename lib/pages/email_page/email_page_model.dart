@@ -3,10 +3,13 @@ import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../services/api_service.dart';
+import '../../services/auth_session_controller.dart';
+import '../../services/response_cache.dart';
 
 part 'email_page_model.g.dart';
 
@@ -259,8 +262,13 @@ class EmailDraft {
 
 abstract class EmailRepository {
   Future<List<EmailThread>> loadFolder(EmailFolder folder,
-      {String query = '', int page = 1, int perPage = 20});
-  Future<EmailThread> loadThread(String id);
+      {String query = '',
+      int page = 1,
+      int perPage = 20,
+      void Function(List<EmailThread>)? onCached,
+      void Function()? onCacheMiss});
+  Future<EmailThread> loadThread(String id,
+      {void Function(EmailThread)? onCached, void Function()? onCacheMiss});
   Future<void> markRead(String id);
   Future<void> reply(String id, String message, {EmailAttachment? attachment});
   Future<EmailThread> create(
@@ -275,10 +283,16 @@ class LocalEmailRepository implements EmailRepository {
   const LocalEmailRepository();
   @override
   Future<List<EmailThread>> loadFolder(EmailFolder folder,
-          {String query = '', int page = 1, int perPage = 20}) async =>
+          {String query = '',
+          int page = 1,
+          int perPage = 20,
+          void Function(List<EmailThread>)? onCached,
+          void Function()? onCacheMiss}) async =>
       _emailFixtures.where((t) => t.folders.contains(folder)).toList();
   @override
-  Future<EmailThread> loadThread(String id) async =>
+  Future<EmailThread> loadThread(String id,
+          {void Function(EmailThread)? onCached,
+          void Function()? onCacheMiss}) async =>
       _emailFixtures.firstWhere((t) => t.id == id);
   @override
   Future<void> markRead(String id) async {}
@@ -297,8 +311,13 @@ class LocalEmailRepository implements EmailRepository {
 }
 
 class RemoteEmailRepository implements EmailRepository {
-  RemoteEmailRepository(this._api);
+  RemoteEmailRepository(this._api,
+      {ResponseCache? cache, ResponseCacheScope? Function()? readScope})
+      : _cache = cache,
+        _readScope = readScope;
   final ApiService _api;
+  final ResponseCache? _cache;
+  final ResponseCacheScope? Function()? _readScope;
 
   Map<String, dynamic> _map(dynamic value) => value is Map
       ? value.map((key, val) => MapEntry(key.toString(), val))
@@ -306,7 +325,38 @@ class RemoteEmailRepository implements EmailRepository {
 
   @override
   Future<List<EmailThread>> loadFolder(EmailFolder folder,
-      {String query = '', int page = 1, int perPage = 20}) async {
+      {String query = '',
+      int page = 1,
+      int perPage = 20,
+      void Function(List<EmailThread>)? onCached,
+      void Function()? onCacheMiss}) async {
+    final scope = _readScope?.call();
+    final cache = _cache;
+    if (scope != null && cache != null) {
+      final cacheKey = 'folder:${folder.name}:${stableCacheQueryKey({
+            'query': query.trim(),
+            'page': page,
+            'per_page': perPage,
+          })}';
+      final cached = await CacheFirstJsonLoader(cache).load<List<EmailThread>>(
+        scope: scope,
+        module: 'email',
+        key: cacheKey,
+        expectedEpoch: cache.writeEpoch,
+        fetch: () => _loadFolderPayload(folder, query, page, perPage),
+        decode: (payload) => _decodeThreads(payload, folder),
+        onCached: onCached ?? (_) {},
+        onFresh: (_) {},
+        onCacheMiss: onCacheMiss,
+      );
+      return cached.value;
+    }
+    return _decodeThreads(
+        await _loadFolderPayload(folder, query, page, perPage), folder);
+  }
+
+  Future<Object?> _loadFolderPayload(
+      EmailFolder folder, String query, int page, int perPage) async {
     final statuses = switch (folder) {
       EmailFolder.inbox => const ['open'],
       EmailFolder.pending => const ['pending'],
@@ -314,7 +364,7 @@ class RemoteEmailRepository implements EmailRepository {
       EmailFolder.archived => const ['closed'],
       EmailFolder.starred => const [null],
     };
-    final results = <EmailThread>[];
+    final responses = <Object?>[];
     for (final status in statuses) {
       final response = await _api.get('/tickets', queryParameters: {
         'source': 'email',
@@ -325,10 +375,21 @@ class RemoteEmailRepository implements EmailRepository {
         if (folder == EmailFolder.starred) 'priority': 'urgent',
         if (query.trim().isNotEmpty) 'search': query.trim(),
       });
-      final data = response is Map ? response['data'] : null;
-      if (data is List) {
-        results.addAll(
-            data.whereType<Map>().map((item) => _summary(_map(item), folder)));
+      responses.add(response);
+    }
+    return responses;
+  }
+
+  List<EmailThread> _decodeThreads(Object? payload, EmailFolder folder) {
+    final results = <EmailThread>[];
+    if (payload is List) {
+      for (final response in payload) {
+        final data = response is Map ? response['data'] : null;
+        if (data is List) {
+          results.addAll(data
+              .whereType<Map>()
+              .map((item) => _summary(_map(item), folder)));
+        }
       }
     }
     final deduped = <String, EmailThread>{
@@ -370,13 +431,42 @@ class RemoteEmailRepository implements EmailRepository {
   }
 
   @override
-  Future<EmailThread> loadThread(String id) async {
-    final ticketResponse = await _api.get('/tickets/$id');
-    final ticket =
-        _map(ticketResponse is Map ? ticketResponse['ticket'] : null);
-    final timelineResponse = await _api.get('/tickets/$id/timeline');
-    final timeline =
-        timelineResponse is Map ? timelineResponse['timeline'] : null;
+  Future<EmailThread> loadThread(String id,
+      {void Function(EmailThread)? onCached,
+      void Function()? onCacheMiss}) async {
+    final scope = _readScope?.call();
+    final cache = _cache;
+    if (scope != null && cache != null) {
+      return (await CacheFirstJsonLoader(cache).load<EmailThread>(
+        scope: scope,
+        module: 'email',
+        key: 'thread:$id',
+        expectedEpoch: cache.writeEpoch,
+        fetch: () async => {
+          'ticket': await _api.get('/tickets/$id'),
+          'timeline': await _api.get('/tickets/$id/timeline'),
+        },
+        decode: (payload) => _decodeThread(payload, id),
+        onCached: onCached ?? (_) {},
+        onFresh: (_) {},
+        onCacheMiss: onCacheMiss,
+      ))
+          .value;
+    }
+    return _decodeThread({
+      'ticket': await _api.get('/tickets/$id'),
+      'timeline': await _api.get('/tickets/$id/timeline'),
+    }, id);
+  }
+
+  EmailThread _decodeThread(Object? payload, String id) {
+    final root = _map(payload);
+    final ticketResponse = _map(root['ticket']);
+    final ticket = _map(ticketResponse['ticket']).isEmpty
+        ? ticketResponse
+        : _map(ticketResponse['ticket']);
+    final timelineResponse = _map(root['timeline']);
+    final timeline = timelineResponse['timeline'];
     final base =
         _summary(ticket, _folderForStatus(ticket['status']?.toString()));
     final messages = timeline is List
@@ -471,8 +561,15 @@ class RemoteEmailRepository implements EmailRepository {
   }
 }
 
-final emailRepositoryProvider = Provider<EmailRepository>(
-    (ref) => RemoteEmailRepository(ref.read(apiServiceProvider)));
+final emailRepositoryProvider = Provider<EmailRepository>((ref) {
+  final user = ref.watch(authSessionControllerProvider).session?.user;
+  if (!dotenv.isInitialized) return const LocalEmailRepository();
+  final api = ref.read(apiServiceProvider);
+  if (api.baseUrl.isEmpty) return const LocalEmailRepository();
+  return RemoteEmailRepository(api,
+      cache: ref.watch(responseCacheProvider),
+      readScope: user == null ? null : () => ResponseCacheScope.fromUser(user));
+});
 
 class EmailStoreState {
   const EmailStoreState(
@@ -492,17 +589,71 @@ final emailStoreProvider =
     NotifierProvider<EmailStore, EmailStoreState>(EmailStore.new);
 
 class EmailStore extends Notifier<EmailStoreState> {
+  String? _scope;
+  var _scopeGeneration = 0;
+  var _folderGeneration = 0;
+  final _threadGenerations = <String, int>{};
+
   @override
-  EmailStoreState build() => EmailStoreState(threads: _emailFixtures);
+  EmailStoreState build() {
+    final auth = ref.watch(authSessionControllerProvider);
+    final nextScope = auth.session == null
+        ? 'anonymous'
+        : '${auth.session!.user.id}:${auth.session!.user.activeWorkspace?.id ?? 'none'}';
+    if (_scope != null && _scope != nextScope) {
+      _scopeGeneration++;
+      _folderGeneration++;
+      _threadGenerations.clear();
+    }
+    _scope = nextScope;
+    final repository = ref.watch(emailRepositoryProvider);
+    return EmailStoreState(
+        threads:
+            repository is LocalEmailRepository ? _emailFixtures : const []);
+  }
+
   Future<void> loadFolder(EmailFolder folder, {String query = ''}) async {
+    final generation = ++_folderGeneration;
+    final scopeGeneration = _scopeGeneration;
+    var hadCachedValue = false;
     state = EmailStoreState(
         threads: state.threads, loading: true, loadedFolder: folder);
     try {
-      final threads = await ref
-          .read(emailRepositoryProvider)
-          .loadFolder(folder, query: query);
+      final threads = await ref.read(emailRepositoryProvider).loadFolder(
+        folder,
+        query: query,
+        onCacheMiss: () {
+          if (generation == _folderGeneration &&
+              scopeGeneration == _scopeGeneration &&
+              state.threads.isEmpty) {
+            state = EmailStoreState(
+                threads: const [], loading: true, loadedFolder: folder);
+          }
+        },
+        onCached: (cached) {
+          if (generation != _folderGeneration ||
+              scopeGeneration != _scopeGeneration) {
+            return;
+          }
+          hadCachedValue = true;
+          state = EmailStoreState(
+              threads: cached, loading: true, loadedFolder: folder);
+        },
+      );
+      if (generation != _folderGeneration ||
+          scopeGeneration != _scopeGeneration) {
+        return;
+      }
       state = EmailStoreState(threads: threads, loadedFolder: folder);
     } catch (error) {
+      if (generation != _folderGeneration ||
+          scopeGeneration != _scopeGeneration) {
+        return;
+      }
+      if (hadCachedValue) {
+        state = EmailStoreState(threads: state.threads, loadedFolder: folder);
+        return;
+      }
       state = EmailStoreState(
           threads: state.threads, error: error, loadedFolder: folder);
     }
@@ -556,8 +707,39 @@ class EmailStore extends Notifier<EmailStoreState> {
   }
 
   Future<void> loadThread(String id) async {
-    final thread = await ref.read(emailRepositoryProvider).loadThread(id);
-    _replace(id, (_) => thread);
+    final generation = (_threadGenerations[id] ?? 0) + 1;
+    _threadGenerations[id] = generation;
+    final scopeGeneration = _scopeGeneration;
+    var hadCachedValue = false;
+    try {
+      final thread = await ref.read(emailRepositoryProvider).loadThread(
+        id,
+        onCacheMiss: () {},
+        onCached: (cached) {
+          if (generation != _threadGenerations[id] ||
+              scopeGeneration != _scopeGeneration) {
+            return;
+          }
+          hadCachedValue = true;
+          _upsertThread(cached);
+        },
+      );
+      if (generation == _threadGenerations[id] &&
+          scopeGeneration == _scopeGeneration) {
+        _upsertThread(thread);
+      }
+    } catch (_) {
+      if (!hadCachedValue) rethrow;
+    }
+  }
+
+  void _upsertThread(EmailThread thread) {
+    final exists = state.threads.any((item) => item.id == thread.id);
+    state = EmailStoreState(threads: [
+      for (final item in state.threads)
+        if (item.id != thread.id) item,
+      if (!exists) thread,
+    ], loadedFolder: state.loadedFolder);
   }
 
   Future<EmailThread> createRemote(
@@ -585,7 +767,7 @@ class EmailPageState {
     this.searchActive = false,
     this.query = '',
     List<EmailThread>? threads,
-  }) : threads = threads ?? _emailFixtures;
+  }) : threads = threads ?? const [];
   final EmailFolder folder;
   final bool searchActive;
   final String query;
@@ -594,10 +776,10 @@ class EmailPageState {
       .where((item) => item.folders.contains(folder) && item.unread)
       .length;
   String get subtitle => switch (folder) {
-        EmailFolder.inbox => '21 messages · 11 unread',
-        EmailFolder.pending => '2 messages',
-        EmailFolder.sent => '2 messages',
-        EmailFolder.starred => '2 messages',
+        EmailFolder.inbox => '${threads.length} messages',
+        EmailFolder.pending => '${threads.length} messages',
+        EmailFolder.sent => '${threads.length} messages',
+        EmailFolder.starred => '${threads.length} messages',
         EmailFolder.archived => '2 messages',
       };
   List<EmailThread> get filteredMessages => filteredThreads;

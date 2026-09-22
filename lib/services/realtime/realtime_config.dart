@@ -27,7 +27,10 @@ class RealtimeConfig {
   final String? httpAuthEndpoint;
 
   static RealtimeConfig fromEnv([Map<String, String>? override]) {
-    final env = override ?? dotenv.env;
+    // Riverpod widgets and repository tests can be created before the app's
+    // dotenv bootstrap. Treat that state as disabled development realtime,
+    // rather than throwing while building an unrelated screen.
+    final env = override ?? (dotenv.isInitialized ? dotenv.env : const {});
     String read(String key, String fallback) {
       final value = env[key];
       if (value == null || value.trim().isEmpty) return fallback;

@@ -8,21 +8,47 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import '../../components/call_experience/call_session_controller.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../customer_editor_page/customer_editor_page_model.dart';
-import '../tickets_page/tickets_page_model.dart';
 import 'customer_details_page_model.dart';
 
 export 'customer_details_page_model.dart';
 
-class CustomerDetailsPageWidget extends ConsumerWidget {
-  const CustomerDetailsPageWidget({super.key, required this.customerId});
+class CustomerDetailsPageWidget extends ConsumerStatefulWidget {
+  const CustomerDetailsPageWidget(
+      {super.key, required this.customerId, this.initialCustomer});
 
   final String customerId;
+  final CustomerRecord? initialCustomer;
   static const routeName = 'CustomerDetailsPage';
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CustomerDetailsPageWidget> createState() =>
+      _CustomerDetailsPageWidgetState();
+}
+
+class _CustomerDetailsPageWidgetState
+    extends ConsumerState<CustomerDetailsPageWidget> {
+  @override
+  void initState() {
+    super.initState();
+    final customer = widget.initialCustomer;
+    if (customer != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref.read(customersStoreProvider.notifier).upsert(customer);
+          ref
+              .read(customerDetailProvider(customerId: widget.customerId)
+                  .notifier)
+              .seedCustomer(customer);
+        }
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = FlutterFlowTheme.of(context);
-    final state = ref.watch(customerDetailProvider(customerId: customerId));
+    final state =
+        ref.watch(customerDetailProvider(customerId: widget.customerId));
     if (state.notFound) {
       return Scaffold(
         backgroundColor: theme.primaryBackground,
@@ -52,7 +78,40 @@ class CustomerDetailsPageWidget extends ConsumerWidget {
       );
     }
 
-    final customer = state.customer!;
+    final customer = state.customer ?? widget.initialCustomer;
+    if (customer == null) {
+      return Scaffold(
+        backgroundColor: theme.primaryBackground,
+        body: SafeArea(
+          child: CustomScrollView(slivers: [
+            SliverToBoxAdapter(
+              child: Row(children: [
+                IconButton(
+                  tooltip: 'Back',
+                  onPressed: context.pop,
+                  icon: Icon(IconsaxPlusBroken.arrow_left_2,
+                      color: theme.primaryText),
+                ),
+                const Text('Customer'),
+              ]),
+            ),
+            SliverToBoxAdapter(child: _ProfileSkeleton(theme: theme)),
+            if (state.error != null)
+              SliverToBoxAdapter(
+                child: _InlineFailure(
+                  message: state.error!,
+                  onRetry: () => ref
+                      .read(
+                          customerDetailProvider(customerId: widget.customerId)
+                              .notifier)
+                      .load(),
+                  theme: theme,
+                ),
+              ),
+          ]),
+        ),
+      );
+    }
     return Scaffold(
       backgroundColor: theme.primaryBackground,
       body: SafeArea(
@@ -65,7 +124,8 @@ class CustomerDetailsPageWidget extends ConsumerWidget {
                 theme: theme,
                 customer: customer,
                 onBack: context.pop,
-                onEdit: () => context.push('/customers/$customerId/edit'),
+                onEdit: () =>
+                    context.push('/customers/${widget.customerId}/edit'),
                 onDownload: () => _showComingSoon(context),
               ),
             ),
@@ -99,23 +159,43 @@ class CustomerDetailsPageWidget extends ConsumerWidget {
                 ),
               ),
             ),
+            if (state.error != null)
+              SliverToBoxAdapter(
+                child: _InlineFailure(
+                  message: state.error!,
+                  onRetry: () => ref
+                      .read(
+                          customerDetailProvider(customerId: widget.customerId)
+                              .notifier)
+                      .load(),
+                  theme: theme,
+                ),
+              ),
             SliverToBoxAdapter(
                 child: _Section(
                     theme: theme,
                     title: 'Details',
-                    child: _DetailsSection(customer: customer, theme: theme))),
+                    child: _DetailsSection(
+                        customer: customer,
+                        loading: state.loading,
+                        theme: theme))),
             SliverToBoxAdapter(
                 child: _Section(
                     theme: theme,
                     title: 'Tickets',
-                    child:
-                        _TicketsSection(tickets: state.tickets, theme: theme))),
+                    child: _TicketsSection(
+                        tickets: state.tickets,
+                        loading: state.loading,
+                        theme: theme))),
             SliverToBoxAdapter(
                 child: _Section(
                     theme: theme,
                     title: 'Recent activity',
                     child: _ActivitySection(
-                        activities: state.activities, theme: theme))),
+                        tickets: state.tickets,
+                        callLogs: state.callLogs,
+                        loading: state.loading,
+                        theme: theme))),
             const SliverToBoxAdapter(child: SizedBox(height: 36)),
           ],
         ),
@@ -367,8 +447,10 @@ class _Section extends StatelessWidget {
 }
 
 class _DetailsSection extends StatelessWidget {
-  const _DetailsSection({required this.customer, required this.theme});
+  const _DetailsSection(
+      {required this.customer, required this.loading, required this.theme});
   final CustomerRecord customer;
+  final bool loading;
   final FlutterFlowTheme theme;
 
   @override
@@ -378,8 +460,22 @@ class _DetailsSection extends StatelessWidget {
       rows.add(
           _InfoRow(label: 'Company', value: customer.company, theme: theme));
     }
-    if (customer.notes.trim().isNotEmpty) {
-      rows.add(_InfoRow(label: 'Notes', value: customer.notes, theme: theme));
+    if (customer.ticketsCount != null) {
+      rows.add(_InfoRow(
+          label: 'Tickets', value: '${customer.ticketsCount}', theme: theme));
+    }
+    if (customer.createdAt != null) {
+      rows.add(_InfoRow(
+          label: 'Customer since',
+          value: _dateLabel(customer.createdAt!),
+          theme: theme));
+    }
+    if (rows.isEmpty && loading) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _DetailSkeletonLine(theme: theme, width: 100),
+        const SizedBox(height: 14),
+        _DetailSkeletonLine(theme: theme, width: 160),
+      ]);
     }
     if (rows.isEmpty) {
       return Text('No additional details',
@@ -420,12 +516,32 @@ class _InfoRow extends StatelessWidget {
 }
 
 class _TicketsSection extends StatelessWidget {
-  const _TicketsSection({required this.tickets, required this.theme});
+  const _TicketsSection(
+      {required this.tickets, required this.loading, required this.theme});
   final List<CustomerDetailTicket> tickets;
+  final bool loading;
   final FlutterFlowTheme theme;
 
   @override
   Widget build(BuildContext context) {
+    if (tickets.isEmpty && loading) {
+      return Column(children: [
+        for (var i = 0; i < 3; i++) ...[
+          if (i > 0) Divider(height: 1, color: theme.alternate),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              _DetailSkeletonLine(theme: theme, width: 82),
+              const SizedBox(height: 7),
+              _DetailSkeletonLine(theme: theme, width: 218),
+              const SizedBox(height: 7),
+              _DetailSkeletonLine(theme: theme, width: 156),
+            ]),
+          ),
+        ],
+      ]);
+    }
     if (tickets.isEmpty) {
       return _MutedText(theme: theme, text: 'No tickets yet');
     }
@@ -434,13 +550,14 @@ class _TicketsSection extends StatelessWidget {
         for (final ticket in tickets)
           _DenseRow(
             theme: theme,
-            title: ticket.id,
+            title: ticket.displayNumber,
             subtitle: ticket.subject,
             metadata:
-                '${_statusLabel(ticket.status)} · ${_priorityLabel(ticket.priority)} · ${ticket.department}',
-            trailing: _statusLabel(ticket.status),
+                '${_humanize(ticket.status)} · ${_humanize(ticket.priority)} · ${_humanize(ticket.source)}',
+            trailing: _humanize(ticket.status),
             trailingColor: _statusColor(ticket.status, theme),
-            onTap: () => _showComingSoon(context),
+            onTap: () =>
+                context.push('/tickets/${Uri.encodeComponent(ticket.id)}'),
           ),
       ],
     );
@@ -448,27 +565,83 @@ class _TicketsSection extends StatelessWidget {
 }
 
 class _ActivitySection extends StatelessWidget {
-  const _ActivitySection({required this.activities, required this.theme});
-  final List<CustomerActivity> activities;
+  const _ActivitySection(
+      {required this.tickets,
+      required this.callLogs,
+      required this.loading,
+      required this.theme});
+  final List<CustomerDetailTicket> tickets;
+  final List<CustomerDetailCallLog> callLogs;
+  final bool loading;
   final FlutterFlowTheme theme;
 
   @override
   Widget build(BuildContext context) {
-    if (activities.isEmpty) {
+    if (tickets.isEmpty && callLogs.isEmpty && loading) {
+      return Column(children: [
+        for (var i = 0; i < 3; i++) ...[
+          if (i > 0) Divider(height: 1, color: theme.alternate),
+          Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Row(children: [
+                _DetailSkeletonLine(
+                    theme: theme, width: 30, height: 30, radius: 10),
+                const SizedBox(width: 12),
+                Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      _DetailSkeletonLine(theme: theme, width: 132),
+                      const SizedBox(height: 7),
+                      _DetailSkeletonLine(theme: theme, width: 196),
+                    ])),
+              ])),
+        ],
+      ]);
+    }
+    if (tickets.isEmpty && callLogs.isEmpty) {
       return _MutedText(theme: theme, text: 'No recent activity');
     }
+    final entries = <({DateTime? at, Widget row})>[
+      for (final ticket in tickets)
+        (
+          at: ticket.createdAt,
+          row: _DenseRow(
+            theme: theme,
+            icon: IconsaxPlusBroken.ticket,
+            title: ticket.subject,
+            subtitle: '${ticket.displayNumber} · ${_humanize(ticket.status)}',
+            metadata: _dateLabel(ticket.createdAt),
+            onTap: () =>
+                context.push('/tickets/${Uri.encodeComponent(ticket.id)}'),
+          )
+        ),
+      for (final call in callLogs)
+        (
+          at: call.createdAt,
+          row: _DenseRow(
+            theme: theme,
+            icon: IconsaxPlusBroken.call,
+            title:
+                '${_humanize(call.direction)} call · ${_humanize(call.status)}',
+            subtitle:
+                call.fromNumber.isNotEmpty ? call.fromNumber : call.toNumber,
+            metadata: [
+              if (call.durationSeconds != null)
+                _durationLabel(call.durationSeconds!),
+              if (call.agentName != null) 'by ${call.agentName}',
+              call.recordingUrl == null
+                  ? 'No recording'
+                  : 'Recording available',
+              _dateLabel(call.createdAt),
+            ].where((value) => value.isNotEmpty).join(' · '),
+          )
+        ),
+    ]..sort((a, b) => (b.at ?? DateTime.fromMillisecondsSinceEpoch(0))
+        .compareTo(a.at ?? DateTime.fromMillisecondsSinceEpoch(0)));
     return Column(
       children: [
-        for (final activity in activities)
-          _DenseRow(
-            theme: theme,
-            icon: _activityIcon(activity.channel),
-            title: activity.title,
-            subtitle: activity.preview,
-            metadata: [activity.timestamp, activity.duration, activity.ticketId]
-                .whereType<String>()
-                .join(' · '),
-          ),
+        for (final entry in entries) entry.row,
       ],
     );
   }
@@ -575,31 +748,126 @@ class _MutedText extends StatelessWidget {
       );
 }
 
-IconData _activityIcon(CustomerActivityChannel channel) => switch (channel) {
-      CustomerActivityChannel.call => IconsaxPlusBroken.call,
-      CustomerActivityChannel.chat => IconsaxPlusBroken.messages,
-      CustomerActivityChannel.email => IconsaxPlusBroken.sms,
-      CustomerActivityChannel.ticket => IconsaxPlusBroken.ticket,
+String _humanize(String value) => value
+    .replaceAll('_', ' ')
+    .split(' ')
+    .where((part) => part.isNotEmpty)
+    .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+    .join(' ');
+
+Color _statusColor(String status, FlutterFlowTheme theme) =>
+    switch (status.toLowerCase()) {
+      'resolved' || 'closed' => theme.success,
+      'in_progress' || 'pending' => theme.primary,
+      'overdue' || 'escalated' => theme.error,
+      _ => theme.primaryText,
     };
 
-String _statusLabel(TicketStatus status) => switch (status) {
-      TicketStatus.open => 'Open',
-      TicketStatus.inProgress => 'In progress',
-      TicketStatus.overdue => 'Overdue',
-      TicketStatus.escalated => 'Escalated',
-      TicketStatus.resolved => 'Resolved',
-    };
+String _dateLabel(DateTime? date) {
+  if (date == null) return 'Date unavailable';
+  final local = date.toLocal();
+  return '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}/${local.year}';
+}
 
-String _priorityLabel(TicketPriority priority) => switch (priority) {
-      TicketPriority.low => 'Low',
-      TicketPriority.medium => 'Medium',
-      TicketPriority.high => 'High',
-    };
+String _durationLabel(int seconds) => '${seconds ~/ 60}m ${seconds % 60}s';
 
-Color _statusColor(TicketStatus status, FlutterFlowTheme theme) =>
-    switch (status) {
-      TicketStatus.overdue || TicketStatus.escalated => theme.error,
-      TicketStatus.inProgress => theme.primary,
-      TicketStatus.resolved => theme.success,
-      TicketStatus.open => theme.primaryText,
-    };
+class _DetailSkeletonLine extends StatefulWidget {
+  const _DetailSkeletonLine(
+      {required this.theme,
+      required this.width,
+      this.height = 11,
+      this.radius = 5});
+  final FlutterFlowTheme theme;
+  final double width;
+  final double height;
+  final double radius;
+
+  @override
+  State<_DetailSkeletonLine> createState() => _DetailSkeletonLineState();
+}
+
+class _DetailSkeletonLineState extends State<_DetailSkeletonLine>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ExcludeSemantics(
+        child: SizedBox(
+          width: widget.width,
+          height: widget.height,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(widget.radius),
+            child: MediaQuery.disableAnimationsOf(context)
+                ? ColoredBox(
+                    color: widget.theme.alternate.withValues(alpha: .65))
+                : AnimatedBuilder(
+                    animation: _controller,
+                    builder: (context, _) => DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment(-1.5 + 3 * _controller.value, 0),
+                          end: Alignment(-.5 + 3 * _controller.value, 0),
+                          colors: [
+                            widget.theme.alternate.withValues(alpha: .55),
+                            widget.theme.secondaryBackground,
+                            widget.theme.alternate.withValues(alpha: .55),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+          ),
+        ),
+      );
+}
+
+class _ProfileSkeleton extends StatelessWidget {
+  const _ProfileSkeleton({required this.theme});
+  final FlutterFlowTheme theme;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 28, 20, 8),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.center, children: [
+          _DetailSkeletonLine(theme: theme, width: 64, height: 64, radius: 32),
+          const SizedBox(height: 12),
+          _DetailSkeletonLine(theme: theme, width: 180, height: 22, radius: 6),
+          const SizedBox(height: 8),
+          _DetailSkeletonLine(theme: theme, width: 210, height: 14),
+          const SizedBox(height: 24),
+          for (var i = 0; i < 4; i++) ...[
+            _DetailSkeletonLine(theme: theme, width: 240, height: 14),
+            const SizedBox(height: 16),
+          ],
+        ]),
+      );
+}
+
+class _InlineFailure extends StatelessWidget {
+  const _InlineFailure(
+      {required this.message, required this.onRetry, required this.theme});
+  final String message;
+  final VoidCallback onRetry;
+  final FlutterFlowTheme theme;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+        child: Row(children: [
+          Expanded(
+              child: Text(message,
+                  style: theme.bodySmall.override(
+                      fontFamily: theme.bodySmallFamily, color: theme.error))),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
+        ]),
+      );
+}

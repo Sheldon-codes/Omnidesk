@@ -49,7 +49,7 @@ class _TicketEditorPageWidgetState
   @override
   Widget build(BuildContext context) {
     final theme = FlutterFlowTheme.of(context);
-    final provider = ticketEditorNotifierProvider(ticketId: widget.ticketId);
+    final provider = ticketEditorProvider(ticketId: widget.ticketId);
     final state = ref.watch(provider);
     final notifier = ref.read(provider.notifier);
     if (_editing && state.initial == null) {
@@ -244,8 +244,8 @@ class _TicketEditorPageWidgetState
 
   Future<void> _save() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    final notifier = ref
-        .read(ticketEditorNotifierProvider(ticketId: widget.ticketId).notifier);
+    final notifier =
+        ref.read(ticketEditorProvider(ticketId: widget.ticketId).notifier);
     final result = await notifier.submit();
     if (result == null || !mounted) return;
     ScaffoldMessenger.of(context)
@@ -258,8 +258,7 @@ class _TicketEditorPageWidgetState
         MaterialPageRoute(builder: (_) => _CustomerPicker()));
     if (result != null && mounted) {
       ref
-          .read(
-              ticketEditorNotifierProvider(ticketId: widget.ticketId).notifier)
+          .read(ticketEditorProvider(ticketId: widget.ticketId).notifier)
           .setCustomer(
               id: result.id,
               name: result.name,
@@ -275,8 +274,7 @@ class _TicketEditorPageWidgetState
             ])));
     if (result != null && mounted) {
       ref
-          .read(
-              ticketEditorNotifierProvider(ticketId: widget.ticketId).notifier)
+          .read(ticketEditorProvider(ticketId: widget.ticketId).notifier)
           .setAgent(result);
     }
   }
@@ -285,21 +283,18 @@ class _TicketEditorPageWidgetState
     final result = await _pick('Department', ticketDepartments);
     if (result != null && mounted) {
       ref
-          .read(
-              ticketEditorNotifierProvider(ticketId: widget.ticketId).notifier)
+          .read(ticketEditorProvider(ticketId: widget.ticketId).notifier)
           .setDepartment(result);
     }
   }
 
   Future<void> _selectCategory() async {
-    final state =
-        ref.read(ticketEditorNotifierProvider(ticketId: widget.ticketId));
+    final state = ref.read(ticketEditorProvider(ticketId: widget.ticketId));
     final result = await _pick(
         'Category', ticketCategoriesByDepartment[state.department]!);
     if (result != null && mounted) {
       ref
-          .read(
-              ticketEditorNotifierProvider(ticketId: widget.ticketId).notifier)
+          .read(ticketEditorProvider(ticketId: widget.ticketId).notifier)
           .setCategory(result);
     }
   }
@@ -309,8 +304,7 @@ class _TicketEditorPageWidgetState
         'Priority', TicketPriority.values.map((item) => item.label).toList());
     if (result != null && mounted) {
       ref
-          .read(
-              ticketEditorNotifierProvider(ticketId: widget.ticketId).notifier)
+          .read(ticketEditorProvider(ticketId: widget.ticketId).notifier)
           .setPriority(
               TicketPriority.values.firstWhere((item) => item.label == result));
     }
@@ -326,8 +320,7 @@ class _TicketEditorPageWidgetState
         await _pick('Status', values.map((item) => item.label).toList());
     if (result != null && mounted) {
       ref
-          .read(
-              ticketEditorNotifierProvider(ticketId: widget.ticketId).notifier)
+          .read(ticketEditorProvider(ticketId: widget.ticketId).notifier)
           .setStatus(values.firstWhere((item) => item.label == result));
     }
   }
@@ -341,11 +334,11 @@ class _TicketEditorPageWidgetState
       'No issue found'
     ]);
     if (result != null && mounted) {
-      final notifier = ref.read(
-          ticketEditorNotifierProvider(ticketId: widget.ticketId).notifier);
+      final notifier =
+          ref.read(ticketEditorProvider(ticketId: widget.ticketId).notifier);
       notifier.selectTemplate(result);
       _resolution.text = ref
-          .read(ticketEditorNotifierProvider(ticketId: widget.ticketId))
+          .read(ticketEditorProvider(ticketId: widget.ticketId))
           .resolutionNote;
     }
   }
@@ -356,8 +349,7 @@ class _TicketEditorPageWidgetState
               title: title,
               items: [for (final value in values) (value, null)])));
   Future<void> _delete() async {
-    final state =
-        ref.read(ticketEditorNotifierProvider(ticketId: widget.ticketId));
+    final state = ref.read(ticketEditorProvider(ticketId: widget.ticketId));
     final approved = await showDialog<bool>(
         context: context,
         builder: (_) => AlertDialog(

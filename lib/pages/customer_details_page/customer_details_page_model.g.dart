@@ -20,7 +20,7 @@ final class CustomerDetailNotifierProvider
       : super(
           retry: null,
           name: r'customerDetailProvider',
-          isAutoDispose: true,
+          isAutoDispose: false,
           dependencies: null,
           $allTransitiveDependencies: null,
         );
@@ -60,7 +60,7 @@ final class CustomerDetailNotifierProvider
 }
 
 String _$customerDetailNotifierHash() =>
-    r'52f4918f2e242ecdf472a6753e4e4503f099a4a1';
+    r'470d1bb96810c5bab2e7427ea90f9cb1af5b08e6';
 
 final class CustomerDetailNotifierFamily extends $Family
     with
@@ -72,7 +72,7 @@ final class CustomerDetailNotifierFamily extends $Family
           name: r'customerDetailProvider',
           dependencies: null,
           $allTransitiveDependencies: null,
-          isAutoDispose: true,
+          isAutoDispose: false,
         );
 
   CustomerDetailNotifierProvider call({

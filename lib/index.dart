@@ -13,6 +13,7 @@ export '/pages/phone_page/phone_page_widget.dart';
 export '/pages/profile_page/profile_page_widget.dart';
 export '/pages/customer_editor_page/customer_editor_page_widget.dart';
 export '/pages/customer_details_page/customer_details_page_widget.dart';
+export '/pages/customers_page/customers_page_widget.dart';
 export '/pages/reset_password_page/reset_password_page_widget.dart';
 export '/pages/splash_screen/splash_screen_widget.dart';
 export '/pages/tickets_page/tickets_page_widget.dart';

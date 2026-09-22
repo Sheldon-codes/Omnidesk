@@ -11,6 +11,7 @@ import '../../services/realtime/realtime_event.dart';
 import '../../services/realtime/realtime_service.dart';
 import '../../services/realtime/whatsapp_message_mapper.dart';
 import '../../services/realtime/whatsapp_outbox.dart';
+import '../../services/response_cache.dart';
 import 'conversation_room_page_model.dart';
 
 class WhatsAppInboxState {
@@ -118,13 +119,20 @@ class GroupChatAgent {
 class GroupAgentsUnsupported implements Exception {
   const GroupAgentsUnsupported();
   @override
-  String toString() => 'Group agent management is not available on this server.';
+  String toString() =>
+      'Group agent management is not available on this server.';
 }
 
 class WhatsAppRepository {
-  WhatsAppRepository(this._api) : _mapper = const WhatsAppMessageMapper();
+  WhatsAppRepository(this._api,
+      {ResponseCache? cache, ResponseCacheScope? Function()? readScope})
+      : _mapper = const WhatsAppMessageMapper(),
+        _cache = cache,
+        _readScope = readScope;
   final ApiService _api;
   final WhatsAppMessageMapper _mapper;
+  final ResponseCache? _cache;
+  final ResponseCacheScope? Function()? _readScope;
 
   static const maxMediaBytes = 15 * 1024 * 1024;
 
@@ -142,8 +150,17 @@ class WhatsAppRepository {
     required ChatConversationStatus status,
     required String query,
     required int page,
+    void Function(
+            ({
+              List<ConversationThread> threads,
+              int page,
+              int lastPage,
+              int total
+            }))?
+        onCached,
+    void Function()? onCacheMiss,
   }) async {
-    final response = await _api.get('/tickets', queryParameters: {
+    final params = {
       'source': 'whatsapp',
       'assigned': 'me',
       'page': page,
@@ -151,7 +168,28 @@ class WhatsAppRepository {
       if (status == ChatConversationStatus.open) 'status': 'open_all',
       if (status == ChatConversationStatus.resolved) 'status': 'closed_all',
       if (query.trim().isNotEmpty) 'search': query.trim(),
-    });
+    };
+    final cache = _cache;
+    final scope = _readScope?.call();
+    if (cache != null && scope != null) {
+      return (await CacheFirstJsonLoader(cache).load(
+        scope: scope,
+        module: 'whatsapp',
+        key: 'inbox:${stableCacheQueryKey(params)}',
+        expectedEpoch: cache.writeEpoch,
+        fetch: () => _api.get('/tickets', queryParameters: params),
+        decode: _decodeInbox,
+        onCached: onCached ?? (_) {},
+        onFresh: (_) {},
+        onCacheMiss: onCacheMiss,
+      ))
+          .value;
+    }
+    return _decodeInbox(await _api.get('/tickets', queryParameters: params));
+  }
+
+  ({List<ConversationThread> threads, int page, int lastPage, int total})
+      _decodeInbox(Object? response) {
     final root = _map(response);
     final meta = _map(root['meta']);
     final data = root['data'];
@@ -162,18 +200,47 @@ class WhatsAppRepository {
               .map((item) => _mapper.summaryToThread(_map(item)))
               .toList()
           : const <ConversationThread>[],
-      page: (meta['current_page'] as num?)?.toInt() ?? page,
+      page: (meta['current_page'] as num?)?.toInt() ?? 1,
       lastPage: (meta['last_page'] as num?)?.toInt() ?? 1,
       total: (meta['total'] as num?)?.toInt() ?? 0,
     );
   }
 
-  Future<ConversationThread> thread(String id) async {
-    final ticketResponse = _map(await _api.get('/tickets/$id'));
+  Future<ConversationThread> thread(String id,
+      {void Function(ConversationThread)? onCached,
+      void Function()? onCacheMiss}) async {
+    final cache = _cache;
+    final scope = _readScope?.call();
+    if (cache != null && scope != null) {
+      return (await CacheFirstJsonLoader(cache).load(
+        scope: scope,
+        module: 'whatsapp',
+        key: 'thread:$id',
+        expectedEpoch: cache.writeEpoch,
+        fetch: () async => {
+          'ticket': await _api.get('/tickets/$id'),
+          'timeline': await _api.get('/tickets/$id/timeline'),
+        },
+        decode: (payload) => _decodeThread(id, payload),
+        onCached: onCached ?? (_) {},
+        onFresh: (_) {},
+        onCacheMiss: onCacheMiss,
+      ))
+          .value;
+    }
+    return _decodeThread(id, {
+      'ticket': await _api.get('/tickets/$id'),
+      'timeline': await _api.get('/tickets/$id/timeline'),
+    });
+  }
+
+  ConversationThread _decodeThread(String id, Object? payload) {
+    final root = _map(payload);
+    final ticketResponse = _map(root['ticket']);
     final ticket = _map(ticketResponse['ticket']).isEmpty
         ? ticketResponse
         : _map(ticketResponse['ticket']);
-    final timelineResponse = _map(await _api.get('/tickets/$id/timeline'));
+    final timelineResponse = _map(root['timeline']);
     final summary = _mapper.summaryToThread(ticket);
     final timeline = timelineResponse['timeline'];
     final messages = timeline is List
@@ -198,12 +265,57 @@ class WhatsAppRepository {
     final response = _map(await _api
         .get('/tickets/$id/timeline', queryParameters: {'since_id': sinceId}));
     final timeline = response['timeline'];
+    if (timeline is List) {
+      unawaited(mergeTimelineEvents(
+        id,
+        timeline.whereType<Map>().map(_map).toList(growable: false),
+      ));
+    }
     return timeline is List
         ? timeline
             .whereType<Map>()
             .map((item) => _mapper.fromTimeline(_map(item)))
             .toList()
         : const [];
+  }
+
+  Future<void> mergeTimelineEvents(
+      String id, List<Map<String, dynamic>> events) async {
+    final cache = _cache;
+    final scope = _readScope?.call();
+    if (cache == null || scope == null || events.isEmpty) return;
+    await cache.updateJson(
+      scope: scope,
+      module: 'whatsapp',
+      key: 'thread:$id',
+      expectedEpoch: cache.writeEpoch,
+      update: (payload) {
+        if (payload is! Map) return payload;
+        final root = payload.map((key, value) => MapEntry('$key', value));
+        final rawTimeline = root['timeline'];
+        if (rawTimeline is! Map) return payload;
+        final timeline =
+            rawTimeline.map((key, value) => MapEntry('$key', value));
+        final list = timeline['timeline'];
+        if (list is! List) return payload;
+        final rows = list.whereType<Map>().toList();
+        final ids = rows.map((row) => '${row['id']}').toSet();
+        for (final event in events) {
+          if (event['id'] == null || ids.add('${event['id']}')) rows.add(event);
+        }
+        rows.sort((left, right) =>
+            DateTime.tryParse(
+              '${left['created_at'] ?? ''}',
+            )?.compareTo(DateTime.tryParse(
+                  '${right['created_at'] ?? ''}',
+                ) ??
+                DateTime.fromMillisecondsSinceEpoch(0)) ??
+            0);
+        timeline['timeline'] = rows;
+        root['timeline'] = timeline;
+        return root;
+      },
+    );
   }
 
   Future<void> markRead(String id) => _api.post('/tickets/$id/mark-read', {});
@@ -239,8 +351,7 @@ class WhatsAppRepository {
       final bytes = await attachment.readAsBytes();
       if (bytes.lengthInBytes > maxMediaBytes) {
         throw const ApiClientException(
-            message:
-                'Attachment is larger than 15 MB. Choose a smaller file.');
+            message: 'Attachment is larger than 15 MB. Choose a smaller file.');
       }
       body['media_data'] = base64Encode(bytes);
       body['media_type'] = _mimeType(attachment.path);
@@ -258,9 +369,7 @@ class WhatsAppRepository {
     if (entry.isEmpty) {
       final fallback = _map(response['timeline_entry']);
       if (fallback.isEmpty) return null;
-      return '${fallback['id'] ?? ''}'.isEmpty
-          ? null
-          : '${fallback['id']}';
+      return '${fallback['id'] ?? ''}'.isEmpty ? null : '${fallback['id']}';
     }
     return '${entry['id'] ?? ''}'.isEmpty ? null : '${entry['id']}';
   }
@@ -313,11 +422,10 @@ class WhatsAppRepository {
 
   Future<void> removeGroupAgent(String ticketId, String userId) async {
     try {
-      await _api.delete('/tickets/group-agents',
-          body: {
-            'ticket_id': int.tryParse(ticketId) ?? ticketId,
-            'user_id': userId
-          });
+      await _api.delete('/tickets/group-agents', body: {
+        'ticket_id': int.tryParse(ticketId) ?? ticketId,
+        'user_id': userId
+      });
     } on ApiClientException catch (e) {
       if (e.statusCode == 404) throw const GroupAgentsUnsupported();
       rethrow;
@@ -341,8 +449,14 @@ class WhatsAppRepository {
   }
 }
 
-final whatsAppRepositoryProvider = Provider<WhatsAppRepository>(
-    (ref) => WhatsAppRepository(ref.read(apiServiceProvider)));
+final whatsAppRepositoryProvider = Provider<WhatsAppRepository>((ref) {
+  final user = ref.watch(authSessionControllerProvider).session?.user;
+  return WhatsAppRepository(
+    ref.read(apiServiceProvider),
+    cache: ref.watch(responseCacheProvider),
+    readScope: user == null ? null : () => ResponseCacheScope.fromUser(user),
+  );
+});
 
 final whatsAppInboxProvider =
     NotifierProvider<WhatsAppInboxController, WhatsAppInboxState>(
@@ -350,19 +464,37 @@ final whatsAppInboxProvider =
 
 class WhatsAppInboxController extends Notifier<WhatsAppInboxState> {
   int _request = 0;
+  String? _scopeKey;
   StreamSubscription<RealtimeEvent>? _events;
   bool _watching = false;
 
   @override
   WhatsAppInboxState build() {
+    ref.listen(authSessionControllerProvider, (_, next) {
+      Future.microtask(() {
+        if (ref.mounted) _handleScopeChange(next);
+      });
+    }, fireImmediately: true);
     ref.onDispose(() => unawaited(_events?.cancel()));
     return const WhatsAppInboxState();
+  }
+
+  void _handleScopeChange(AuthState auth) {
+    final next = auth.session == null
+        ? 'anonymous'
+        : '${auth.session!.user.id}:${auth.session!.user.activeWorkspace?.id ?? 'none'}';
+    if (next == _scopeKey) return;
+    _scopeKey = next;
+    _request++;
+    unawaited(stopWatching());
+    state = const WhatsAppInboxState();
   }
 
   Future<void> load(
       {ChatConversationStatus status = ChatConversationStatus.all,
       String query = ''}) async {
     final request = ++_request;
+    var hadCachedValue = false;
     state = state.copyWith(
         loading: state.threads.isEmpty,
         refreshing: state.threads.isNotEmpty,
@@ -370,9 +502,30 @@ class WhatsAppInboxController extends Notifier<WhatsAppInboxState> {
         query: query,
         status: status);
     try {
-      final result = await ref
-          .read(whatsAppRepositoryProvider)
-          .inbox(status: status, query: query, page: 1);
+      final result = await ref.read(whatsAppRepositoryProvider).inbox(
+            status: status,
+            query: query,
+            page: 1,
+            onCacheMiss: () {
+              if (request == _request && state.threads.isEmpty) {
+                state = state.copyWith(loading: true, refreshing: false);
+              }
+            },
+            onCached: (cached) {
+              if (request != _request) return;
+              hadCachedValue = true;
+              state = WhatsAppInboxState(
+                threads: cached.threads,
+                page: cached.page,
+                lastPage: cached.lastPage,
+                total: cached.total,
+                query: query,
+                status: status,
+                refreshing: true,
+                live: state.live,
+              );
+            },
+          );
       if (request != _request) return;
       state = WhatsAppInboxState(
           threads: result.threads,
@@ -385,6 +538,11 @@ class WhatsAppInboxController extends Notifier<WhatsAppInboxState> {
       await startWatching();
     } catch (error) {
       if (request != _request) return;
+      if (hadCachedValue) {
+        state =
+            state.copyWith(loading: false, refreshing: false, clearError: true);
+        return;
+      }
       state = state.copyWith(loading: false, refreshing: false, error: error);
     }
   }
@@ -501,7 +659,8 @@ class WhatsAppInboxController extends Notifier<WhatsAppInboxState> {
     final row = payload['ticket'] is Map
         ? Map<String, dynamic>.from(payload['ticket'] as Map)
         : payload;
-    if (row['id'] == null || (row['customer'] is! Map && row['subject'] == null)) {
+    if (row['id'] == null ||
+        (row['customer'] is! Map && row['subject'] == null)) {
       return;
     }
     try {
@@ -511,8 +670,8 @@ class WhatsAppInboxController extends Notifier<WhatsAppInboxState> {
       final threads = List<ConversationThread>.of(state.threads);
       final index = threads.indexWhere((t) => t.conversation.id == id);
       if (index < 0) {
-        state = state.copyWith(
-            threads: [incoming, ...threads], total: state.total + 1);
+        state = state
+            .copyWith(threads: [incoming, ...threads], total: state.total + 1);
       } else {
         final existing = threads[index];
         threads.removeAt(index);
@@ -552,15 +711,38 @@ class WhatsAppThreadController
   final _polling = <String>{};
   final _realtimeSubs = <String, StreamSubscription<RealtimeEvent>>{};
   final _lastTypingAt = <String, DateTime>{};
+  String? _scopeKey;
 
   @override
   Map<String, WhatsAppThreadState> build() {
+    ref.listen(authSessionControllerProvider, (_, next) {
+      Future.microtask(() {
+        if (ref.mounted) _handleScopeChange(next);
+      });
+    }, fireImmediately: true);
     ref.onDispose(() {
       for (final sub in _realtimeSubs.values) {
         unawaited(sub.cancel());
       }
     });
     return {};
+  }
+
+  void _handleScopeChange(AuthState auth) {
+    final next = auth.session == null
+        ? 'anonymous'
+        : '${auth.session!.user.id}:${auth.session!.user.activeWorkspace?.id ?? 'none'}';
+    if (next == _scopeKey) return;
+    _scopeKey = next;
+    for (final id in _realtimeSubs.keys.toList(growable: false)) {
+      unawaited(ref.read(realtimeServiceProvider).unwatchTicket(id));
+    }
+    for (final subscription in _realtimeSubs.values) {
+      unawaited(subscription.cancel());
+    }
+    _realtimeSubs.clear();
+    _polling.clear();
+    state = {};
   }
 
   WhatsAppThreadState? byId(String id) => state[id];
@@ -571,11 +753,32 @@ class WhatsAppThreadController
 
   Future<void> load(String id) async {
     final previous = state[id];
-    _set(id,
-        WhatsAppThreadState(thread: previous?.thread, loading: true, sending: previous?.sending ?? false, live: previous?.live ?? false));
+    final scopeKey = _scopeKey;
+    var hadCachedValue = false;
+    _set(
+        id,
+        WhatsAppThreadState(
+            thread: previous?.thread,
+            loading: true,
+            sending: previous?.sending ?? false,
+            live: previous?.live ?? false));
     try {
-      final thread = await ref.read(whatsAppRepositoryProvider).thread(id);
-      if (!ref.mounted) return;
+      final thread = await ref.read(whatsAppRepositoryProvider).thread(
+        id,
+        onCacheMiss: () {},
+        onCached: (cached) {
+          if (!ref.mounted || scopeKey != _scopeKey) return;
+          hadCachedValue = true;
+          _set(
+              id,
+              WhatsAppThreadState(
+                  thread: cached,
+                  loading: true,
+                  sending: previous?.sending ?? false,
+                  live: previous?.live ?? false));
+        },
+      );
+      if (!ref.mounted || scopeKey != _scopeKey) return;
       _set(id,
           WhatsAppThreadState(thread: thread, live: previous?.live ?? false));
       unawaited(_attachRealtime(id));
@@ -583,9 +786,24 @@ class WhatsAppThreadController
       ref.read(whatsAppInboxProvider.notifier).markLocalRead(id);
       unawaited(flushOutbox(id));
     } catch (error) {
-      if (!ref.mounted) return;
-      _set(id,
-          WhatsAppThreadState(thread: previous?.thread, sending: previous?.sending ?? false, error: error));
+      if (!ref.mounted || scopeKey != _scopeKey) return;
+      if (hadCachedValue) {
+        _set(
+            id,
+            WhatsAppThreadState(
+              thread: state[id]?.thread ?? previous?.thread,
+              sending: previous?.sending ?? false,
+              live: previous?.live ?? false,
+              degraded: true,
+            ));
+        return;
+      }
+      _set(
+          id,
+          WhatsAppThreadState(
+              thread: previous?.thread,
+              sending: previous?.sending ?? false,
+              error: error));
     }
   }
 
@@ -614,8 +832,14 @@ class WhatsAppThreadController
       state = {...state}..remove(id);
       return;
     }
-    _set(id,
-        WhatsAppThreadState(thread: current.thread, sending: current.sending, error: current.error, live: false, degraded: true));
+    _set(
+        id,
+        WhatsAppThreadState(
+            thread: current.thread,
+            sending: current.sending,
+            error: current.error,
+            live: false,
+            degraded: true));
   }
 
   Future<void> _attachRealtime(String id) async {
@@ -629,8 +853,13 @@ class WhatsAppThreadController
     if (!ref.mounted) return;
     final current = state[id];
     if (current != null) {
-      _set(id,
-          WhatsAppThreadState(thread: current.thread, sending: current.sending, error: current.error, live: true));
+      _set(
+          id,
+          WhatsAppThreadState(
+              thread: current.thread,
+              sending: current.sending,
+              error: current.error,
+              live: true));
     }
   }
 
@@ -649,6 +878,9 @@ class WhatsAppThreadController
         final mapper = const WhatsAppMessageMapper();
         final row = Map<String, dynamic>.of(payload);
         row.putIfAbsent('id', () => event.timelineId);
+        unawaited(ref
+            .read(whatsAppRepositoryProvider)
+            .mergeTimelineEvents(id, [row]));
         final message = mapper.fromTimeline(row);
         _append(id, [message]);
         return;
@@ -687,9 +919,18 @@ class WhatsAppThreadController
     final merged = [...base, ...fresh]
       ..sort((a, b) => a.sentAt.compareTo(b.sentAt));
     final last = merged.last;
-    _set(id,
-        WhatsAppThreadState(thread: current.copyWith(messages: merged, conversation: current.conversation.copyWith(preview: conversationMessagePreview(last.content), time: DateFormat.Hm().format(last.sentAt.toLocal()), unreadCount: 0)), live: state[id]?.live ?? false));
-    unawaited(ref.read(whatsAppRepositoryProvider).markRead(id).catchError((_) {}));
+    _set(
+        id,
+        WhatsAppThreadState(
+            thread: current.copyWith(
+                messages: merged,
+                conversation: current.conversation.copyWith(
+                    preview: conversationMessagePreview(last.content),
+                    time: DateFormat.Hm().format(last.sentAt.toLocal()),
+                    unreadCount: 0)),
+            live: state[id]?.live ?? false));
+    unawaited(
+        ref.read(whatsAppRepositoryProvider).markRead(id).catchError((_) {}));
   }
 
   Future<void> _poll(String id) async {
@@ -722,8 +963,16 @@ class WhatsAppThreadController
         final merged = [...withoutOptimistic, ...confirmed]
           ..sort((a, b) => a.sentAt.compareTo(b.sentAt));
         final lastMsg = merged.last;
-        _set(id,
-            WhatsAppThreadState(thread: existing.copyWith(messages: merged, conversation: existing.conversation.copyWith(preview: conversationMessagePreview(lastMsg.content), time: DateFormat.Hm().format(lastMsg.sentAt.toLocal()))), live: state[id]?.live ?? false));
+        _set(
+            id,
+            WhatsAppThreadState(
+                thread: existing.copyWith(
+                    messages: merged,
+                    conversation: existing.conversation.copyWith(
+                        preview: conversationMessagePreview(lastMsg.content),
+                        time:
+                            DateFormat.Hm().format(lastMsg.sentAt.toLocal()))),
+                live: state[id]?.live ?? false));
       }
     } catch (_) {
       // Polling is best effort.
@@ -765,8 +1014,16 @@ class WhatsAppThreadController
       durationSecs: durationSecs,
     );
     if (thread != null) {
-      _set(id,
-          WhatsAppThreadState(thread: thread.copyWith(messages: [...thread.messages, optimistic], conversation: thread.conversation.copyWith(preview: trimmed.isEmpty ? 'Attachment' : trimmed, time: DateFormat.Hm().format(DateTime.now()))), sending: true, live: previous?.live ?? false));
+      _set(
+          id,
+          WhatsAppThreadState(
+              thread: thread.copyWith(
+                  messages: [...thread.messages, optimistic],
+                  conversation: thread.conversation.copyWith(
+                      preview: trimmed.isEmpty ? 'Attachment' : trimmed,
+                      time: DateFormat.Hm().format(DateTime.now()))),
+              sending: true,
+              live: previous?.live ?? false));
     } else {
       _set(id, const WhatsAppThreadState(sending: true));
     }
@@ -794,8 +1051,12 @@ class WhatsAppThreadController
     }
     if (!ref.mounted) return;
     final refreshed = state[id];
-    _set(id,
-        WhatsAppThreadState(thread: refreshed?.thread, error: refreshed?.error, live: refreshed?.live ?? false));
+    _set(
+        id,
+        WhatsAppThreadState(
+            thread: refreshed?.thread,
+            error: refreshed?.error,
+            live: refreshed?.live ?? false));
     unawaited(_poll(id));
   }
 
@@ -813,8 +1074,7 @@ class WhatsAppThreadController
           lower.endsWith('.jpg') ||
           lower.endsWith('.jpeg')) {
         content = ImageMessageContent(
-            assetPath: attachment.path,
-            caption: text.isEmpty ? null : text);
+            assetPath: attachment.path, caption: text.isEmpty ? null : text);
       } else if (lower.endsWith('.mp4')) {
         content = VideoMessageContent(
             assetPath: attachment.path,
@@ -876,13 +1136,16 @@ class WhatsAppThreadController
       final messages = [
         for (final m in current.messages)
           if (m.id == entry.localId)
-            m.copyWith(
-                uploadProgress: total <= 0 ? null : sent / total)
+            m.copyWith(uploadProgress: total <= 0 ? null : sent / total)
           else
             m
       ];
-      _set(entry.ticketId,
-          WhatsAppThreadState(thread: current.copyWith(messages: messages), sending: true, live: state[entry.ticketId]?.live ?? false));
+      _set(
+          entry.ticketId,
+          WhatsAppThreadState(
+              thread: current.copyWith(messages: messages),
+              sending: true,
+              live: state[entry.ticketId]?.live ?? false));
     }
 
     try {
@@ -890,8 +1153,7 @@ class WhatsAppThreadController
             entry.ticketId,
             message: entry.text,
             replyToId: entry.replyToId,
-            attachment:
-                entry.filePath == null ? null : File(entry.filePath!),
+            attachment: entry.filePath == null ? null : File(entry.filePath!),
             durationSecs: entry.durationSecs,
             onProgress: entry.filePath == null ? null : progress,
           );
@@ -899,17 +1161,19 @@ class WhatsAppThreadController
       // Remove optimistic bubble; server truth arrives via realtime/poll.
       final current = state[entry.ticketId]?.thread;
       if (current != null) {
-        final pruned = current.messages
-            .where((m) => m.id != entry.localId)
-            .toList();
-        _set(entry.ticketId,
-            WhatsAppThreadState(thread: current.copyWith(messages: pruned), sending: false, live: state[entry.ticketId]?.live ?? false));
+        final pruned =
+            current.messages.where((m) => m.id != entry.localId).toList();
+        _set(
+            entry.ticketId,
+            WhatsAppThreadState(
+                thread: current.copyWith(messages: pruned),
+                sending: false,
+                live: state[entry.ticketId]?.live ?? false));
       }
     } catch (_) {
       final remaining = await outbox.pending(ticketId: entry.ticketId);
-      final match = remaining
-          .where((e) => e.localId == entry.localId)
-          .firstOrNull;
+      final match =
+          remaining.where((e) => e.localId == entry.localId).firstOrNull;
       await outbox.markFailed(entry.localId, (match?.attempts ?? 0) + 1);
       final current = state[entry.ticketId]?.thread;
       if (current != null) {
@@ -921,8 +1185,12 @@ class WhatsAppThreadController
             else
               m
         ];
-        _set(entry.ticketId,
-            WhatsAppThreadState(thread: current.copyWith(messages: messages), sending: false, live: state[entry.ticketId]?.live ?? false));
+        _set(
+            entry.ticketId,
+            WhatsAppThreadState(
+                thread: current.copyWith(messages: messages),
+                sending: false,
+                live: state[entry.ticketId]?.live ?? false));
       }
       rethrow;
     }
@@ -934,18 +1202,29 @@ class WhatsAppThreadController
     if (current != null) {
       final messages = [
         for (final m in current.messages)
-          if (m.id == localId) m.copyWith(delivery: MessageDelivery.sending) else m
+          if (m.id == localId)
+            m.copyWith(delivery: MessageDelivery.sending)
+          else
+            m
       ];
-      _set(ticketId,
-          WhatsAppThreadState(thread: current.copyWith(messages: messages), sending: true, live: state[ticketId]?.live ?? false));
+      _set(
+          ticketId,
+          WhatsAppThreadState(
+              thread: current.copyWith(messages: messages),
+              sending: true,
+              live: state[ticketId]?.live ?? false));
     }
     try {
       await _deliver(localId);
     } catch (_) {}
     if (!ref.mounted) return;
     final refreshed = state[ticketId];
-    _set(ticketId,
-        WhatsAppThreadState(thread: refreshed?.thread, error: refreshed?.error, live: refreshed?.live ?? false));
+    _set(
+        ticketId,
+        WhatsAppThreadState(
+            thread: refreshed?.thread,
+            error: refreshed?.error,
+            live: refreshed?.live ?? false));
     unawaited(_poll(ticketId));
   }
 
@@ -964,22 +1243,27 @@ class WhatsAppThreadController
                 localId: e.localId,
                 text: e.text ?? '',
                 replyToId: e.replyToId,
-                attachment:
-                    e.filePath == null ? null : File(e.filePath!),
+                attachment: e.filePath == null ? null : File(e.filePath!),
                 durationSecs: e.durationSecs,
               ))
           .toList();
       if (missing.isNotEmpty) {
-        _set(ticketId,
-            WhatsAppThreadState(thread: current.copyWith(messages: [...current.messages, ...missing]), sending: true, live: state[ticketId]?.live ?? false));
+        _set(
+            ticketId,
+            WhatsAppThreadState(
+                thread: current
+                    .copyWith(messages: [...current.messages, ...missing]),
+                sending: true,
+                live: state[ticketId]?.live ?? false));
       }
     }
     for (final entry in pending) {
       if (!ref.mounted) return;
       final wait = WhatsAppOutbox.backoffForAttempt(entry.attempts);
       if (entry.attempts > 0 && entry.attempts < 5) {
-        await Future.delayed(
-            wait > const Duration(seconds: 5) ? const Duration(seconds: 5) : wait);
+        await Future.delayed(wait > const Duration(seconds: 5)
+            ? const Duration(seconds: 5)
+            : wait);
       }
       try {
         await _deliver(entry.localId);

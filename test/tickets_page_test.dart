@@ -1,98 +1,182 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:dio/dio.dart';
+import 'package:go_router/go_router.dart';
+import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:omnidesk_agent/pages/ticket_details_page/ticket_details_page_widget.dart';
 import 'package:omnidesk_agent/pages/tickets_page/tickets_page_widget.dart';
 
-void main() {
-  test('Tickets provider filters status, metadata, and search together', () {
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final notifier = container.read(ticketsPageProvider.notifier);
-    final initial = container.read(ticketsPageProvider);
+class _FakeTicketsRepository implements TicketsRepository {
+  _FakeTicketsRepository({TicketFilterOptions? options})
+      : _options = options ??
+            const TicketFilterOptions(
+              statuses: [
+                TicketFilterOption(value: 'open', label: 'Open'),
+                TicketFilterOption(value: 'in_progress', label: 'In Progress'),
+              ],
+              sources: [
+                TicketFilterOption(value: 'phone', label: 'Phone'),
+              ],
+              priorities: [
+                TicketFilterOption(value: 'urgent', label: 'Urgent'),
+              ],
+              categories: [
+                TicketFilterOption(value: '2', label: 'Billing'),
+              ],
+            );
 
-    expect(initial.selectedStatus, TicketStatus.open);
-    expect(initial.filteredTickets, hasLength(2));
-    expect(initial.filteredTickets.first.id, 'DGKSL-392');
+  final TicketFilterOptions _options;
+  final requests = <TicketQuery>[];
+  final TicketRecord ticket = ticketFixtures.first.copyWith(
+    displayId: '#TKT-392',
+    department: '',
+    description: const TicketDescription(plainText: 'Live ticket details.'),
+  );
 
-    notifier.selectStatus(TicketStatus.overdue);
-    expect(container.read(ticketsPageProvider).filteredTickets.single.id,
-        'DGKSL-378');
+  @override
+  Future<TicketFilterOptions> filters(
+          {CancelToken? cancelToken,
+          void Function(TicketFilterOptions)? onCached,
+          void Function()? onCacheMiss}) async =>
+      _options;
 
-    notifier.applyFilters(
-      status: null,
-      priorities: {TicketPriority.high},
-      departments: {'Finance'},
-      categories: {'Accounting'},
+  @override
+  Future<TicketPageResult> list(TicketQuery query,
+      {CancelToken? cancelToken,
+      void Function(TicketPageResult)? onCached,
+      void Function()? onCacheMiss}) async {
+    requests.add(query);
+    final matches =
+        query.status == null || query.status == ticket.status.apiValue
+            ? [ticket]
+            : <TicketRecord>[];
+    return TicketPageResult(
+      tickets: matches,
+      page: query.page,
+      lastPage: 1,
+      total: matches.length,
     );
-    expect(container.read(ticketsPageProvider).filteredTickets, hasLength(1));
-    notifier.setSearchQuery('373');
-    expect(container.read(ticketsPageProvider).filteredTickets.single.customer,
-        'Nana Betterstream');
+  }
 
-    notifier.closeSearch();
-    expect(container.read(ticketsPageProvider).query, isEmpty);
-    notifier.clearFilters();
-    expect(container.read(ticketsPageProvider).selectedStatus, isNull);
-    expect(container.read(ticketsPageProvider).filteredTickets, hasLength(7));
-  });
+  @override
+  Future<TicketDetailResult> detail(String id,
+          {CancelToken? cancelToken,
+          void Function(TicketDetailResult)? onCached,
+          void Function()? onCacheMiss}) async =>
+      TicketDetailResult(
+        ticket: ticket,
+        activity: [
+          TicketActivity(
+            id: 'event-1',
+            type: TicketActivityType.messageReceived,
+            title: 'Customer message',
+            description: 'Need billing assistance.',
+            timestamp: DateTime.utc(2026, 9, 1),
+          ),
+        ],
+      );
 
-  testWidgets('Tickets page renders tabs, search, and filter sheet',
+  @override
+  Future<void> updateStatus(String id, String status,
+      {String? reason, CancelToken? cancelToken}) async {}
+}
+
+void main() {
+  testWidgets('filter sheet only renders configured fields and always dates',
       (tester) async {
-    await tester.pumpWidget(
-      const ProviderScope(
-        child: MaterialApp(home: TicketsPageWidget()),
+    final repository = _FakeTicketsRepository(
+      options: const TicketFilterOptions(
+        statuses: [
+          TicketFilterOption(value: 'awaiting_vendor', label: 'Awaiting vendor')
+        ],
       ),
     );
-    await tester.pumpAndSettle();
-
-    expect(find.text('Tickets'), findsOneWidget);
-    expect(find.text('7 open · 2 overdue'), findsOneWidget);
-    expect(find.text('DGKSL-392'), findsOneWidget);
-    expect(find.text('All'), findsNothing);
-    expect(find.text('Open'), findsWidgets);
-    expect(find.text('In progress'), findsOneWidget);
-    expect(find.text('Overdue'), findsOneWidget);
-    expect(find.text('Escalated'), findsOneWidget);
-    expect(find.text('Resolved'), findsOneWidget);
-
-    await tester.tap(find.text('Overdue').first);
-    await tester.pumpAndSettle();
-    expect(find.text('DGKSL-378'), findsOneWidget);
-    expect(find.text('DGKSL-392'), findsNothing);
-
-    await tester.tap(find.byTooltip('Search tickets'));
-    await tester.pumpAndSettle();
-    expect(find.text('Search tickets...'), findsOneWidget);
-    await tester.enterText(find.byType(TextField), 'Deborah');
-    await tester.pump();
-    expect(find.text('DGKSL-378'), findsOneWidget);
-
-    await tester.tap(find.byTooltip('Close search').last);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [ticketsRepositoryProvider.overrideWith((ref) => repository)],
+      child: const MaterialApp(home: TicketsPageWidget()),
+    ));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Filter tickets'));
     await tester.pumpAndSettle();
-    expect(find.text('Filter tickets'), findsOneWidget);
-    expect(find.text('Priority'), findsOneWidget);
-    expect(find.text('Department'), findsOneWidget);
-    expect(find.text('Apply'), findsOneWidget);
+
+    expect(find.text('Status'), findsOneWidget);
+    expect(find.text('Date range'), findsOneWidget);
+    expect(find.text('Source'), findsNothing);
+    expect(find.text('Priority'), findsNothing);
+    expect(find.text('Department'), findsNothing);
+    expect(find.text('Category'), findsNothing);
+    expect(find.text('Assignment'), findsNothing);
+    expect(find.text('Awaiting vendor'), findsWidgets);
+
+    await tester.tap(find.byType(InputDecorator).first);
+    await tester.pumpAndSettle();
+    expect(find.text('Awaiting vendor'), findsWidgets);
+    expect(find.byIcon(IconsaxPlusBroken.setting_2), findsWidgets);
   });
 
-  testWidgets('Tickets query status and swipe actions are supported',
+  testWidgets('Tickets list loads live rows and submits dynamic filters',
       (tester) async {
-    await tester.pumpWidget(
-      const ProviderScope(
-        child: MaterialApp(
-          home: TicketsPageWidget(initialStatus: TicketStatus.overdue),
-        ),
-      ),
-    );
+    final repository = _FakeTicketsRepository();
+    await tester.pumpWidget(ProviderScope(
+      overrides: [ticketsRepositoryProvider.overrideWith((ref) => repository)],
+      child: const MaterialApp(home: TicketsPageWidget()),
+    ));
     await tester.pumpAndSettle();
-    expect(find.text('DGKSL-378'), findsOneWidget);
-    expect(find.text('DGKSL-392'), findsNothing);
 
-    await tester.drag(find.text('DGKSL-378'), const Offset(-180, 0));
+    expect(find.text('Tickets'), findsOneWidget);
+    expect(find.text('#TKT-392'), findsOneWidget);
+    expect(repository.requests.first.assignment, 'me');
+    expect(repository.requests.first.status, 'open');
+
+    await tester.tap(find.byTooltip('Filter tickets'));
     await tester.pumpAndSettle();
-    expect(find.text('Resolve'), findsOneWidget);
-    expect(find.text('Assign'), findsOneWidget);
+    expect(find.text('Source'), findsOneWidget);
+    expect(find.text('Priority'), findsOneWidget);
+    expect(find.text('Department'), findsNothing);
+    await tester.drag(find.byType(ListView).last, const Offset(0, -220));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(InputDecorator).at(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Phone').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Apply'));
+    await tester.pumpAndSettle();
+
+    expect(repository.requests.last.source, 'phone');
+  });
+
+  testWidgets('ticket list opens standalone detail with loaded API content',
+      (tester) async {
+    final repository = _FakeTicketsRepository();
+    final router = GoRouter(
+      initialLocation: '/tickets',
+      routes: [
+        GoRoute(
+          path: '/tickets',
+          builder: (_, __) => const TicketsPageWidget(),
+        ),
+        GoRoute(
+          path: '/tickets/:ticketId',
+          builder: (_, state) => TicketDetailsPageWidget(
+              ticketId: state.pathParameters['ticketId']!),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [ticketsRepositoryProvider.overrideWith((ref) => repository)],
+      child: MaterialApp.router(routerConfig: router),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('#TKT-392'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Live ticket details.'), findsOneWidget);
+    await tester.drag(
+        find.byType(CustomScrollView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(find.text('Customer message'), findsOneWidget);
+    expect(find.byType(BottomNavigationBar), findsNothing);
   });
 }

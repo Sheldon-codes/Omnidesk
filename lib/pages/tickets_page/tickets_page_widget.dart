@@ -1,5 +1,6 @@
 // ignore_for_file: deprecated_member_use
 
+import 'dart:async';
 import 'dart:ui' show ImageFilter, lerpDouble;
 
 import 'package:flutter/material.dart';
@@ -27,26 +28,46 @@ class TicketsPageWidget extends ConsumerStatefulWidget {
 class _TicketsPageWidgetState extends ConsumerState<TicketsPageWidget> {
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
+  final _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    if (widget.initialStatus != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          ref
-              .read(ticketsPageProvider.notifier)
-              .selectStatus(widget.initialStatus);
+    _scrollController.addListener(_loadMoreIfNeeded);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final notifier = ref.read(ticketsPageProvider.notifier);
+      await notifier.load();
+      if (mounted && widget.initialStatus != null) {
+        final value = widget.initialStatus!.apiValue;
+        if (value == 'overdue' ||
+            value == 'escalated' ||
+            ref
+                .read(ticketsPageProvider)
+                .filterOptions
+                .statuses
+                .any((option) => option.value == value)) {
+          notifier.selectStatus(value);
         }
-      });
-    }
+      }
+    });
   }
 
   @override
   void dispose() {
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _scrollController
+      ..removeListener(_loadMoreIfNeeded)
+      ..dispose();
     super.dispose();
+  }
+
+  void _loadMoreIfNeeded() {
+    if (_scrollController.hasClients &&
+        _scrollController.position.extentAfter < 400) {
+      unawaited(ref.read(ticketsPageProvider.notifier).loadMore());
+    }
   }
 
   void _openSearch() {
@@ -62,7 +83,7 @@ class _TicketsPageWidgetState extends ConsumerState<TicketsPageWidget> {
     ref.read(ticketsPageProvider.notifier).closeSearch();
   }
 
-  void _selectStatus(TicketStatus? status) {
+  void _selectStatus(String? status) {
     _searchController.clear();
     ref.read(ticketsPageProvider.notifier).selectStatus(status);
   }
@@ -73,63 +94,99 @@ class _TicketsPageWidgetState extends ConsumerState<TicketsPageWidget> {
       context: context,
       initial: _TicketFilterSelection(
         status: state.selectedStatus,
-        priorities: state.priorities,
-        departments: state.departments,
-        categories: state.categories,
+        source: state.selectedSource,
+        priority: state.selectedPriority,
+        departmentId: state.selectedDepartmentId,
+        categoryId: state.selectedCategoryId,
+        assignment: state.selectedAssignment,
+        period: state.period,
+        fromDate: state.fromDate,
+        toDate: state.toDate,
       ),
+      options: state.filterOptions,
     );
     if (!mounted || result == null) return;
-    ref.read(ticketsPageProvider.notifier).applyFilters(
+    await ref.read(ticketsPageProvider.notifier).applyFilters(
           status: result.status,
-          priorities: result.priorities,
-          departments: result.departments,
-          categories: result.categories,
+          source: result.source,
+          priority: result.priority,
+          departmentId: result.departmentId,
+          categoryId: result.categoryId,
+          assignment: result.assignment,
+          period: result.period,
+          fromDate: result.fromDate,
+          toDate: result.toDate,
+          clearDates: result.clearDates,
         );
   }
 
-  void _showComingSoon() => ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(const SnackBar(content: Text('Coming soon')));
+  Future<void> _handleSwipeAction(TicketRecord ticket, String action) async {
+    if (action == 'Details') {
+      context.push('/tickets/${ticket.id}');
+      return;
+    }
+    final target = action == 'Resolve' ? 'resolved' : 'open';
+    try {
+      await ref
+          .read(ticketsPageProvider.notifier)
+          .changeStatus(ticket.id, target);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                action == 'Resolve' ? 'Ticket resolved' : 'Ticket reopened')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not update ticket: $error')));
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(ticketsPageProvider);
-    final store = ref.watch(ticketStoreProvider);
     final theme = FlutterFlowTheme.of(context);
     final topPadding = MediaQuery.paddingOf(context).top;
     return Scaffold(
       backgroundColor: theme.primaryBackground,
-      body: CustomScrollView(
-        slivers: [
-          SliverPersistentHeader(
-              pinned: true,
-              delegate: _TicketHeaderDelegate(
-                  theme: theme,
-                  topPadding: topPadding,
-                  searchActive: state.searchActive,
-                  filtersActive: state.filtersActive,
-                  subtitle: state.subtitleFor(store.tickets),
-                  onSearch: state.searchActive ? _closeSearch : _openSearch,
-                  onFilter: _openFilters)),
-          SliverPersistentHeader(
-              pinned: true,
-              delegate: _TicketTabsDelegate(
-                  theme: theme,
-                  selected: state.selectedStatus,
-                  onSelected: _selectStatus)),
-          if (state.searchActive)
-            SliverToBoxAdapter(
-                child: _TicketSearchField(
-                    controller: _searchController,
-                    focusNode: _searchFocusNode,
-                    onChanged:
-                        ref.read(ticketsPageProvider.notifier).setSearchQuery,
-                    onClose: _closeSearch,
-                    theme: theme)),
-          _ticketList(state, store, theme),
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
-        ],
-      ),
+      body: RefreshIndicator.adaptive(
+          onRefresh: () => ref.read(ticketsPageProvider.notifier).refresh(),
+          child: CustomScrollView(
+            controller: _scrollController,
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverPersistentHeader(
+                  pinned: true,
+                  delegate: _TicketHeaderDelegate(
+                      theme: theme,
+                      topPadding: topPadding,
+                      searchActive: state.searchActive,
+                      filtersActive: state.filtersActive,
+                      subtitle: state.subtitleFor(state.tickets),
+                      onSearch: state.searchActive ? _closeSearch : _openSearch,
+                      onFilter: _openFilters)),
+              SliverPersistentHeader(
+                  pinned: false,
+                  delegate: _TicketTabsDelegate(
+                      theme: theme,
+                      selected: state.selectedStatus,
+                      statuses: state.filterOptions.statuses,
+                      onSelected: _selectStatus)),
+              if (state.searchActive)
+                SliverToBoxAdapter(
+                    child: _TicketSearchField(
+                        controller: _searchController,
+                        focusNode: _searchFocusNode,
+                        onChanged: ref
+                            .read(ticketsPageProvider.notifier)
+                            .setSearchQuery,
+                        onClose: _closeSearch,
+                        theme: theme)),
+              _ticketList(state, theme),
+              const SliverToBoxAdapter(child: SizedBox(height: 24)),
+            ],
+          )),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'ticket-create',
         tooltip: 'Create ticket',
@@ -142,17 +199,31 @@ class _TicketsPageWidgetState extends ConsumerState<TicketsPageWidget> {
     );
   }
 
-  Widget _ticketList(
-      TicketsPageState state, TicketStoreState store, FlutterFlowTheme theme) {
-    if (store.loading && store.tickets.isEmpty) {
-      return const SliverFillRemaining(
-          child: Center(child: CircularProgressIndicator()));
+  Widget _ticketList(TicketsPageState state, FlutterFlowTheme theme) {
+    if ((state.loading || !state.hasLoaded) && state.tickets.isEmpty) {
+      return const _TicketListSkeleton();
     }
-    if (store.failure != null && store.tickets.isEmpty) {
-      return const SliverFillRemaining(
-          child: Center(child: Text('Unable to load tickets')));
+    if (state.error != null && state.tickets.isEmpty) {
+      return SliverFillRemaining(
+          child: Center(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(IconsaxPlusBroken.wifi_square, color: theme.secondaryText),
+        const SizedBox(height: 12),
+        Text('Could not load tickets',
+            style: TextStyle(color: theme.primaryText)),
+        const SizedBox(height: 6),
+        Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Text(state.error!,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: theme.secondaryText))),
+        TextButton(
+            onPressed: () =>
+                unawaited(ref.read(ticketsPageProvider.notifier).retry()),
+            child: const Text('Retry')),
+      ])));
     }
-    final tickets = state.filteredTicketsFor(store.tickets);
+    final tickets = state.tickets;
     if (tickets.isEmpty) {
       return SliverToBoxAdapter(
           child: Padding(
@@ -169,13 +240,28 @@ class _TicketsPageWidgetState extends ConsumerState<TicketsPageWidget> {
     return SliverPadding(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
         sliver: SliverList.builder(
-            itemCount: tickets.length,
+            itemCount: tickets.length +
+                (state.loadingMore ? 3 : 0) +
+                (state.error != null ? 1 : 0),
             itemBuilder: (_, index) {
+              if (state.error != null && index == tickets.length) {
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('Could not load more tickets',
+                      style: TextStyle(color: theme.error)),
+                  trailing: TextButton(
+                    onPressed: () => unawaited(
+                        ref.read(ticketsPageProvider.notifier).retry()),
+                    child: const Text('Retry'),
+                  ),
+                );
+              }
+              if (index >= tickets.length) return const _TicketRowSkeleton();
               final ticket = tickets[index];
               return _TicketSwipeRow(
                   theme: theme,
                   status: ticket.status,
-                  onAction: _showComingSoon,
+                  onAction: (action) => _handleSwipeAction(ticket, action),
                   child: _TicketRow(
                       ticket: ticket,
                       theme: theme,
@@ -284,10 +370,14 @@ class _TicketHeaderDelegate extends SliverPersistentHeaderDelegate {
 
 class _TicketTabsDelegate extends SliverPersistentHeaderDelegate {
   const _TicketTabsDelegate(
-      {required this.theme, required this.selected, required this.onSelected});
+      {required this.theme,
+      required this.selected,
+      required this.statuses,
+      required this.onSelected});
   final FlutterFlowTheme theme;
-  final TicketStatus? selected;
-  final ValueChanged<TicketStatus?> onSelected;
+  final String? selected;
+  final List<TicketFilterOption> statuses;
+  final ValueChanged<String?> onSelected;
   @override
   double get minExtent => 46;
   @override
@@ -295,33 +385,28 @@ class _TicketTabsDelegate extends SliverPersistentHeaderDelegate {
   @override
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
-    const items = [
-      (TicketStatus.open, 'Open'),
-      (TicketStatus.inProgress, 'In progress'),
-      (TicketStatus.overdue, 'Overdue'),
-      (TicketStatus.escalated, 'Escalated'),
-      (TicketStatus.resolved, 'Resolved')
-    ];
     return ColoredBox(
         color: theme.primaryBackground,
         child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.only(left: 20, right: 20),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              for (final item in items)
+              for (final item in statuses)
                 SizedBox(
-                    width: 110,
+                    width: item.label.length > 14 ? 160 : 110,
                     child: _TicketTab(
-                        label: item.$2,
-                        selected: selected == item.$1,
+                        label: item.label,
+                        selected: selected == item.value,
                         theme: theme,
-                        onTap: () => onSelected(item.$1)))
+                        onTap: () => onSelected(item.value)))
             ])));
   }
 
   @override
   bool shouldRebuild(covariant _TicketTabsDelegate oldDelegate) =>
-      selected != oldDelegate.selected || theme != oldDelegate.theme;
+      selected != oldDelegate.selected ||
+      statuses != oldDelegate.statuses ||
+      theme != oldDelegate.theme;
 }
 
 class _TicketTab extends StatelessWidget {
@@ -413,28 +498,43 @@ class _TicketRow extends StatelessWidget {
   final TicketRecord ticket;
   final FlutterFlowTheme theme;
   final VoidCallback onTap;
-  String get _source => switch (ticket.source) {
-        TicketSource.manual => 'Manual',
-        TicketSource.widget => 'Widget Chat',
-        TicketSource.call => 'Call',
-        TicketSource.whatsapp => 'WhatsApp',
-        TicketSource.email => 'Email'
-      };
-  String get _priority =>
-      ticket.priority.name[0].toUpperCase() + ticket.priority.name.substring(1);
-  Color _statusColor() => switch (ticket.status) {
+  String get _source => ticket.sourceRaw == null
+      ? switch (ticket.source) {
+          TicketSource.manual => 'Manual',
+          TicketSource.widget => 'Widget Chat',
+          TicketSource.call => 'Call',
+          TicketSource.whatsapp => 'WhatsApp',
+          TicketSource.email => 'Email'
+        }
+      : switch (ticket.sourceRaw!.toLowerCase()) {
+          'phone' => 'Phone',
+          'whatsapp' => 'WhatsApp',
+          'email' => 'Email',
+          'widget' => 'Widget / Chat',
+          'manual' => 'Manual',
+          final value => _humanize(value),
+        };
+  String get _priority => ticket.priorityRaw == null
+      ? ticket.priority.label
+      : ticket.priorityRaw![0].toUpperCase() + ticket.priorityRaw!.substring(1);
+  String get _status => ticket.statusRaw ?? ticket.status.apiValue;
+  String _statusLabel() => ticket.statusRaw == null
+      ? ticket.status.label
+      : _humanize(ticket.statusRaw!);
+  Color _statusColor() =>
+      ticket.isOverdue || _status == 'overdue' || _status == 'escalated'
+          ? theme.error
+          : _status == 'resolved' || _status == 'closed'
+              ? theme.success
+              : _status == 'in_progress' || _status == 'pending'
+                  ? theme.primary
+                  : theme.primaryText;
+  /*Color _statusColor() => switch (ticket.status) {
         TicketStatus.overdue || TicketStatus.escalated => theme.error,
         TicketStatus.inProgress => theme.primary,
         TicketStatus.resolved => theme.success,
         TicketStatus.open => theme.primaryText
-      };
-  String _statusLabel() => switch (ticket.status) {
-        TicketStatus.inProgress => 'In progress',
-        TicketStatus.overdue => 'Overdue',
-        TicketStatus.escalated => 'Escalated',
-        TicketStatus.resolved => 'Resolved',
-        TicketStatus.open => 'Open'
-      };
+      };*/
   @override
   Widget build(BuildContext context) => Semantics(
       label:
@@ -449,7 +549,7 @@ class _TicketRow extends StatelessWidget {
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                      Text(ticket.id,
+                      Text(ticket.displayId ?? ticket.id,
                           style: theme.bodySmall.override(
                               fontFamily: theme.bodySmallFamily,
                               color: theme.primary,
@@ -494,6 +594,13 @@ class _TicketRow extends StatelessWidget {
               ]))));
 }
 
+String _humanize(String value) => value
+    .replaceAll('_', ' ')
+    .split(' ')
+    .map((part) =>
+        part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
+    .join(' ');
+
 class _TicketSwipeRow extends StatefulWidget {
   const _TicketSwipeRow(
       {required this.theme,
@@ -502,7 +609,7 @@ class _TicketSwipeRow extends StatefulWidget {
       required this.child});
   final FlutterFlowTheme theme;
   final TicketStatus status;
-  final VoidCallback onAction;
+  final ValueChanged<String> onAction;
   final Widget child;
   @override
   State<_TicketSwipeRow> createState() => _TicketSwipeRowState();
@@ -532,9 +639,10 @@ class _TicketSwipeRowState extends State<_TicketSwipeRow>
 
   @override
   Widget build(BuildContext context) {
-    final resolved = widget.status == TicketStatus.resolved;
+    final resolved = widget.status == TicketStatus.resolved ||
+        widget.status == TicketStatus.closed;
     final firstLabel = resolved ? 'Reopen' : 'Resolve';
-    final secondLabel = resolved ? 'View' : 'Assign';
+    const secondLabel = 'Details';
     final firstIcon = resolved ? Icons.refresh : Icons.check_circle_outline;
     final secondIcon =
         resolved ? Icons.open_in_new : Icons.person_add_alt_outlined;
@@ -546,7 +654,7 @@ class _TicketSwipeRowState extends State<_TicketSwipeRow>
             theme: widget.theme,
             onTap: () {
               _reset();
-              widget.onAction();
+              widget.onAction(label);
             }));
     return Stack(children: [
       Positioned.fill(
@@ -608,24 +716,40 @@ class _TicketSwipeAction extends StatelessWidget {
 }
 
 class _TicketFilterSelection {
-  const _TicketFilterSelection(
-      {this.status,
-      this.priorities = const {},
-      this.departments = const {},
-      this.categories = const {}});
-  final TicketStatus? status;
-  final Set<TicketPriority> priorities;
-  final Set<String> departments;
-  final Set<String> categories;
+  const _TicketFilterSelection({
+    this.status,
+    this.source,
+    this.priority,
+    this.departmentId,
+    this.categoryId,
+    this.assignment,
+    this.period,
+    this.fromDate,
+    this.toDate,
+    this.clearDates = false,
+  });
+  final String? status;
+  final String? source;
+  final String? priority;
+  final String? departmentId;
+  final String? categoryId;
+  final String? assignment;
+  final String? period;
+  final DateTime? fromDate;
+  final DateTime? toDate;
+  final bool clearDates;
 }
 
 class _TicketFilterSheet extends StatefulWidget {
-  const _TicketFilterSheet({required this.theme, required this.initial});
+  const _TicketFilterSheet(
+      {required this.theme, required this.initial, required this.options});
   final FlutterFlowTheme theme;
   final _TicketFilterSelection initial;
+  final TicketFilterOptions options;
   static Future<_TicketFilterSelection?> show({
     required BuildContext context,
     required _TicketFilterSelection initial,
+    required TicketFilterOptions options,
   }) =>
       showModalBottomSheet<_TicketFilterSelection>(
         context: context,
@@ -637,6 +761,7 @@ class _TicketFilterSheet extends StatefulWidget {
         builder: (_) => _TicketFilterSheet(
           theme: FlutterFlowTheme.of(context),
           initial: initial,
+          options: options,
         ),
       );
   @override
@@ -644,15 +769,21 @@ class _TicketFilterSheet extends StatefulWidget {
 }
 
 class _TicketFilterSheetState extends State<_TicketFilterSheet> {
-  late TicketStatus? _status = widget.initial.status;
-  late Set<TicketPriority> _priorities = {...widget.initial.priorities};
-  late Set<String> _departments = {...widget.initial.departments};
-  late Set<String> _categories = {...widget.initial.categories};
+  late String? _status = widget.initial.status;
+  late String? _source = widget.initial.source;
+  late String? _priority = widget.initial.priority;
+  late String? _departmentId = widget.initial.departmentId;
+  late String? _categoryId = widget.initial.categoryId;
+  late String? _assignment = widget.initial.assignment;
+  late String? _period = widget.initial.period;
+  late DateTime? _fromDate = widget.initial.fromDate;
+  late DateTime? _toDate = widget.initial.toDate;
+  bool _clearDates = false;
   @override
   Widget build(BuildContext context) => BackdropFilter(
       filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
       child: DraggableScrollableSheet(
-          initialChildSize: .60,
+          initialChildSize: .64,
           minChildSize: .42,
           maxChildSize: .86,
           expand: false,
@@ -700,53 +831,55 @@ class _TicketFilterSheetState extends State<_TicketFilterSheet> {
                           controller: scroll,
                           padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
                           children: [
-                        _field(
-                            'Status',
-                            IconsaxPlusBroken.toggle_on_circle,
-                            _status == null
-                                ? 'All statuses'
-                                : _statusLabel(_status!),
-                            () => _chooseStatus()),
-                        _field(
-                            'Priority',
-                            IconsaxPlusBroken.chart,
-                            _summary(_priorities.map(_priorityLabel).toSet(),
-                                'All priorities'),
-                            () => _chooseMulti(
-                                    'Priority',
-                                    ['Low', 'Medium', 'High'],
-                                    _priorities.map(_priorityLabel).toSet(),
-                                    (values) {
-                                  setState(() => _priorities = values
-                                      .map((v) => TicketPriority.values
-                                          .firstWhere(
-                                              (e) => _priorityLabel(e) == v))
-                                      .toSet());
-                                })),
-                        _field(
-                            'Department',
-                            IconsaxPlusBroken.building,
-                            _summary(_departments, 'All departments'),
-                            () => _chooseMulti(
-                                'Department',
-                                ['General', 'Finance', 'Technical support'],
-                                _departments,
-                                (values) =>
-                                    setState(() => _departments = values))),
-                        _field(
-                            'Category',
-                            IconsaxPlusBroken.tag,
-                            _summary(_categories, 'All categories'),
-                            () => _chooseMulti(
-                                'Category',
-                                [
-                                  'Accounting',
-                                  'Billing and payments',
-                                  'Technical support'
-                                ],
-                                _categories,
-                                (values) =>
-                                    setState(() => _categories = values))),
+                        if (widget.options.statuses.isNotEmpty)
+                          _singleField(
+                              'Status',
+                              IconsaxPlusBroken.toggle_on_circle,
+                              widget.options.statuses,
+                              _status,
+                              (value) => setState(() => _status = value)),
+                        if (widget.options.sources.isNotEmpty)
+                          _singleField(
+                              'Source',
+                              IconsaxPlusBroken.message,
+                              widget.options.sources,
+                              _source,
+                              (value) => setState(() => _source = value)),
+                        if (widget.options.priorities.isNotEmpty)
+                          _singleField(
+                              'Priority',
+                              IconsaxPlusBroken.chart,
+                              widget.options.priorities,
+                              _priority,
+                              (value) => setState(() => _priority = value)),
+                        if (widget.options.departments.isNotEmpty)
+                          _singleField(
+                              'Department',
+                              IconsaxPlusBroken.building,
+                              widget.options.departments,
+                              _departmentId,
+                              (value) => setState(() => _departmentId = value)),
+                        if (widget.options.categories.isNotEmpty)
+                          _singleField(
+                              'Category',
+                              IconsaxPlusBroken.tag,
+                              widget.options.categories,
+                              _categoryId,
+                              (value) => setState(() => _categoryId = value)),
+                        if (widget.options.assignments.isNotEmpty)
+                          _singleField(
+                              'Assignment',
+                              IconsaxPlusBroken.people,
+                              widget.options.assignments,
+                              _assignment,
+                              (value) => setState(() => _assignment = value)),
+                        if (widget.options.periods.isNotEmpty)
+                          _singleField('Period', IconsaxPlusBroken.calendar,
+                              widget.options.periods, _period, (value) {
+                            setState(() => _period = value);
+                            if (value == 'custom') unawaited(_pickDateRange());
+                          }),
+                        _dateRangeField(),
                       ])),
                   Padding(
                       padding: EdgeInsets.fromLTRB(20, 10, 20,
@@ -754,10 +887,16 @@ class _TicketFilterSheetState extends State<_TicketFilterSheet> {
                       child: Row(children: [
                         TextButton(
                             onPressed: () => setState(() {
+                                  _source = null;
                                   _status = null;
-                                  _priorities = {};
-                                  _departments = {};
-                                  _categories = {};
+                                  _priority = null;
+                                  _departmentId = null;
+                                  _categoryId = null;
+                                  _assignment = 'me';
+                                  _period = null;
+                                  _fromDate = null;
+                                  _toDate = null;
+                                  _clearDates = true;
                                 }),
                             child: Text('Reset',
                                 style: TextStyle(color: widget.theme.primary))),
@@ -776,22 +915,110 @@ class _TicketFilterSheetState extends State<_TicketFilterSheet> {
                                 onPressed: () => Navigator.pop(
                                     context,
                                     _TicketFilterSelection(
+                                        source: _source,
                                         status: _status,
-                                        priorities: _priorities,
-                                        departments: _departments,
-                                        categories: _categories)),
+                                        priority: _priority,
+                                        departmentId: _departmentId,
+                                        categoryId: _categoryId,
+                                        assignment: _assignment,
+                                        period: _period,
+                                        fromDate: _fromDate,
+                                        toDate: _toDate,
+                                        clearDates: _clearDates)),
                                 child: const Text('Apply'))),
                       ])),
                 ]),
               )));
 
-  int get _activeCount =>
-      (_status == null ? 0 : 1) +
-      _priorities.length +
-      _departments.length +
-      _categories.length;
-  String _summary(Set<String> values, String all) =>
-      values.isEmpty ? all : values.join(', ');
+  int get _activeCount => [
+        _status,
+        _source,
+        _priority,
+        _departmentId,
+        _categoryId,
+        if (_assignment != null && _assignment != 'me') _assignment,
+        if (_period != null && _period != 'all') _period,
+        if (_fromDate != null || _toDate != null) 'date',
+      ].whereType<String>().length;
+
+  Widget _singleField(
+      String label,
+      IconData icon,
+      List<TicketFilterOption> options,
+      String? selected,
+      ValueChanged<String?> onSelected) {
+    String? selectedLabel;
+    for (final option in options) {
+      if (option.value == selected) {
+        selectedLabel = option.label;
+        break;
+      }
+    }
+    return _field(label, icon, selectedLabel ?? 'All $label', () async {
+      final result = await showModalBottomSheet<String?>(
+          context: context,
+          backgroundColor: Colors.transparent,
+          useSafeArea: false,
+          builder: (_) => _DynamicOptionSheet(
+                title: label,
+                options: options,
+                selected: selected,
+                iconFor: _iconFor,
+              ));
+      if (mounted && result != null) onSelected(result.isEmpty ? null : result);
+    });
+  }
+
+  Widget _dateRangeField() => _field(
+        'Date range',
+        IconsaxPlusBroken.calendar,
+        _fromDate == null && _toDate == null
+            ? 'Any time'
+            : '${_formatDate(_fromDate)} – ${_formatDate(_toDate)}',
+        _pickDateRange,
+      );
+
+  Future<void> _pickDateRange() async {
+    final now = DateTime.now();
+    final range = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 10),
+      lastDate: DateTime(now.year + 2),
+      initialDateRange: _fromDate != null && _toDate != null
+          ? DateTimeRange(start: _fromDate!, end: _toDate!)
+          : null,
+    );
+    if (!mounted || range == null) return;
+    setState(() {
+      _period = 'custom';
+      _fromDate = range.start;
+      _toDate = range.end;
+      _clearDates = false;
+    });
+  }
+
+  String _formatDate(DateTime? date) => date == null
+      ? '—'
+      : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+
+  IconData _iconFor(String value) => switch (value.toLowerCase()) {
+        'open' || 'open_all' || 'in_progress' => IconsaxPlusBroken.timer_1,
+        'pending' => IconsaxPlusBroken.clock,
+        'resolved' || 'closed' || 'closed_all' => IconsaxPlusBroken.tick_circle,
+        'phone' => IconsaxPlusBroken.call,
+        'whatsapp' || 'widget' || 'email' => IconsaxPlusBroken.message,
+        'manual' => IconsaxPlusBroken.note_2,
+        'low' || 'medium' || 'high' || 'urgent' => IconsaxPlusBroken.chart,
+        'today' ||
+        'week' ||
+        'month' ||
+        'quarter' ||
+        'custom' ||
+        'all' =>
+          IconsaxPlusBroken.calendar,
+        'me' || 'all' || 'unassigned' => IconsaxPlusBroken.people,
+        _ => IconsaxPlusBroken.setting_2,
+      };
   Widget _field(
           String label, IconData icon, String value, VoidCallback onTap) =>
       Padding(
@@ -819,61 +1046,25 @@ class _TicketFilterSheetState extends State<_TicketFilterSheet> {
                   child: Text(value,
                       style: widget.theme.bodyLarge
                           .override(color: widget.theme.primaryText)))));
-
-  Future<void> _chooseStatus() async {
-    final value = await showModalBottomSheet<String?>(
-        context: context,
-        backgroundColor: Colors.transparent,
-        useSafeArea: false,
-        builder: (_) => _TicketOptionSheet(
-            title: 'Status',
-            values: TicketStatus.values,
-            selected: _status,
-            label: _statusLabel));
-    if (mounted && value != null) {
-      setState(() => _status = value.isEmpty
-          ? null
-          : TicketStatus.values.firstWhere((status) => status.name == value));
-    }
-  }
-
-  Future<void> _chooseMulti(String title, List<String> values,
-      Set<String> selected, ValueChanged<Set<String>> done) async {
-    final result = await showModalBottomSheet<Set<String>>(
-        context: context,
-        backgroundColor: Colors.transparent,
-        useSafeArea: false,
-        builder: (_) => _TicketMultiOptionSheet(
-            title: title, values: values, selected: selected));
-    if (mounted && result != null) done(result);
-  }
-
-  String _priorityLabel(TicketPriority value) =>
-      value.name[0].toUpperCase() + value.name.substring(1);
-  String _statusLabel(TicketStatus status) => switch (status) {
-        TicketStatus.inProgress => 'In progress',
-        TicketStatus.overdue => 'Overdue',
-        TicketStatus.escalated => 'Escalated',
-        TicketStatus.resolved => 'Resolved',
-        TicketStatus.open => 'Open'
-      };
 }
 
-class _TicketOptionSheet<T> extends StatelessWidget {
-  const _TicketOptionSheet(
-      {required this.title,
-      required this.values,
-      required this.selected,
-      required this.label});
+class _DynamicOptionSheet extends StatelessWidget {
+  const _DynamicOptionSheet({
+    required this.title,
+    required this.options,
+    required this.selected,
+    required this.iconFor,
+  });
   final String title;
-  final List<T> values;
-  final T? selected;
-  final String Function(T) label;
+  final List<TicketFilterOption> options;
+  final String? selected;
+  final IconData Function(String) iconFor;
+
   @override
   Widget build(BuildContext context) {
-    final t = FlutterFlowTheme.of(context);
+    final theme = FlutterFlowTheme.of(context);
     return Material(
-      color: t.primaryBackground,
+      color: theme.primaryBackground,
       borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 520),
@@ -884,24 +1075,25 @@ class _TicketOptionSheet<T> extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
               child: Text(title,
-                  style: t.titleMedium.override(
-                      color: t.primaryText, fontWeight: FontWeight.w700)),
+                  style: theme.titleMedium.override(
+                      color: theme.primaryText, fontWeight: FontWeight.w700)),
             ),
             ListTile(
+              leading:
+                  Icon(IconsaxPlusBroken.setting_2, color: theme.secondaryText),
               title: const Text('All'),
-              trailing: Icon(
-                  selected == null ? Icons.check_circle : Icons.circle_outlined,
-                  color: selected == null ? t.primary : t.secondaryText),
+              trailing: Icon(selected == null
+                  ? Icons.check_circle
+                  : Icons.circle_outlined),
               onTap: () => Navigator.pop(context, ''),
             ),
-            ...values.map((v) => ListTile(
-                  title: Text(label(v)),
-                  trailing: Icon(
-                      selected == v
-                          ? Icons.check_circle
-                          : Icons.circle_outlined,
-                      color: selected == v ? t.primary : t.secondaryText),
-                  onTap: () => Navigator.pop(context, (v as dynamic).name),
+            ...options.map((option) => ListTile(
+                  leading: Icon(iconFor(option.value), color: theme.primary),
+                  title: Text(option.label),
+                  trailing: Icon(selected == option.value
+                      ? Icons.check_circle
+                      : Icons.circle_outlined),
+                  onTap: () => Navigator.pop(context, option.value),
                 )),
           ],
         ),
@@ -910,54 +1102,62 @@ class _TicketOptionSheet<T> extends StatelessWidget {
   }
 }
 
-class _TicketMultiOptionSheet extends StatefulWidget {
-  const _TicketMultiOptionSheet(
-      {required this.title, required this.values, required this.selected});
-  final String title;
-  final List<String> values;
-  final Set<String> selected;
-  @override
-  State<_TicketMultiOptionSheet> createState() =>
-      _TicketMultiOptionSheetState();
-}
+class _TicketListSkeleton extends StatelessWidget {
+  const _TicketListSkeleton();
 
-class _TicketMultiOptionSheetState extends State<_TicketMultiOptionSheet> {
-  late Set<String> selected = {...widget.selected};
   @override
   Widget build(BuildContext context) {
-    final t = FlutterFlowTheme.of(context);
-    return Material(
-      color: t.primaryBackground,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 520),
-        child: ListView(
-          padding: EdgeInsets.fromLTRB(
-              0, 12, 0, 12 + MediaQuery.viewPaddingOf(context).bottom),
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-              child: Text(widget.title,
-                  style: t.titleMedium.override(
-                      color: t.primaryText, fontWeight: FontWeight.w700)),
-            ),
-            ...widget.values.map((v) => CheckboxListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-                dense: true,
-                value: selected.contains(v),
-                title: Text(v),
-                onChanged: (_) => setState(() => selected.contains(v)
-                    ? selected.remove(v)
-                    : selected.add(v)))),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
-              child: FilledButton(
-                  onPressed: () => Navigator.pop(context, selected),
-                  child: const Text('Done')),
-            ),
-          ],
-        ),
+    final theme = FlutterFlowTheme.of(context);
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      sliver: SliverList.builder(
+        itemCount: 6,
+        itemBuilder: (_, __) => _TicketRowSkeleton(theme: theme),
       ),
+    );
+  }
+}
+
+class _TicketRowSkeleton extends StatelessWidget {
+  const _TicketRowSkeleton({this.theme});
+  final FlutterFlowTheme? theme;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = theme ?? FlutterFlowTheme.of(context);
+    final fill = t.alternate.withValues(alpha: .62);
+    Widget bar(double width, double height) => Container(
+          width: width,
+          height: height,
+          decoration: BoxDecoration(
+            color: fill,
+            borderRadius: BorderRadius.circular(height / 2),
+          ),
+        );
+    return ExcludeSemantics(
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    bar(68, 11),
+                    const SizedBox(height: 7),
+                    bar(235, 15),
+                    const SizedBox(height: 7),
+                    bar(125, 12),
+                    const SizedBox(height: 8),
+                    bar(190, 10),
+                  ]),
+            ),
+            const SizedBox(width: 10),
+            Padding(padding: const EdgeInsets.only(top: 2), child: bar(58, 11)),
+          ]),
+        ),
+        Divider(height: 1),
+      ]),
     );
   }
 }

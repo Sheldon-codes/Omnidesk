@@ -1,107 +1,130 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omnidesk_agent/components/call_experience/call_session_controller.dart';
 import 'package:omnidesk_agent/pages/customer_details_page/customer_details_page_widget.dart';
+import 'package:omnidesk_agent/pages/customer_editor_page/customer_editor_page_model.dart';
+import 'package:omnidesk_agent/pages/customers_page/customer_repository.dart';
+
+class _FakeCustomerRepository implements CustomerRepository {
+  _FakeCustomerRepository({this.fail = false});
+
+  final bool fail;
+
+  @override
+  Future<CustomerPageResult> list({
+    String search = '',
+    int page = 1,
+    int perPage = 20,
+    CancelToken? cancelToken,
+    void Function(CustomerPageResult)? onCached,
+    void Function()? onCacheMiss,
+  }) async =>
+      const CustomerPageResult(customers: [], page: 1, lastPage: 1, total: 0);
+
+  @override
+  Future<CustomerProfile> profile(String id,
+      {CancelToken? cancelToken,
+      void Function(CustomerProfile)? onCached,
+      void Function()? onCacheMiss}) async {
+    if (fail) throw Exception('Offline');
+    return CustomerProfile(
+      customer: const CustomerRecord(
+        id: '88',
+        name: 'David Mwangi',
+        phone: '+254768270973',
+        email: 'david@example.com',
+        company: 'Nairobi Tech Ltd',
+        ticketsCount: 4,
+      ),
+      tickets: [
+        CustomerProfileTicket(
+          id: '14',
+          displayNumber: '#TKT-14',
+          subject: 'Account - Change email',
+          status: 'open',
+          priority: 'low',
+          source: 'whatsapp',
+          createdAt: DateTime.utc(2026, 8, 31),
+        ),
+      ],
+      callLogs: [
+        CustomerCallLog(
+          id: '6',
+          direction: 'inbound',
+          status: 'missed',
+          durationSeconds: 41,
+          fromNumber: '+254743379990',
+          toNumber: '+254709369917',
+          recordingUrl: null,
+          agentName: 'Alice Agent',
+          createdAt: DateTime.utc(2026, 9, 21, 15, 22),
+          endedAt: DateTime.utc(2026, 9, 21, 15, 23),
+        ),
+      ],
+    );
+  }
+}
 
 void main() {
-  test('details provider resolves customer and local history', () {
-    final container = ProviderContainer();
+  test('detail starts from shared customer cache and fetches live profile',
+      () async {
+    final container = ProviderContainer(overrides: [
+      customerRepositoryProvider.overrideWithValue(_FakeCustomerRepository()),
+    ]);
     addTearDown(container.dispose);
-    final state = container.read(customerDetailProvider(customerId: 'nana'));
-
-    expect(state.customer?.name, 'Nana');
-    expect(state.tickets, isNotEmpty);
-    expect(state.activities, isNotEmpty);
+    container.read(customersStoreProvider.notifier).upsert(const CustomerRecord(
+          id: '88',
+          name: 'David Mwangi',
+          email: 'david@example.com',
+        ));
+    expect(
+        container.read(customerDetailProvider(customerId: '88')).customer?.name,
+        'David Mwangi');
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    final state = container.read(customerDetailProvider(customerId: '88'));
+    expect(state.hasLoaded, isTrue);
+    expect(state.tickets.single.displayNumber, '#TKT-14');
+    expect(state.callLogs.single.fromNumber, '+254743379990');
+    expect(container.read(customersStoreProvider).single.company,
+        'Nairobi Tech Ltd');
   });
 
-  test('fully populated customer fixture exposes all detail sections', () {
-    final container = ProviderContainer();
+  test('unknown customer is not treated as not-found while loading', () async {
+    final container = ProviderContainer(overrides: [
+      customerRepositoryProvider
+          .overrideWithValue(_FakeCustomerRepository(fail: true)),
+    ]);
     addTearDown(container.dispose);
-    final state =
-        container.read(customerDetailProvider(customerId: 'aloise-obaga'));
-
-    expect(state.customer?.email, 'aloise.obaga@example.com');
-    expect(state.customer?.phone, '+254723506031');
-    expect(state.customer?.company, 'Kaizen School');
-    expect(state.customer?.notes, isNotEmpty);
-    expect(state.tickets, hasLength(2));
-    expect(state.activities, hasLength(3));
+    final initial =
+        container.read(customerDetailProvider(customerId: 'missing'));
+    expect(initial.notFound, isFalse);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    final failed =
+        container.read(customerDetailProvider(customerId: 'missing'));
+    expect(failed.error, contains('Offline'));
+    expect(failed.notFound, isFalse);
   });
 
-  test('details provider returns not found for unknown customer', () {
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final state = container.read(customerDetailProvider(customerId: 'missing'));
-
-    expect(state.notFound, isTrue);
-    expect(state.tickets, isEmpty);
-    expect(state.activities, isEmpty);
-  });
-
-  testWidgets('details page renders identity, sections, and actions',
+  testWidgets('detail renders live tickets and call-log activity',
       (tester) async {
-    await tester.pumpWidget(const ProviderScope(
-      child: MaterialApp(
-        home: CustomerDetailsPageWidget(customerId: 'nana'),
-      ),
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        customerRepositoryProvider.overrideWithValue(_FakeCustomerRepository())
+      ],
+      child:
+          const MaterialApp(home: CustomerDetailsPageWidget(customerId: '88')),
     ));
     await tester.pumpAndSettle();
-
-    expect(find.text('Nana'), findsOneWidget);
-    expect(find.text('Details'), findsOneWidget);
-    expect(find.text('Tickets'), findsOneWidget);
+    expect(find.text('David Mwangi'), findsOneWidget);
+    expect(find.text('#TKT-14'), findsWidgets);
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -900));
+    await tester.pumpAndSettle();
     expect(find.text('Recent activity'), findsOneWidget);
-    expect(find.text('DGKSL-376'), findsOneWidget);
+    expect(find.text('Inbound call · Missed'), findsOneWidget);
+    expect(find.textContaining('Alice Agent'), findsOneWidget);
     expect(find.byTooltip('Edit customer'), findsOneWidget);
-    expect(find.byTooltip('Download customer report'), findsOneWidget);
-    expect(find.text('Call'), findsOneWidget);
-    expect(find.text('Message'), findsOneWidget);
-    expect(find.text('Email'), findsOneWidget);
-  });
-
-  testWidgets('quick action gives coming soon feedback', (tester) async {
-    await tester.pumpWidget(const ProviderScope(
-      child: MaterialApp(
-        home: CustomerDetailsPageWidget(customerId: 'nana'),
-      ),
-    ));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Message'));
-    await tester.pump();
-    expect(find.text('Coming soon'), findsOneWidget);
-  });
-
-  testWidgets('download report gives coming soon feedback', (tester) async {
-    await tester.pumpWidget(const ProviderScope(
-      child: MaterialApp(
-        home: CustomerDetailsPageWidget(customerId: 'nana'),
-      ),
-    ));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byTooltip('Download customer report'));
-    await tester.pump();
-    expect(find.text('Coming soon'), findsOneWidget);
-  });
-
-  testWidgets('customer Call starts an outgoing session', (tester) async {
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: const MaterialApp(
-        home: CustomerDetailsPageWidget(customerId: 'aloise-obaga'),
-      ),
-    ));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Call'));
-    await tester.pump();
-    final call = container.read(callSessionControllerProvider);
-    expect(call.lifecycle, CallLifecycle.outgoingRinging);
-    expect(call.party?.customerId, 'aloise-obaga');
-    container.read(callSessionControllerProvider.notifier).end();
   });
 }

@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path/path.dart' as p;
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
+
+import '../app_local_database.dart';
+import '../auth_session_controller.dart';
 
 /// Durable offline outbox for WhatsApp sends.
 ///
@@ -64,92 +66,98 @@ class WhatsAppOutboxEntry {
             ? (m['duration_secs'] as num).toInt()
             : int.tryParse('${m['duration_secs'] ?? ''}'),
         attempts: (m['attempts'] as num?)?.toInt() ?? 0,
-        createdAt:
-            DateTime.tryParse('${m['created_at']}') ?? DateTime.now(),
+        createdAt: DateTime.tryParse('${m['created_at']}') ?? DateTime.now(),
         status: '${m['status'] ?? 'pending'}',
       );
 }
 
 class WhatsAppOutbox {
-  WhatsAppOutbox({Database? db, Future<Database> Function()? opener})
-      : _db = db,
+  WhatsAppOutbox({
+    Database? db,
+    Future<Database> Function()? opener,
+    required this.userId,
+    required this.workspaceId,
+  })  : _db = db,
         _opener = opener;
 
+  final String userId;
+  final String workspaceId;
   Database? _db;
   final Future<Database> Function()? _opener;
+  Future<void>? _adoptingLegacyRows;
 
   Future<Database> _ready() async {
     final existing = _db;
     if (existing != null && existing.isOpen) return existing;
     if (_opener != null) {
       _db = await _opener!();
-      return _db!;
+    } else {
+      _db = await AppLocalDatabase().database;
     }
-    final dir = await getDatabasesPath();
-    final path = p.join(dir, 'whatsapp_outbox.db');
-    _db = await openDatabase(
-      path,
-      version: 1,
-      onCreate: (db, _) async {
-        await db.execute('''
-          CREATE TABLE outbox(
-            local_id TEXT PRIMARY KEY,
-            ticket_id TEXT NOT NULL,
-            text TEXT,
-            reply_to_id TEXT,
-            file_path TEXT,
-            mime_type TEXT,
-            file_name TEXT,
-            duration_secs INTEGER,
-            attempts INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending'
-          )
-        ''');
-        await db.execute(
-            'CREATE INDEX idx_outbox_ticket ON outbox(ticket_id, status)');
-      },
-    );
+    await _adoptLegacyRows(_db!);
     return _db!;
+  }
+
+  Future<void> _adoptLegacyRows(Database db) {
+    if (userId == 'anonymous') return Future.value();
+    return _adoptingLegacyRows ??= db
+        .update(
+          'outbox',
+          {'user_id': userId, 'workspace_id': workspaceId},
+          where: "user_id = '' AND workspace_id = ''",
+        )
+        .then((_) {});
   }
 
   Future<void> enqueue(WhatsAppOutboxEntry entry) async {
     final db = await _ready();
-    await db.insert('outbox', entry.toMap(),
+    await db.insert(
+        'outbox',
+        {
+          ...entry.toMap(),
+          'user_id': userId,
+          'workspace_id': workspaceId,
+        },
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<List<WhatsAppOutboxEntry>> pending({String? ticketId}) async {
     final db = await _ready();
-    final rows = ticketId == null
-        ? await db.query('outbox',
-            where: 'status != ?',
-            whereArgs: ['sent'],
-            orderBy: 'created_at ASC',
-            limit: 100)
-        : await db.query('outbox',
-            where: 'ticket_id = ? AND status != ?',
-            whereArgs: [ticketId, 'sent'],
-            orderBy: 'created_at ASC',
-            limit: 100);
+    final rows = await db.query(
+      'outbox',
+      where: ticketId == null
+          ? 'user_id = ? AND workspace_id = ? AND status != ?'
+          : 'user_id = ? AND workspace_id = ? AND ticket_id = ? AND status != ?',
+      whereArgs: ticketId == null
+          ? [userId, workspaceId, 'sent']
+          : [userId, workspaceId, ticketId, 'sent'],
+      orderBy: 'created_at ASC',
+      limit: 100,
+    );
     return rows.map(WhatsAppOutboxEntry.fromMap).toList();
   }
 
   Future<void> markSending(String localId) async {
     final db = await _ready();
     await db.update('outbox', {'status': 'sending'},
-        where: 'local_id = ?', whereArgs: [localId]);
+        where: 'local_id = ? AND user_id = ? AND workspace_id = ?',
+        whereArgs: [localId, userId, workspaceId]);
   }
 
   Future<void> markFailed(String localId, int attempts) async {
     final db = await _ready();
     await db.update('outbox', {'status': 'failed', 'attempts': attempts},
-        where: 'local_id = ?', whereArgs: [localId]);
+        where: 'local_id = ? AND user_id = ? AND workspace_id = ?',
+        whereArgs: [localId, userId, workspaceId]);
   }
 
   Future<void> remove(String localId) async {
     final db = await _ready();
-    await db.delete('outbox', where: 'local_id = ?', whereArgs: [localId]);
+    await db.delete(
+      'outbox',
+      where: 'local_id = ? AND user_id = ? AND workspace_id = ?',
+      whereArgs: [localId, userId, workspaceId],
+    );
   }
 
   /// Backoff schedule: 2s, 8s, 30s, 2m, capped at 5 attempts before manual.
@@ -166,12 +174,18 @@ class WhatsAppOutbox {
     return schedule[attempts];
   }
 
-  String exportDiagnostics(List<WhatsAppOutboxEntry> entries) => jsonEncode(
-      entries.map((e) => {'localId': e.localId, 'ticket': e.ticketId}).toList());
+  String exportDiagnostics(List<WhatsAppOutboxEntry> entries) =>
+      jsonEncode(entries
+          .map((e) => {'localId': e.localId, 'ticket': e.ticketId})
+          .toList());
 }
 
 final whatsAppOutboxProvider = Provider<WhatsAppOutbox>((ref) {
-  final outbox = WhatsAppOutbox();
-  ref.onDispose(() {});
-  return outbox;
+  final localDatabase = ref.watch(appLocalDatabaseProvider);
+  final user = ref.watch(authSessionControllerProvider).session?.user;
+  return WhatsAppOutbox(
+    opener: () => localDatabase.database,
+    userId: user?.id ?? 'anonymous',
+    workspaceId: user?.activeWorkspace?.id ?? 'no-workspace',
+  );
 });

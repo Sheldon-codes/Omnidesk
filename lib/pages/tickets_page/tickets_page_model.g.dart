@@ -20,7 +20,7 @@ final class TicketsPageNotifierProvider
           argument: null,
           retry: null,
           name: r'ticketsPageProvider',
-          isAutoDispose: true,
+          isAutoDispose: false,
           dependencies: null,
           $allTransitiveDependencies: null,
         );
@@ -42,7 +42,7 @@ final class TicketsPageNotifierProvider
 }
 
 String _$ticketsPageNotifierHash() =>
-    r'b583332d76353a9d3332c464a33afc2518088c2b';
+    r'551e97a10d1aea4776ed06b3afd0294c0b07030c';
 
 abstract class _$TicketsPageNotifier extends $Notifier<TicketsPageState> {
   TicketsPageState build();

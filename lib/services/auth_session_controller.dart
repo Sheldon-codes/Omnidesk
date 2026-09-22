@@ -6,6 +6,7 @@ import '../models/auth/auth_models.dart';
 import 'calls/device_installation_service.dart';
 import 'auth_repository.dart';
 import 'auth_token_store.dart';
+import 'response_cache.dart';
 
 part 'auth_session_controller.g.dart';
 
@@ -83,7 +84,9 @@ class AuthSessionController extends _$AuthSessionController {
     try {
       final store = ref.read(authTokenStoreProvider);
       final cachedSession = await store.readSession();
+      if (!ref.mounted) return;
       final token = cachedSession?.accessToken ?? await store.readAccessToken();
+      if (!ref.mounted) return;
       if (token == null || token.isEmpty) {
         state = const AuthState(
           status: AuthStatus.unauthenticated,
@@ -107,10 +110,12 @@ class AuthSessionController extends _$AuthSessionController {
         name: 'AuthSession',
       );
       final result = await ref.read(authRepositoryProvider).fetchMe();
+      if (!ref.mounted) return;
       switch (result) {
         case AuthSuccess<AuthUser>(value: final user):
           final verifiedSession = provisionalSession.withUser(user);
           await store.saveSession(verifiedSession);
+          if (!ref.mounted) return;
           state = AuthState(
             status: AuthStatus.authenticated,
             session: verifiedSession,
@@ -124,6 +129,7 @@ class AuthSessionController extends _$AuthSessionController {
           await _applyBootstrapFailure(failure, provisionalSession);
       }
     } catch (_) {
+      if (!ref.mounted) return;
       if (provisionalSession != null) {
         state = AuthState(
           status: AuthStatus.authenticated,
@@ -300,16 +306,27 @@ class AuthSessionController extends _$AuthSessionController {
   }
 
   Future<void> _clearLocalSession() async {
+    if (!ref.mounted) return;
     try {
       await ref.read(authTokenStoreProvider).clear();
     } catch (_) {
       // The in-memory auth state must still be invalidated if secure storage
       // is temporarily unavailable. A later login can repair persistence.
     } finally {
-      state = const AuthState(
-        status: AuthStatus.unauthenticated,
-        bootstrapComplete: true,
-      );
+      try {
+        if (!ref.mounted) return;
+        await ref.read(responseCacheProvider).clearAllServerData();
+      } catch (_) {
+        // Auth invalidation must complete even if local cache cleanup fails.
+        // The cache remains scoped to the old account and cannot be selected
+        // by a later account; successful subsequent startup can retry cleanup.
+      }
+      if (ref.mounted) {
+        state = const AuthState(
+          status: AuthStatus.unauthenticated,
+          bootstrapComplete: true,
+        );
+      }
     }
   }
 

@@ -50,12 +50,11 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
   }
 
   void _loadMoreWhenNeeded() {
-    if (!_scrollController.hasClients ||
-        ref.read(chatsPageProvider).channel != ChatChannel.whatsapp) {
-      return;
-    }
+    if (!_scrollController.hasClients) return;
     if (_scrollController.position.extentAfter < 240) {
-      ref.read(whatsAppInboxProvider.notifier).loadMore();
+      if (ref.read(chatsPageProvider).channel == ChatChannel.whatsapp) {
+        ref.read(whatsAppInboxProvider.notifier).loadMore();
+      }
     }
   }
 
@@ -108,16 +107,26 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(chatsPageProvider);
-    final threads = ref.watch(conversationStoreProvider);
     final whatsApp = ref.watch(whatsAppInboxProvider);
+    final localConversations = ref.watch(conversationStoreProvider);
+    final widgetConversations = filterChatConversations(
+      localConversations.map((thread) => thread.conversation),
+      state,
+    );
+    final widgetConversationIds =
+        widgetConversations.map((conversation) => conversation.id).toSet();
+    final widgetThreads = localConversations
+        .where(
+            (thread) => widgetConversationIds.contains(thread.conversation.id))
+        .toList(growable: false);
     final online = ref.watch(connectionMonitorProvider);
     final connState = ref.watch(realtimeConnectionProvider).value;
     final theme = FlutterFlowTheme.of(context);
     final topPadding = MediaQuery.paddingOf(context).top;
     final filtersActive = state.type != ChatConversationType.all ||
         state.status != ChatConversationStatus.all;
-    final showDegraded = state.channel == ChatChannel.whatsapp &&
-        (!online || connState == RealtimeConnectionState.degraded);
+    final showDegraded =
+        !online || connState == RealtimeConnectionState.degraded;
 
     return Scaffold(
       backgroundColor: theme.primaryBackground,
@@ -139,10 +148,10 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
               delegate: _ChatsHeaderDelegate(
                 theme: theme,
                 topPadding: topPadding,
-                subtitle:
-                    state.channel == ChatChannel.whatsapp && whatsApp.total > 0
-                        ? '${whatsApp.total} conversations${whatsApp.live ? ' · Live' : ''}'
-                        : state.subtitle,
+                subtitle: state.channel == ChatChannel.whatsapp &&
+                        whatsApp.total > 0
+                    ? '${whatsApp.total} conversations${whatsApp.live ? ' · Live' : ''}'
+                    : state.subtitle,
                 searchActive: state.searchActive,
                 filtersActive: filtersActive,
                 onSearch: state.searchActive ? _closeSearch : _openSearch,
@@ -212,14 +221,7 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
             if (state.channel == ChatChannel.whatsapp)
               ..._whatsAppSliver(whatsApp, state, theme)
             else
-              ..._conversationSliver(
-                filterChatConversations(
-                  threads.map((thread) => thread.conversation),
-                  state,
-                ),
-                state,
-                theme,
-              ),
+              ..._widgetChatSliver(widgetThreads, theme),
             const SliverToBoxAdapter(child: SizedBox(height: 24)),
           ],
         ),
@@ -271,7 +273,8 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
               semanticsLabel:
                   '${conversation.name}, ${conversation.preview}, ${conversation.time}',
               onAction: () => _showComingSoon(context),
-              onOpen: () => context.push('/chats/${conversation.id}'),
+              onOpen: () => context.push('/chats/whatsapp/${conversation.id}',
+                  extra: inbox.threads[index]),
               child: _ConversationRow(conversation: conversation, theme: theme),
             );
           },
@@ -280,41 +283,30 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
     ];
   }
 
-  List<Widget> _conversationSliver(
-    List<ChatConversation> conversations,
-    ChatsPageState state,
+  List<Widget> _widgetChatSliver(
+    List<ConversationThread> threads,
     FlutterFlowTheme theme,
   ) {
-    if (conversations.isEmpty) {
-      return [
-        _EmptyChats(
-          theme: theme,
-          label: state.query.trim().isEmpty
-              ? 'No conversations found'
-              : 'No matching conversations',
-        ),
-      ];
+    if (threads.isEmpty) {
+      return [_EmptyChats(theme: theme, label: 'No Widget conversations yet')];
     }
     return [
       SliverPadding(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
         sliver: SliverList.builder(
-          itemCount: conversations.length,
+          itemCount: threads.length,
           itemBuilder: (context, index) {
-            final conversation = conversations[index];
+            final thread = threads[index];
+            final conversation = thread.conversation;
             return _ChatSwipeRow(
-              key: ValueKey(
-                '${conversation.channel}-${conversation.name}-${conversation.time}',
-              ),
+              key: ValueKey('widget-${conversation.id}'),
               theme: theme,
               semanticsLabel:
                   '${conversation.name}, ${conversation.preview}, ${conversation.time}',
               onAction: () => _showComingSoon(context),
-              onOpen: () => context.push('/chats/${conversation.id}'),
-              child: _ConversationRow(
-                conversation: conversation,
-                theme: theme,
-              ),
+              onOpen: () => context.push('/chats/widget/${conversation.id}',
+                  extra: thread),
+              child: _ConversationRow(conversation: conversation, theme: theme),
             );
           },
         ),
@@ -964,6 +956,13 @@ class _ChatFilterSheetState extends State<_ChatFilterSheet> {
                 value: ChatConversationStatus.open,
                 selected: _status,
                 label: 'Open',
+                onSelected: (value) => setState(() => _status = value),
+                theme: widget.theme,
+              ),
+              _FilterChoice<ChatConversationStatus>(
+                value: ChatConversationStatus.inProgress,
+                selected: _status,
+                label: 'In Progress',
                 onSelected: (value) => setState(() => _status = value),
                 theme: widget.theme,
               ),

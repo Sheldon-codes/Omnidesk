@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../models/auth/auth_models.dart';
 import '../../services/api_service.dart';
+import '../../services/auth_session_controller.dart';
+import '../../services/response_cache.dart';
 
 /// The operational presence states accepted by the future agent-presence API.
 enum PresenceStatus { available, busy, away, offline }
@@ -121,17 +124,47 @@ class ProfileWorkspace {
 }
 
 abstract class ProfileWorkspaceRepository {
-  Future<List<ProfileWorkspace>> loadWorkspaces();
+  Future<List<ProfileWorkspace>> loadWorkspaces({
+    void Function(List<ProfileWorkspace>)? onCached,
+    void Function()? onCacheMiss,
+  });
   Future<ProfileWorkspace> switchWorkspace(String workspaceId);
 }
 
 class ApiProfileWorkspaceRepository implements ProfileWorkspaceRepository {
-  ApiProfileWorkspaceRepository(this._api);
+  ApiProfileWorkspaceRepository(this._api,
+      {ResponseCache? cache, ResponseCacheScope? Function()? readScope})
+      : _cache = cache,
+        _readScope = readScope;
   final ApiService _api;
+  final ResponseCache? _cache;
+  final ResponseCacheScope? Function()? _readScope;
 
   @override
-  Future<List<ProfileWorkspace>> loadWorkspaces() async {
-    final response = await _api.get('/agent/workspaces');
+  Future<List<ProfileWorkspace>> loadWorkspaces({
+    void Function(List<ProfileWorkspace>)? onCached,
+    void Function()? onCacheMiss,
+  }) async {
+    final cache = _cache;
+    final scope = _readScope?.call();
+    if (cache != null && scope != null) {
+      return (await CacheFirstJsonLoader(cache).load(
+        scope: scope,
+        module: 'profile',
+        key: 'workspaces',
+        expectedEpoch: cache.writeEpoch,
+        fetch: () => _api.get('/agent/workspaces'),
+        decode: _parseWorkspaces,
+        onCached: onCached ?? (_) {},
+        onFresh: (_) {},
+        onCacheMiss: onCacheMiss,
+      ))
+          .value;
+    }
+    return _parseWorkspaces(await _api.get('/agent/workspaces'));
+  }
+
+  List<ProfileWorkspace> _parseWorkspaces(Object? response) {
     final data = response is Map ? response['workspaces'] : null;
     if (data is! List) {
       throw const FormatException('Invalid workspaces response.');
@@ -164,7 +197,11 @@ class ApiProfileWorkspaceRepository implements ProfileWorkspaceRepository {
 class LocalProfileWorkspaceRepository implements ProfileWorkspaceRepository {
   const LocalProfileWorkspaceRepository();
   @override
-  Future<List<ProfileWorkspace>> loadWorkspaces() async => const [];
+  Future<List<ProfileWorkspace>> loadWorkspaces({
+    void Function(List<ProfileWorkspace>)? onCached,
+    void Function()? onCacheMiss,
+  }) async =>
+      const [];
   @override
   Future<ProfileWorkspace> switchWorkspace(String workspaceId) =>
       throw StateError('Workspace switching is unavailable offline.');
@@ -197,9 +234,15 @@ class ProfileWorkspaceState {
 final profileWorkspaceRepositoryProvider =
     Provider<ProfileWorkspaceRepository>((ref) {
   final api = ref.read(apiServiceProvider);
+  final user = ref.watch(authSessionControllerProvider).session?.user;
   return api.baseUrl.isEmpty
       ? const LocalProfileWorkspaceRepository()
-      : ApiProfileWorkspaceRepository(api);
+      : ApiProfileWorkspaceRepository(
+          api,
+          cache: ref.watch(responseCacheProvider),
+          readScope:
+              user == null ? null : () => ResponseCacheScope.fromUser(user),
+        );
 });
 
 final profileWorkspacesProvider =
@@ -207,20 +250,54 @@ final profileWorkspacesProvider =
         ProfileWorkspaceController.new);
 
 class ProfileWorkspaceController extends Notifier<ProfileWorkspaceState> {
+  String? _userId;
+  var _loadGeneration = 0;
+
   @override
   ProfileWorkspaceState build() {
-    Future.microtask(load);
+    final auth = ref.read(authSessionControllerProvider);
+    _userId = auth.session?.user.id;
+    ref.listen(authSessionControllerProvider, (_, next) {
+      Future.microtask(() {
+        if (!ref.mounted) return;
+        final userId = next.session?.user.id;
+        if (userId == _userId) return;
+        _userId = userId;
+        _loadGeneration++;
+        state = const ProfileWorkspaceState(loading: true);
+        if (next.isAuthenticated) unawaited(load());
+      });
+    }, fireImmediately: true);
+    if (auth.isAuthenticated) {
+      Future.microtask(load);
+    }
     return const ProfileWorkspaceState(loading: true);
   }
 
   Future<void> load() async {
+    final generation = ++_loadGeneration;
+    var hadCachedValue = false;
     try {
-      state = state.copyWith(loading: true, failure: null);
-      state = ProfileWorkspaceState(
-          items: await ref
-              .read(profileWorkspaceRepositoryProvider)
-              .loadWorkspaces());
+      state = state.copyWith(loading: state.items.isEmpty, failure: null);
+      final items =
+          await ref.read(profileWorkspaceRepositoryProvider).loadWorkspaces(
+        onCacheMiss: () {
+          if (state.items.isEmpty) state = state.copyWith(loading: true);
+        },
+        onCached: (items) {
+          if (!ref.mounted || generation != _loadGeneration) return;
+          hadCachedValue = true;
+          state = ProfileWorkspaceState(items: items, loading: true);
+        },
+      );
+      if (!ref.mounted || generation != _loadGeneration) return;
+      state = ProfileWorkspaceState(items: items);
     } catch (error) {
+      if (!ref.mounted || generation != _loadGeneration) return;
+      if (hadCachedValue) {
+        state = state.copyWith(loading: false, failure: null);
+        return;
+      }
       state = state.copyWith(loading: false, failure: error);
     }
   }

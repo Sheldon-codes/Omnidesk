@@ -3,9 +3,17 @@ import 'dart:async';
 import 'package:collection/collection.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-enum TicketStatus { open, inProgress, overdue, escalated, resolved }
+enum TicketStatus {
+  open,
+  inProgress,
+  pending,
+  overdue,
+  escalated,
+  resolved,
+  closed
+}
 
-enum TicketPriority { low, medium, high }
+enum TicketPriority { low, medium, high, urgent }
 
 enum TicketSource { manual, widget, call, whatsapp, email }
 
@@ -23,12 +31,23 @@ enum TicketActivityType {
 }
 
 extension TicketStatusX on TicketStatus {
+  String get apiValue => switch (this) {
+        TicketStatus.inProgress => 'in_progress',
+        TicketStatus.pending => 'pending',
+        TicketStatus.overdue => 'overdue',
+        TicketStatus.escalated => 'escalated',
+        TicketStatus.resolved => 'resolved',
+        TicketStatus.closed => 'closed',
+        TicketStatus.open => 'open',
+      };
   String get label => switch (this) {
         TicketStatus.open => 'Open',
         TicketStatus.inProgress => 'In progress',
+        TicketStatus.pending => 'Pending',
         TicketStatus.overdue => 'Overdue',
         TicketStatus.escalated => 'Escalated',
         TicketStatus.resolved => 'Resolved',
+        TicketStatus.closed => 'Closed',
       };
 }
 
@@ -148,15 +167,24 @@ class TicketActivity {
 class TicketRecord {
   const TicketRecord({
     required this.id,
+    this.displayId,
     required this.subject,
     required this.customerLabel,
     required this.sourceActor,
     required this.source,
+    this.sourceRaw,
     required this.status,
+    this.statusRaw,
     required this.priority,
+    this.priorityRaw,
     required this.department,
     required this.description,
     required this.assignedAgent,
+    this.assignedAgentId,
+    this.departmentId,
+    this.categoryId,
+    this.slaDeadline,
+    this.isOverdue = false,
     required this.createdAt,
     required this.updatedAt,
     required this.sourceContext,
@@ -171,19 +199,28 @@ class TicketRecord {
     this.capabilities = const TicketCapabilities(),
   });
   final String id;
+  final String? displayId;
   final String subject;
   final String customerLabel;
   final String sourceActor;
   final String? customerId;
   final TicketSource source;
+  final String? sourceRaw;
   final TicketStatus status;
+  final String? statusRaw;
   final TicketPriority priority;
+  final String? priorityRaw;
   final String department;
+  final String? departmentId;
   final String? category;
+  final String? categoryId;
   final String? sla;
+  final DateTime? slaDeadline;
+  final bool isOverdue;
   final String? contactIdentifier;
   final TicketDescription description;
   final String assignedAgent;
+  final String? assignedAgentId;
   final DateTime createdAt;
   final DateTime updatedAt;
   final TicketResolution? resolution;
@@ -195,6 +232,7 @@ class TicketRecord {
   String get customer => customerLabel;
 
   TicketRecord copyWith({
+    String? displayId,
     String? subject,
     String? customerLabel,
     String? customerId,
@@ -213,20 +251,29 @@ class TicketRecord {
   }) =>
       TicketRecord(
         id: id,
+        displayId: displayId ?? this.displayId,
         subject: subject ?? this.subject,
         customerLabel: customerLabel ?? this.customerLabel,
         sourceActor: sourceActor,
         customerId: customerId ?? this.customerId,
         source: source,
+        sourceRaw: sourceRaw,
         status: status ?? this.status,
+        statusRaw: status == null ? statusRaw : status.name,
         priority: priority ?? this.priority,
+        priorityRaw: priority == null ? priorityRaw : priority.name,
         department: department ?? this.department,
+        departmentId: departmentId,
         category:
             identical(category, _keep) ? this.category : category as String?,
+        categoryId: categoryId,
         sla: sla,
+        slaDeadline: slaDeadline,
+        isOverdue: isOverdue,
         contactIdentifier: contactIdentifier ?? this.contactIdentifier,
         description: description ?? this.description,
         assignedAgent: assignedAgent ?? this.assignedAgent,
+        assignedAgentId: assignedAgentId,
         createdAt: createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
         resolution: identical(resolution, _keep)

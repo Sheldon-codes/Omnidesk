@@ -24,18 +24,18 @@ class TicketDetailsPageWidget extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = FlutterFlowTheme.of(context);
-    final state = ref.watch(ticketDetailsNotifierProvider(ticketId: ticketId));
+    final state = ref.watch(ticketDetailsProvider(ticketId: ticketId));
     final notifier =
-        ref.read(ticketDetailsNotifierProvider(ticketId: ticketId).notifier);
-    if (state.loading) {
+        ref.read(ticketDetailsProvider(ticketId: ticketId).notifier);
+    if (state.loading && state.ticket == null) {
       return Scaffold(
           backgroundColor: theme.primaryBackground,
-          body: const Center(child: CircularProgressIndicator()));
+          body: const _TicketDetailsSkeleton());
     }
     if (state.notFound) {
       return _MessagePage(label: 'Ticket not found', onBack: context.pop);
     }
-    if (state.failure != null || state.ticket == null) {
+    if (state.failure != null && state.ticket == null || state.ticket == null) {
       return _MessagePage(
           label: 'Unable to load ticket',
           onBack: context.pop,
@@ -78,22 +78,35 @@ class TicketDetailsPageWidget extends ConsumerWidget {
               child: _Section(
                   title: 'Description',
                   theme: theme,
-                  child: SanitizedEmailBodyRenderer(
-                    body: EmailBody(
-                        plainText: ticket.description.plainText,
-                        html: ticket.description.html),
-                    theme: theme,
-                    showRemoteImages: false,
-                    onLoadRemoteImages: () =>
-                        _snack(context, 'Remote images are blocked'),
-                    onLinkTap: (_) => _snack(context, 'Coming soon'),
-                  ))),
+                  child: state.hasLoadedDetail
+                      ? SanitizedEmailBodyRenderer(
+                          body: EmailBody(
+                              plainText: ticket.description.plainText,
+                              html: ticket.description.html),
+                          theme: theme,
+                          showRemoteImages: false,
+                          onLoadRemoteImages: () =>
+                              _snack(context, 'Remote images are blocked'),
+                          onLinkTap: (_) => _snack(context, 'Coming soon'),
+                        )
+                      : state.failure != null
+                          ? _InlineDetailError(
+                              message: state.failure.toString(),
+                              onRetry: notifier.load,
+                              theme: theme)
+                          : const _DescriptionSkeleton())),
           SliverToBoxAdapter(
               child: _Section(
                   title: 'Details',
                   theme: theme,
-                  child: _Details(ticket: ticket, theme: theme))),
-          if (ticket.resolution != null)
+                  child: _Details(
+                    ticket: ticket,
+                    theme: theme,
+                    loading: state.loading && !state.hasLoadedDetail,
+                  ))),
+          if ((ticket.statusRaw == 'resolved' ||
+                  ticket.status == TicketStatus.resolved) ||
+              ticket.resolution != null)
             SliverToBoxAdapter(
                 child: _Section(
                     title: 'Resolution',
@@ -101,9 +114,10 @@ class TicketDetailsPageWidget extends ConsumerWidget {
                     child: _Resolution(
                         ticket: ticket,
                         theme: theme,
-                        onReopen: ticket.capabilities.canResolve
-                            ? () => _confirmReopen(context, ref, ticket)
-                            : null))),
+                        onReopen:
+                            ticket.capabilities.canResolve && !state.mutating
+                                ? () => _confirmReopen(context, ref, ticket)
+                                : null))),
           SliverToBoxAdapter(
               child: _Section(
                   title: ticket.source == TicketSource.call
@@ -119,23 +133,35 @@ class TicketDetailsPageWidget extends ConsumerWidget {
               child: _Section(
                   title: 'Activity',
                   theme: theme,
-                  child: _Activity(
-                      items: state.activity,
-                      loadingMore: state.loadingMore,
-                      canLoadMore: state.nextActivityCursor != null,
-                      onLoadMore: notifier.loadMore,
-                      theme: theme))),
+                  child: state.hasLoadedDetail
+                      ? _Activity(
+                          items: state.activity,
+                          loadingMore: state.loadingMore,
+                          canLoadMore: false,
+                          onLoadMore: notifier.loadMore,
+                          theme: theme)
+                      : state.failure != null
+                          ? _InlineDetailError(
+                              message: state.failure.toString(),
+                              onRetry: notifier.load,
+                              theme: theme)
+                          : const _ActivitySkeleton(theme: null))),
           const SliverToBoxAdapter(child: SizedBox(height: 96)),
         ]),
       ),
       bottomNavigationBar: ticket.capabilities.canResolve &&
-              ticket.status != TicketStatus.resolved
+              ticket.statusRaw != 'resolved' &&
+              ticket.statusRaw != 'closed' &&
+              ticket.status != TicketStatus.resolved &&
+              ticket.status != TicketStatus.closed
           ? SafeArea(
               top: false,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
                 child: FilledButton(
-                  onPressed: () => _resolve(context, ref, ticket),
+                  onPressed: state.mutating
+                      ? null
+                      : () => _resolve(context, ref, ticket),
                   style: FilledButton.styleFrom(
                       minimumSize: const Size.fromHeight(50),
                       backgroundColor: theme.primary,
@@ -281,8 +307,14 @@ class TicketDetailsPageWidget extends ConsumerWidget {
       builder: (_) => const _ResolutionSheet(),
     );
     if (note == null || note.isEmpty) return;
-    await ref.read(ticketStoreProvider.notifier).resolve(ticket.id, note);
-    if (context.mounted) _snack(context, 'Ticket resolved');
+    try {
+      await ref
+          .read(ticketDetailsProvider(ticketId: ticket.id).notifier)
+          .resolve(note);
+      if (context.mounted) _snack(context, 'Ticket resolved');
+    } catch (error) {
+      if (context.mounted) _snack(context, 'Could not resolve ticket: $error');
+    }
   }
 
   Future<void> _confirmReopen(
@@ -290,8 +322,14 @@ class TicketDetailsPageWidget extends ConsumerWidget {
     if (await _confirm(context, 'Reopen ticket?',
             'The ticket will return to the open queue.', 'Reopen') ==
         true) {
-      await ref.read(ticketStoreProvider.notifier).reopen(ticket.id);
-      if (context.mounted) _snack(context, 'Ticket reopened');
+      try {
+        await ref
+            .read(ticketDetailsProvider(ticketId: ticket.id).notifier)
+            .reopen();
+        if (context.mounted) _snack(context, 'Ticket reopened');
+      } catch (error) {
+        if (context.mounted) _snack(context, 'Could not reopen ticket: $error');
+      }
     }
   }
 }
@@ -388,7 +426,7 @@ class _TicketIdentity extends StatelessWidget {
   @override
   Widget build(BuildContext context) =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(ticket.id,
+        Text(ticket.displayId ?? ticket.id,
             style: theme.labelLarge
                 .override(color: theme.primary, fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
@@ -399,11 +437,15 @@ class _TicketIdentity extends StatelessWidget {
                 letterSpacing: -.4)),
         const SizedBox(height: 9),
         Text(
-            '${ticket.status.label} · ${ticket.priority.label} · ${ticket.source.label}',
+            '${_ticketStatusLabel(ticket)} · ${ticket.priorityRaw ?? ticket.priority.label} · ${ticket.sourceRaw ?? ticket.source.label}',
             style: theme.bodySmall.override(
-                color: ticket.status == TicketStatus.resolved
+                color: ticket.statusRaw == 'resolved' ||
+                        ticket.statusRaw == 'closed' ||
+                        ticket.status == TicketStatus.resolved ||
+                        ticket.status == TicketStatus.closed
                     ? theme.success
-                    : ticket.status == TicketStatus.overdue ||
+                    : ticket.isOverdue ||
+                            ticket.status == TicketStatus.overdue ||
                             ticket.status == TicketStatus.escalated
                         ? theme.error
                         : theme.secondaryText,
@@ -468,17 +510,19 @@ class _CustomerRow extends StatelessWidget {
 }
 
 class _Details extends StatelessWidget {
-  const _Details({required this.ticket, required this.theme});
+  const _Details(
+      {required this.ticket, required this.theme, required this.loading});
   final TicketRecord ticket;
   final FlutterFlowTheme theme;
+  final bool loading;
   @override
   Widget build(BuildContext context) => Column(
           children: [
         ('Department', ticket.department),
-        ('Category', ticket.category ?? 'Not provided'),
+        ('Category', ticket.category),
         ('Assigned to', ticket.assignedAgent),
-        ('Priority', ticket.priority.label),
-        ('Source', ticket.source.label),
+        ('Priority', ticket.priorityRaw ?? ticket.priority.label),
+        ('Source', ticket.sourceRaw ?? ticket.source.label),
         ('Created', _date(ticket.createdAt)),
         ('Updated', _date(ticket.updatedAt))
       ]
@@ -489,10 +533,13 @@ class _Details extends StatelessWidget {
                         child: Text(row.$1,
                             style: theme.bodySmall
                                 .override(color: theme.secondaryText))),
-                    Text(row.$2,
-                        style: theme.bodySmall.override(
-                            color: theme.primaryText,
-                            fontWeight: FontWeight.w600))
+                    if (loading && (row.$2?.isEmpty ?? true))
+                      _skeletonBar(theme, 90, 12)
+                    else
+                      Text((row.$2?.isEmpty ?? true) ? 'Not provided' : row.$2!,
+                          style: theme.bodySmall.override(
+                              color: theme.primaryText,
+                              fontWeight: FontWeight.w600))
                   ])))
               .toList());
 }
@@ -505,13 +552,19 @@ class _Resolution extends StatelessWidget {
   final VoidCallback? onReopen;
   @override
   Widget build(BuildContext context) {
-    final value = ticket.resolution!;
+    final value = ticket.resolution;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(value.note,
-          style: theme.bodyMedium.override(color: theme.primaryText)),
-      const SizedBox(height: 8),
-      Text('Resolved by ${value.resolvedBy} · ${_date(value.resolvedAt)}',
-          style: theme.bodySmall.override(color: theme.secondaryText)),
+      if (value?.note.isNotEmpty ?? false)
+        Text(value!.note,
+            style: theme.bodyMedium.override(color: theme.primaryText))
+      else
+        Text('This ticket has been resolved.',
+            style: theme.bodyMedium.override(color: theme.secondaryText)),
+      if (value != null) ...[
+        const SizedBox(height: 8),
+        Text('Resolved by ${value.resolvedBy} · ${_date(value.resolvedAt)}',
+            style: theme.bodySmall.override(color: theme.secondaryText)),
+      ],
       if (onReopen != null) ...[
         const SizedBox(height: 14),
         OutlinedButton.icon(
@@ -549,10 +602,189 @@ class _Source extends StatelessWidget {
                 maxLines: 2, overflow: TextOverflow.ellipsis),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => context.push('/email/${source.threadId}')),
-        _ => Text('Created manually',
+        _ => Text(
+            ticket.source == TicketSource.manual
+                ? 'Created manually'
+                : '${ticket.sourceRaw ?? ticket.source.label} source details are not available in the ticket response.',
             style: theme.bodyMedium.override(color: theme.secondaryText)),
       };
 }
+
+String _ticketStatusLabel(TicketRecord ticket) => ticket.statusRaw == null
+    ? ticket.status.label
+    : ticket.statusRaw!
+        .replaceAll('_', ' ')
+        .split(' ')
+        .map((part) => part.isEmpty
+            ? part
+            : '${part[0].toUpperCase()}${part.substring(1)}')
+        .join(' ');
+
+class _TicketDetailsSkeleton extends StatelessWidget {
+  const _TicketDetailsSkeleton();
+  @override
+  Widget build(BuildContext context) {
+    final theme = FlutterFlowTheme.of(context);
+    return Scaffold(
+      backgroundColor: theme.primaryBackground,
+      body: SafeArea(
+        bottom: false,
+        child: CustomScrollView(slivers: [
+          SliverAppBar(
+            pinned: true,
+            backgroundColor: theme.primaryBackground,
+            surfaceTintColor: theme.primaryBackground,
+            leading: IconButton(
+              tooltip: 'Back',
+              onPressed: context.pop,
+              icon: Icon(IconsaxPlusBroken.arrow_left_2,
+                  color: theme.primaryText),
+            ),
+          ),
+          SliverToBoxAdapter(
+              child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _skeletonBar(theme, 72, 11),
+                        const SizedBox(height: 10),
+                        _skeletonBar(theme, 260, 22),
+                        const SizedBox(height: 12),
+                        _skeletonBar(theme, 170, 12),
+                      ]))),
+          SliverToBoxAdapter(
+              child: _Section(
+                  title: 'Customer',
+                  theme: theme,
+                  child: const _CustomerSkeleton(theme: null))),
+          SliverToBoxAdapter(
+              child: _Section(
+                  title: 'Description',
+                  theme: theme,
+                  child: const _DescriptionSkeleton())),
+          SliverToBoxAdapter(
+              child: _Section(
+                  title: 'Details',
+                  theme: theme,
+                  child: _DetailsSkeleton(theme: theme))),
+          SliverToBoxAdapter(
+              child: _Section(
+                  title: 'Activity',
+                  theme: theme,
+                  child: _ActivitySkeleton(theme: theme))),
+        ]),
+      ),
+    );
+  }
+}
+
+class _CustomerSkeleton extends StatelessWidget {
+  const _CustomerSkeleton({required this.theme});
+  final FlutterFlowTheme? theme;
+  @override
+  Widget build(BuildContext context) {
+    final t = theme ?? FlutterFlowTheme.of(context);
+    return Row(children: [
+      CircleAvatar(radius: 20, backgroundColor: t.alternate),
+      const SizedBox(width: 12),
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _skeletonBar(t, 130, 14),
+        const SizedBox(height: 8),
+        _skeletonBar(t, 190, 11),
+      ]),
+    ]);
+  }
+}
+
+class _DescriptionSkeleton extends StatelessWidget {
+  const _DescriptionSkeleton();
+  @override
+  Widget build(BuildContext context) {
+    final theme = FlutterFlowTheme.of(context);
+    return ExcludeSemantics(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _skeletonBar(theme, double.infinity, 13),
+        const SizedBox(height: 9),
+        _skeletonBar(theme, double.infinity, 13),
+        const SizedBox(height: 9),
+        _skeletonBar(theme, 210, 13),
+      ]),
+    );
+  }
+}
+
+class _DetailsSkeleton extends StatelessWidget {
+  const _DetailsSkeleton({required this.theme});
+  final FlutterFlowTheme theme;
+  @override
+  Widget build(BuildContext context) => ExcludeSemantics(
+        child: Column(children: [
+          for (var i = 0; i < 5; i++) ...[
+            if (i > 0) const SizedBox(height: 13),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              _skeletonBar(theme, 76, 11),
+              _skeletonBar(theme, 110, 12),
+            ]),
+          ],
+        ]),
+      );
+}
+
+class _ActivitySkeleton extends StatelessWidget {
+  const _ActivitySkeleton({required this.theme});
+  final FlutterFlowTheme? theme;
+  @override
+  Widget build(BuildContext context) {
+    final t = theme ?? FlutterFlowTheme.of(context);
+    return ExcludeSemantics(
+      child: Column(children: [
+        for (var i = 0; i < 3; i++) ...[
+          if (i > 0) Divider(height: 20, color: t.alternate),
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            CircleAvatar(radius: 14, backgroundColor: t.alternate),
+            const SizedBox(width: 10),
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  _skeletonBar(t, 128, 13),
+                  const SizedBox(height: 8),
+                  _skeletonBar(t, double.infinity, 11),
+                  const SizedBox(height: 7),
+                  _skeletonBar(t, 84, 10),
+                ])),
+          ]),
+        ],
+      ]),
+    );
+  }
+}
+
+class _InlineDetailError extends StatelessWidget {
+  const _InlineDetailError(
+      {required this.message, required this.onRetry, required this.theme});
+  final String message;
+  final VoidCallback onRetry;
+  final FlutterFlowTheme theme;
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        Expanded(
+            child: Text(message,
+                style: theme.bodySmall.override(color: theme.secondaryText))),
+        TextButton(onPressed: onRetry, child: const Text('Retry')),
+      ]);
+}
+
+Widget _skeletonBar(FlutterFlowTheme theme, double width, double height) =>
+    Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: theme.alternate.withValues(alpha: .62),
+        borderRadius: BorderRadius.circular(height / 2),
+      ),
+    );
 
 class _CallRow extends StatelessWidget {
   const _CallRow({required this.call, required this.theme});

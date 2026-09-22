@@ -1,9 +1,8 @@
 import 'dart:convert';
 
-import 'package:path/path.dart' as path;
-import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../../services/app_local_database.dart';
 import 'email_page_model.dart';
 
 abstract class EmailDraftRepository {
@@ -13,35 +12,50 @@ abstract class EmailDraftRepository {
 }
 
 class SqliteEmailDraftRepository implements EmailDraftRepository {
-  Database? _database;
+  SqliteEmailDraftRepository({
+    AppLocalDatabase? localDatabase,
+    required String scopeKey,
+  })  : _localDatabase = localDatabase ?? AppLocalDatabase(),
+        _scopeKey = Uri.encodeComponent(scopeKey);
 
-  Future<Database> get _db async {
-    if (_database case final existing?) return existing;
-    final directory = await getApplicationSupportDirectory();
-    _database = await openDatabase(
-      path.join(directory.path, 'omnidesk_email_drafts.db'),
-      version: 1,
-      onCreate: (database, _) => database.execute('''
-        CREATE TABLE email_drafts (
-          draft_key TEXT PRIMARY KEY,
-          thread_id TEXT,
-          mode TEXT NOT NULL,
-          payload TEXT NOT NULL,
-          updated_at INTEGER NOT NULL
-        )
-      '''),
-    );
-    return _database!;
-  }
+  final AppLocalDatabase _localDatabase;
+  final String _scopeKey;
+
+  String _storageKey(String key) => '$_scopeKey::$key';
+
+  Future<Database> get _db => _localDatabase.database;
 
   @override
   Future<EmailDraft?> load(String key) async {
-    final rows = await (await _db).query(
+    final db = await _db;
+    final scopedKey = _storageKey(key);
+    var rows = await db.query(
       'email_drafts',
       where: 'draft_key = ?',
-      whereArgs: [key],
+      whereArgs: [scopedKey],
       limit: 1,
     );
+    if (rows.isEmpty) {
+      // One-time adoption of drafts created before account/workspace scoping.
+      // The old format was device-local and single-account; move it atomically
+      // into the currently authenticated partition on first use.
+      rows = await db.query(
+        'email_drafts',
+        where: 'draft_key = ?',
+        whereArgs: [key],
+        limit: 1,
+      );
+      if (rows.isNotEmpty) {
+        await db.transaction((transaction) async {
+          final row = Map<String, Object?>.from(rows.single)
+            ..['draft_key'] = scopedKey;
+          await transaction.insert('email_drafts', row,
+              conflictAlgorithm: ConflictAlgorithm.ignore);
+          await transaction
+              .delete('email_drafts', where: 'draft_key = ?', whereArgs: [key]);
+        });
+      }
+    }
     if (rows.isEmpty) return null;
     return _fromPayload(
       key,
@@ -57,7 +71,7 @@ class SqliteEmailDraftRepository implements EmailDraftRepository {
     await (await _db).insert(
       'email_drafts',
       {
-        'draft_key': draft.key,
+        'draft_key': _storageKey(draft.key),
         'thread_id': draft.threadId,
         'mode': draft.mode.name,
         'payload': jsonEncode(_payload(draft)),
@@ -72,7 +86,7 @@ class SqliteEmailDraftRepository implements EmailDraftRepository {
     await (await _db).delete(
       'email_drafts',
       where: 'draft_key = ?',
-      whereArgs: [key],
+      whereArgs: [_storageKey(key)],
     );
   }
 

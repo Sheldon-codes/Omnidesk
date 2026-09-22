@@ -2,14 +2,15 @@
 
 part of 'ticket_details_page_model.dart';
 
-// ***************************************************************************
+// **************************************************************************
 // RiverpodGenerator
-// ***************************************************************************
+// **************************************************************************
 
+// GENERATED CODE - DO NOT MODIFY BY HAND
 // ignore_for_file: type=lint, type=warning
 
 @ProviderFor(TicketDetailsNotifier)
-final ticketDetailsNotifierProvider = TicketDetailsNotifierFamily._();
+final ticketDetailsProvider = TicketDetailsNotifierFamily._();
 
 final class TicketDetailsNotifierProvider
     extends $NotifierProvider<TicketDetailsNotifier, TicketDetailsState> {
@@ -18,21 +19,47 @@ final class TicketDetailsNotifierProvider
       required String super.argument})
       : super(
           retry: null,
-          name: r'ticketDetailsNotifierProvider',
+          name: r'ticketDetailsProvider',
           isAutoDispose: true,
           dependencies: null,
           $allTransitiveDependencies: null,
         );
+
   @override
-  String debugGetCreateSourceHash() => r'ticket-details';
+  String debugGetCreateSourceHash() => _$ticketDetailsNotifierHash();
+
+  @override
+  String toString() {
+    return r'ticketDetailsProvider'
+        ''
+        '($argument)';
+  }
+
+  @$internal
   @override
   TicketDetailsNotifier create() => TicketDetailsNotifier();
+
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(TicketDetailsState value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<TicketDetailsState>(value),
+    );
+  }
+
   @override
-  bool operator ==(Object other) =>
-      other is TicketDetailsNotifierProvider && other.argument == argument;
+  bool operator ==(Object other) {
+    return other is TicketDetailsNotifierProvider && other.argument == argument;
+  }
+
   @override
-  int get hashCode => argument.hashCode;
+  int get hashCode {
+    return argument.hashCode;
+  }
 }
+
+String _$ticketDetailsNotifierHash() =>
+    r'83a03bbe0e8af8337102fe01bcb9fef00a3c3935';
 
 final class TicketDetailsNotifierFamily extends $Family
     with
@@ -41,19 +68,28 @@ final class TicketDetailsNotifierFamily extends $Family
   TicketDetailsNotifierFamily._()
       : super(
           retry: null,
-          name: r'ticketDetailsNotifierProvider',
+          name: r'ticketDetailsProvider',
           dependencies: null,
           $allTransitiveDependencies: null,
           isAutoDispose: true,
         );
-  TicketDetailsNotifierProvider call({required String ticketId}) =>
+
+  TicketDetailsNotifierProvider call({
+    required String ticketId,
+  }) =>
       TicketDetailsNotifierProvider._(argument: ticketId, from: this);
+
+  @override
+  String toString() => r'ticketDetailsProvider';
 }
 
 abstract class _$TicketDetailsNotifier extends $Notifier<TicketDetailsState> {
   late final _$args = ref.$arg as String;
   String get ticketId => _$args;
-  TicketDetailsState build({required String ticketId});
+
+  TicketDetailsState build({
+    required String ticketId,
+  });
   @$mustCallSuper
   @override
   void runBuild() {
@@ -63,6 +99,10 @@ abstract class _$TicketDetailsNotifier extends $Notifier<TicketDetailsState> {
         TicketDetailsState,
         Object?,
         Object?>;
-    element.handleCreate(ref, () => build(ticketId: _$args));
+    element.handleCreate(
+        ref,
+        () => build(
+              ticketId: _$args,
+            ));
   }
 }

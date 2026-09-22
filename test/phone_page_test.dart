@@ -1,30 +1,86 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omnidesk_agent/components/call_experience/call_session_controller.dart';
 import 'package:omnidesk_agent/pages/phone_page/phone_page_widget.dart';
+import 'package:omnidesk_agent/pages/customer_editor_page/customer_editor_page_model.dart';
+import 'package:omnidesk_agent/pages/customers_page/customer_repository.dart';
+
+class _PhoneCustomersRepository implements CustomerRepository {
+  static const _rows = [
+    CustomerRecord(
+        id: 'c1', name: 'Aloise Obaga Kaizen School', phone: '+254723506031'),
+    CustomerRecord(id: 'c2', name: 'Customer Two', phone: '+254700000002'),
+    CustomerRecord(id: 'c3', name: 'Customer Three', phone: '+254700000003'),
+    CustomerRecord(id: 'c4', name: 'Customer Four', phone: '+254700000004'),
+    CustomerRecord(id: 'c5', name: 'Customer Five', phone: '+254700000005'),
+    CustomerRecord(id: 'c6', name: 'Customer Six', phone: '+254700000006'),
+    CustomerRecord(id: 'c7', name: 'Customer Seven', phone: '+254700000007'),
+  ];
+
+  @override
+  Future<CustomerPageResult> list({
+    String search = '',
+    int page = 1,
+    int perPage = 20,
+    CancelToken? cancelToken,
+    void Function(CustomerPageResult)? onCached,
+    void Function()? onCacheMiss,
+  }) async =>
+      CustomerPageResult(
+        customers: _rows
+            .where(
+                (row) => row.name.toLowerCase().contains(search.toLowerCase()))
+            .toList(growable: false),
+        page: page,
+        lastPage: 1,
+        total: _rows.length,
+      );
+
+  @override
+  Future<CustomerProfile> profile(String id,
+          {CancelToken? cancelToken,
+          void Function(CustomerProfile)? onCached,
+          void Function()? onCacheMiss}) =>
+      throw UnimplementedError();
+}
 
 void main() {
-  test('Phone provider starts on an empty live-history Recents state', () {
-    final container = ProviderContainer();
+  test('Phone provider starts on an empty live-history Recents state',
+      () async {
+    final container = ProviderContainer(overrides: [
+      customerRepositoryProvider.overrideWithValue(_PhoneCustomersRepository()),
+    ]);
     addTearDown(container.dispose);
+    final subscription = container.listen(phonePageProvider, (_, __) {});
+    addTearDown(subscription.close);
 
     final notifier = container.read(phonePageProvider.notifier);
     expect(container.read(phonePageProvider).tab, PhoneTab.recents);
     expect(container.read(phonePageProvider).subtitle, 'Call history');
 
     notifier.selectTab(PhoneTab.contacts);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
     expect(container.read(phonePageProvider).subtitle, '7 contacts');
     expect(container.read(phonePageProvider).query, isEmpty);
     expect(container.read(phonePageProvider).filteredContacts, hasLength(7));
   });
 
-  test('Phone keypad state supports entry, deletion, matching, and reset', () {
-    final container = ProviderContainer();
+  test('Phone keypad state supports entry, deletion, matching, and reset',
+      () async {
+    final container = ProviderContainer(overrides: [
+      customerRepositoryProvider.overrideWithValue(_PhoneCustomersRepository()),
+    ]);
     addTearDown(container.dispose);
+    final subscription = container.listen(phonePageProvider, (_, __) {});
+    addTearDown(subscription.close);
     final notifier = container.read(phonePageProvider.notifier);
 
     notifier.openDialPad();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
     expect(container.read(phonePageProvider).viewMode, PhoneViewMode.dialPad);
     notifier.appendDigit('+'); // Unsupported symbols are ignored.
     notifier.appendDigit('7');
@@ -64,7 +120,11 @@ void main() {
   testWidgets('Phone search appears below tabs and filters contacts',
       (tester) async {
     await tester.pumpWidget(
-      const ProviderScope(
+      ProviderScope(
+        overrides: [
+          customerRepositoryProvider
+              .overrideWithValue(_PhoneCustomersRepository()),
+        ],
         child: MaterialApp(home: PhonePageWidget()),
       ),
     );
@@ -99,7 +159,11 @@ void main() {
   testWidgets('Add contact stays in the header and keypad is Recents-only',
       (tester) async {
     await tester.pumpWidget(
-      const ProviderScope(
+      ProviderScope(
+        overrides: [
+          customerRepositoryProvider
+              .overrideWithValue(_PhoneCustomersRepository()),
+        ],
         child: MaterialApp(home: PhonePageWidget()),
       ),
     );
@@ -129,7 +193,9 @@ void main() {
 
   testWidgets('dial pad hands a non-empty number to the global call session',
       (tester) async {
-    final container = ProviderContainer();
+    final container = ProviderContainer(overrides: [
+      customerRepositoryProvider.overrideWithValue(_PhoneCustomersRepository()),
+    ]);
     addTearDown(container.dispose);
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
@@ -153,7 +219,10 @@ void main() {
   testWidgets('Recents never renders fabricated call history or demo actions',
       (tester) async {
     await tester.pumpWidget(
-      const ProviderScope(child: MaterialApp(home: PhonePageWidget())),
+      ProviderScope(overrides: [
+        customerRepositoryProvider
+            .overrideWithValue(_PhoneCustomersRepository()),
+      ], child: const MaterialApp(home: PhonePageWidget())),
     );
     await tester.pumpAndSettle();
 

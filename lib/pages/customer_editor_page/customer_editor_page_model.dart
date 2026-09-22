@@ -1,5 +1,7 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../../services/auth_session_controller.dart';
+
 part 'customer_editor_page_model.g.dart';
 
 class CustomerRecord {
@@ -10,6 +12,8 @@ class CustomerRecord {
     this.phone = '',
     this.company = '',
     this.notes = '',
+    this.ticketsCount,
+    this.createdAt,
   });
 
   final String id;
@@ -18,12 +22,17 @@ class CustomerRecord {
   final String phone;
   final String company;
   final String notes;
+  final int? ticketsCount;
+  final DateTime? createdAt;
 }
 
 @Riverpod(keepAlive: true)
 class CustomersStore extends _$CustomersStore {
   @override
-  List<CustomerRecord> build() => _initialCustomers;
+  List<CustomerRecord> build() {
+    ref.watch(authSessionControllerProvider);
+    return const [];
+  }
 
   CustomerRecord? findById(String id) =>
       state.where((customer) => customer.id == id).firstOrNull;
@@ -33,6 +42,16 @@ class CustomersStore extends _$CustomersStore {
   void update(CustomerRecord customer) => state = [
         for (final item in state) item.id == customer.id ? customer : item,
       ];
+
+  void upsertAll(Iterable<CustomerRecord> customers) {
+    final byId = {for (final item in state) item.id: item};
+    for (final customer in customers) {
+      byId[customer.id] = customer;
+    }
+    state = byId.values.toList(growable: false);
+  }
+
+  void upsert(CustomerRecord customer) => upsertAll([customer]);
 }
 
 enum CustomerEditorMode { create, edit }
@@ -177,22 +196,3 @@ class CustomerEditorNotifier extends _$CustomerEditorNotifier {
     return record;
   }
 }
-
-const _initialCustomers = <CustomerRecord>[
-  CustomerRecord(
-    id: 'aloise-obaga',
-    name: 'Aloise Obaga Kaizen School',
-    email: 'aloise.obaga@example.com',
-    phone: '+254723506031',
-    company: 'Kaizen School',
-    notes:
-        'Primary school contact for technical support and billing follow-up.',
-  ),
-  CustomerRecord(
-      id: 'caller-1967', name: 'Caller 1967', phone: '+254720261967'),
-  CustomerRecord(id: 'cool-customer', name: '😎', phone: '+254721161652'),
-  CustomerRecord(id: 'contact-2945', name: '', phone: '+29454885757108'),
-  CustomerRecord(id: 'nana', name: 'Nana', phone: '+254719106280'),
-  CustomerRecord(id: 'contact-4390', name: '', phone: '+43907731261010'),
-  CustomerRecord(id: 'otieno', name: 'otieno', email: 'sullyvan83@gmail.com'),
-];
