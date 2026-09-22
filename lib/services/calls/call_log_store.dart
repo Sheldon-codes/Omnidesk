@@ -167,10 +167,51 @@ class CallLogStore extends Notifier<CallLogState> {
       return;
     }
     final generation = _generation;
+    final requestedPage = state.page + 1;
+    final user = ref.read(authSessionControllerProvider).session?.user;
+    final scope = user == null ? null : ResponseCacheScope.fromUser(user);
+    final cache = ref.read(responseCacheProvider);
+    final cacheEpoch = cache.writeEpoch;
+    var hadCachedPage = false;
     state = state.copyWith(loadingMore: true, error: null);
+    if (scope != null) {
+      try {
+        final cached = await cache.read(
+          scope: scope,
+          module: 'calls',
+          key: 'history:${stableCacheQueryKey({
+                'page': requestedPage,
+                'per_page': 20,
+              })}',
+        );
+        if (cached?.schemaVersion == responseCacheSchemaVersion &&
+            cached?.payload is Map &&
+            ref.mounted &&
+            generation == _generation) {
+          final page = CallLogPage.fromJson(
+            cached!.payload,
+            requestedPage: requestedPage,
+          );
+          final ids = state.records.map((record) => record.id).toSet();
+          state = state.copyWith(
+            records: [
+              ...state.records,
+              ...page.records.where((record) => ids.add(record.id)),
+            ],
+            page: page.page,
+            hasMore: page.hasMore,
+            loadingMore: true,
+          );
+          hadCachedPage = true;
+        }
+      } catch (_) {
+        // A malformed or old cached page is a miss; the API remains the
+        // source of truth and will replace it after a successful response.
+      }
+    }
     try {
       final result =
-          await ref.read(callApiProvider).getCallLogs(page: state.page + 1);
+          await ref.read(callApiProvider).getCallLogs(page: requestedPage);
       if (!ref.mounted || generation != _generation) return;
       final ids = state.records.map((record) => record.id).toSet();
       state = state.copyWith(
@@ -182,22 +223,24 @@ class CallLogStore extends Notifier<CallLogState> {
         hasMore: result.hasMore,
         loadingMore: false,
       );
-      final user = ref.read(authSessionControllerProvider).session?.user;
-      if (user != null) {
-        final scope = ResponseCacheScope.fromUser(user);
-        unawaited(ref.read(responseCacheProvider).write(
-              scope: scope,
-              module: 'calls',
-              key: 'history:${stableCacheQueryKey({
-                    'page': result.page,
-                    'per_page': 20
-                  })}',
-              payload: _pageJson(result),
-            ));
+      if (scope != null) {
+        unawaited(cache.write(
+          scope: scope,
+          module: 'calls',
+          key: 'history:${stableCacheQueryKey({
+                'page': result.page,
+                'per_page': 20
+              })}',
+          payload: _pageJson(result),
+          expectedEpoch: cacheEpoch,
+        ));
       }
     } catch (error) {
       if (!ref.mounted || generation != _generation) return;
-      state = state.copyWith(loadingMore: false, error: _messageFor(error));
+      state = state.copyWith(
+        loadingMore: false,
+        error: hadCachedPage ? null : _messageFor(error),
+      );
     }
   }
 
