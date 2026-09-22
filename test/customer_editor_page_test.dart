@@ -5,14 +5,14 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:omnidesk_agent/pages/customer_editor_page/customer_editor_page_widget.dart';
 
 void main() {
-  test('customer editor validates and stores a new customer', () {
+  test('customer editor validates and stores a new customer', () async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     final notifier =
         container.read(customerEditorProvider(customerId: null).notifier);
     notifier.setName('New Customer');
     notifier.setEmail('customer@example.com');
-    final record = notifier.submit();
+    final record = await notifier.submit();
     expect(record?.name, 'New Customer');
     expect(
         container.read(customersStoreProvider),

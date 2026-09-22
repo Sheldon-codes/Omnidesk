@@ -96,6 +96,13 @@ abstract interface class CustomerRepository {
     void Function(CustomerProfile value)? onCached,
     void Function()? onCacheMiss,
   });
+
+  Future<CustomerRecord> update(
+    String id, {
+    required Map<String, Object?> fields,
+    required CustomerRecord fallback,
+    CancelToken? cancelToken,
+  });
 }
 
 class RemoteCustomerRepository implements CustomerRepository {
@@ -107,6 +114,72 @@ class RemoteCustomerRepository implements CustomerRepository {
   final ApiService _api;
   final ResponseCache? _cache;
   final ResponseCacheScope? Function()? _readScope;
+
+  @override
+  Future<CustomerRecord> update(
+    String id, {
+    required Map<String, Object?> fields,
+    required CustomerRecord fallback,
+    CancelToken? cancelToken,
+  }) async {
+    if (fields.isEmpty) return fallback;
+    final raw = await _api.put(
+      '/customers/${Uri.encodeComponent(id)}',
+      fields.cast<String, dynamic>(),
+      cancelToken: cancelToken,
+    );
+    final root = _map(raw, 'customer update response');
+    final customerJson = root['customer'];
+    if (customerJson is! Map) {
+      throw const FormatException('Updated customer is missing.');
+    }
+    final json = _map(customerJson, 'updated customer');
+    final updated = _mergeUpdatedCustomer(json, fallback);
+    final cache = _cache;
+    final scope = _readScope?.call();
+    if (cache != null && scope != null) {
+      final epoch = cache.writeEpoch;
+      await cache.updateModuleJson(
+        scope: scope,
+        module: 'customers',
+        expectedEpoch: epoch,
+        update: (key, snapshot) {
+          if (snapshot is! Map) return snapshot;
+          final root = Map<String, dynamic>.from(
+            snapshot.map((key, value) => MapEntry(key.toString(), value)),
+          );
+          if (key.startsWith('profile:')) {
+            final cachedCustomer = root['customer'];
+            if (cachedCustomer is! Map || _string(cachedCustomer['id']) != id) {
+              return snapshot;
+            }
+            root['customer'] = {
+              ...Map<String, dynamic>.from(cachedCustomer.map(
+                (key, value) => MapEntry(key.toString(), value),
+              )),
+              ...json,
+            };
+            return root;
+          }
+          final data = root['data'];
+          if (data is List) {
+            root['data'] = data.map((row) {
+              if (row is! Map || _string(row['id']) != id) return row;
+              return {
+                ...Map<String, dynamic>.from(row.map(
+                  (key, value) => MapEntry(key.toString(), value),
+                )),
+                ...json,
+              };
+            }).toList(growable: false);
+            return root;
+          }
+          return snapshot;
+        },
+      );
+    }
+    return updated;
+  }
 
   @override
   Future<CustomerPageResult> list({
@@ -225,10 +298,41 @@ class RemoteCustomerRepository implements CustomerRepository {
         phone: _string(json['phone_number']),
         email: _string(json['email']),
         company: _string(json['company']),
+        notes: _string(json['notes']),
+        tags: json['tags'] is List
+            ? (json['tags'] as List).map((tag) => tag.toString()).toList()
+            : const [],
         ticketsCount: json['tickets_count'] == null
             ? null
             : _int(json['tickets_count'], 0),
         createdAt: DateTime.tryParse(_string(json['created_at']))?.toUtc(),
+      );
+
+  static CustomerRecord _mergeUpdatedCustomer(
+    Map<String, dynamic> json,
+    CustomerRecord fallback,
+  ) =>
+      CustomerRecord(
+        id: _string(json['id']).ifEmpty(fallback.id),
+        name: json.containsKey('name') ? _string(json['name']) : fallback.name,
+        phone: json.containsKey('phone_number')
+            ? _string(json['phone_number'])
+            : fallback.phone,
+        email:
+            json.containsKey('email') ? _string(json['email']) : fallback.email,
+        company: json.containsKey('company')
+            ? _string(json['company'])
+            : fallback.company,
+        notes:
+            json.containsKey('notes') ? _string(json['notes']) : fallback.notes,
+        tags: json['tags'] is List
+            ? (json['tags'] as List).map((tag) => tag.toString()).toList()
+            : fallback.tags,
+        ticketsCount: json['tickets_count'] == null
+            ? fallback.ticketsCount
+            : _int(json['tickets_count'], fallback.ticketsCount ?? 0),
+        createdAt: DateTime.tryParse(_string(json['created_at']))?.toUtc() ??
+            fallback.createdAt,
       );
 
   static CustomerProfileTicket _ticket(Map<String, dynamic> json) =>

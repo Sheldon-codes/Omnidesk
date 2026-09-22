@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omnidesk_agent/pages/customers_page/customer_repository.dart';
+import 'package:omnidesk_agent/pages/customer_editor_page/customer_editor_page_model.dart';
 import 'package:omnidesk_agent/services/api_service.dart';
 
 class _JsonAdapter implements HttpClientAdapter {
@@ -73,6 +74,40 @@ void main() {
     final repository =
         RemoteCustomerRepository(_api(_JsonAdapter('{"ok":true}')));
     expect(repository.profile('88'), throwsA(isA<FormatException>()));
+  });
+
+  test('update uses documented PUT partial payload and maps response',
+      () async {
+    final adapter = _JsonAdapter('''
+      {"message":"Customer updated successfully","customer":{
+      "id":88,"name":"David Mwangi","phone_number":null,
+      "email":"david@newdomain.com","company":"Nairobi Tech Ltd",
+      "notes":"Call after 9am","tags":["VIP"],
+      "updated_at":"2026-09-22T15:05:00Z"}}
+    ''');
+    final original = CustomerRecord(
+      id: '88',
+      name: 'David Mwangi',
+      phone: '+254768270973',
+      email: 'david@example.com',
+      company: 'Nairobi Tech Ltd',
+      notes: 'Old note',
+    );
+    final updated = await RemoteCustomerRepository(_api(adapter)).update(
+      '88',
+      fields: {'email': 'david@newdomain.com', 'phone_number': null},
+      fallback: original,
+    );
+    final request = adapter.requests.single;
+    expect(request.method, 'PUT');
+    expect(request.path, '/customers/88');
+    expect(
+        request.data, {'email': 'david@newdomain.com', 'phone_number': null});
+    expect(request.headers['X-Workspace-Id'], '9');
+    expect(updated.email, 'david@newdomain.com');
+    expect(updated.phone, isEmpty);
+    expect(updated.notes, 'Call after 9am');
+    expect(updated.tags, ['VIP']);
   });
 }
 

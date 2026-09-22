@@ -1,5 +1,8 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../../services/api_service.dart';
+import '../customers_page/customer_repository.dart';
+import '../customers_page/customers_page_model.dart';
 import '../../services/auth_session_controller.dart';
 
 part 'customer_editor_page_model.g.dart';
@@ -14,6 +17,7 @@ class CustomerRecord {
     this.notes = '',
     this.ticketsCount,
     this.createdAt,
+    this.tags = const [],
   });
 
   final String id;
@@ -24,6 +28,29 @@ class CustomerRecord {
   final String notes;
   final int? ticketsCount;
   final DateTime? createdAt;
+  final List<String> tags;
+
+  CustomerRecord copyWith({
+    String? name,
+    String? email,
+    String? phone,
+    String? company,
+    String? notes,
+    int? ticketsCount,
+    DateTime? createdAt,
+    List<String>? tags,
+  }) =>
+      CustomerRecord(
+        id: id,
+        name: name ?? this.name,
+        email: email ?? this.email,
+        phone: phone ?? this.phone,
+        company: company ?? this.company,
+        notes: notes ?? this.notes,
+        ticketsCount: ticketsCount ?? this.ticketsCount,
+        createdAt: createdAt ?? this.createdAt,
+        tags: tags ?? this.tags,
+      );
 }
 
 @Riverpod(keepAlive: true)
@@ -174,25 +201,83 @@ class CustomerEditorNotifier extends _$CustomerEditorNotifier {
     return errors.isEmpty;
   }
 
-  CustomerRecord? submit() {
+  Future<CustomerRecord?> submit() async {
     if (!validate() || state.submitting) return null;
     state = state.copyWith(submitting: true, failure: null);
-    final record = CustomerRecord(
-      id: state.customerId ??
-          'customer-${DateTime.now().microsecondsSinceEpoch}',
-      name: state.name.trim(),
-      email: state.email.trim(),
-      phone: state.phone.trim(),
-      company: state.company.trim(),
-      notes: state.notes.trim(),
-    );
-    final store = ref.read(customersStoreProvider.notifier);
-    if (state.mode == CustomerEditorMode.create) {
-      store.create(record);
-    } else {
-      store.update(record);
+    try {
+      final initial = state.initialCustomer;
+      final fields = <String, Object?>{};
+      if (state.mode == CustomerEditorMode.create) {
+        fields.addAll({
+          'name': state.name.trim(),
+          'email': _optional(state.email),
+          'phone_number': _optional(state.phone),
+          'company': _optional(state.company),
+          'notes': _optional(state.notes),
+        });
+      } else {
+        if (state.name.trim() != initial?.name) {
+          fields['name'] = state.name.trim();
+        }
+        if (state.email.trim() != initial?.email) {
+          fields['email'] = _optional(state.email);
+        }
+        if (state.phone.trim() != initial?.phone) {
+          fields['phone_number'] = _optional(state.phone);
+        }
+        if (state.company.trim() != initial?.company) {
+          fields['company'] = _optional(state.company);
+        }
+        if (state.notes.trim() != initial?.notes) {
+          fields['notes'] = _optional(state.notes);
+        }
+      }
+
+      final store = ref.read(customersStoreProvider.notifier);
+      late final CustomerRecord record;
+      if (state.mode == CustomerEditorMode.create) {
+        // Customer creation remains on its existing local-first flow; this
+        // endpoint is the documented partial update endpoint only.
+        record = CustomerRecord(
+          id: 'customer-${DateTime.now().microsecondsSinceEpoch}',
+          name: state.name.trim(),
+          email: state.email.trim(),
+          phone: state.phone.trim(),
+          company: state.company.trim(),
+          notes: state.notes.trim(),
+        );
+        store.create(record);
+      } else if (fields.isEmpty) {
+        record = initial!;
+      } else {
+        record = await ref.read(customerRepositoryProvider).update(
+              state.customerId!,
+              fields: fields,
+              fallback: initial!,
+            );
+        store.upsert(record);
+        ref.read(customersPageProvider.notifier).applyConfirmedUpdate(record);
+      }
+      state = state.copyWith(submitting: false);
+      return record;
+    } catch (error) {
+      state = state.copyWith(
+        submitting: false,
+        failure: _friendlyError(error),
+      );
+      return null;
     }
-    state = state.copyWith(submitting: false);
-    return record;
+  }
+
+  String? _optional(String value) => value.trim().isEmpty ? null : value.trim();
+
+  String _friendlyError(Object error) {
+    if (error is ApiClientException && error.statusCode == 422) {
+      return error.message;
+    }
+    if (error is ApiClientException && error.statusCode == 404) {
+      return 'This customer could not be found in the active workspace.';
+    }
+    return error.toString().replaceFirst('Exception: ', '');
   }
 }

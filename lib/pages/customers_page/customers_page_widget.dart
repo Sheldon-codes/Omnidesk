@@ -4,8 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../components/call_experience/call_session_controller.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
+import '../conversation_room_page/whatsapp_compose_sheet.dart';
+import '../conversation_room_page/whatsapp_live_store.dart';
 import '../customer_editor_page/customer_editor_page_model.dart';
 import 'customers_page_model.dart';
 
@@ -186,10 +190,43 @@ class _CustomersPageWidgetState extends ConsumerState<CustomersPageWidget> {
               context.push('/customers/${Uri.encodeComponent(customer.id)}',
                   extra: customer);
             },
+            onCall: () {
+              final started = ref
+                  .read(callSessionControllerProvider.notifier)
+                  .startOutgoing(CallParty(
+                    customerId: customer.id,
+                    displayName: customer.name,
+                    phoneNumber: customer.phone,
+                  ));
+              if (!started && context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(
+                      ref.read(callSessionControllerProvider).failureMessage ??
+                          'Call already in progress'),
+                ));
+              }
+            },
+            onMessage: () => _composeWhatsApp(customer),
+            onEmail: () => launchUrl(
+              Uri(scheme: 'mailto', path: customer.email.trim()),
+              mode: LaunchMode.externalApplication,
+            ),
           );
         },
       ),
     );
+  }
+
+  Future<void> _composeWhatsApp(CustomerRecord customer) async {
+    final ticketId = await WhatsAppComposeSheet.show(
+      context,
+      customerId: customer.id,
+      customerName: customer.name,
+      phone: customer.phone,
+    );
+    if (!mounted || ticketId == null) return;
+    unawaited(ref.read(whatsAppInboxProvider.notifier).load());
+    context.push('/chats/whatsapp/$ticketId');
   }
 }
 
@@ -221,60 +258,117 @@ class _Header extends StatelessWidget {
 }
 
 class _CustomerRow extends StatelessWidget {
-  const _CustomerRow(
-      {required this.customer, required this.theme, required this.onTap});
+  const _CustomerRow({
+    required this.customer,
+    required this.theme,
+    required this.onTap,
+    required this.onCall,
+    required this.onMessage,
+    required this.onEmail,
+  });
   final CustomerRecord customer;
+  final FlutterFlowTheme theme;
+  final VoidCallback onTap;
+  final VoidCallback onCall;
+  final VoidCallback onMessage;
+  final VoidCallback onEmail;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+        child: Row(children: [
+          Expanded(
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(children: [
+                  _InitialAvatar(name: customer.name, theme: theme),
+                  const SizedBox(width: 13),
+                  Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                              customer.name.isEmpty
+                                  ? 'Unnamed customer'
+                                  : customer.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.bodyMedium.override(
+                                  fontFamily: theme.bodyMediumFamily,
+                                  color: theme.primaryText,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 3),
+                          Text(
+                              customer.email.isNotEmpty
+                                  ? customer.email
+                                  : customer.phone,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.bodySmall.override(
+                                  fontFamily: theme.bodySmallFamily,
+                                  color: theme.secondaryText)),
+                        ]),
+                  ),
+                  if (customer.ticketsCount != null) ...[
+                    const SizedBox(width: 8),
+                    Text('${customer.ticketsCount} tickets',
+                        style: theme.bodySmall.override(
+                            fontFamily: theme.bodySmallFamily,
+                            color: theme.secondaryText,
+                            fontSize: 11)),
+                  ],
+                  const SizedBox(width: 5),
+                  Icon(IconsaxPlusBroken.arrow_right_3,
+                      size: 17, color: theme.secondaryText),
+                ]),
+              ),
+            ),
+          ),
+          if (customer.phone.trim().isNotEmpty)
+            _RowAction(
+                label: 'Call ${customer.name}',
+                icon: IconsaxPlusBroken.call,
+                theme: theme,
+                onTap: onCall),
+          if (customer.phone.trim().isNotEmpty)
+            _RowAction(
+                label: 'WhatsApp ${customer.name}',
+                icon: IconsaxPlusBroken.messages,
+                theme: theme,
+                onTap: onMessage),
+          if (customer.email.trim().isNotEmpty)
+            _RowAction(
+                label: 'Email ${customer.name}',
+                icon: IconsaxPlusBroken.sms,
+                theme: theme,
+                onTap: onEmail),
+        ]),
+      );
+}
+
+class _RowAction extends StatelessWidget {
+  const _RowAction({
+    required this.label,
+    required this.icon,
+    required this.theme,
+    required this.onTap,
+  });
+  final String label;
+  final IconData icon;
   final FlutterFlowTheme theme;
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 2),
-          child: Row(children: [
-            _InitialAvatar(name: customer.name, theme: theme),
-            const SizedBox(width: 13),
-            Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                        customer.name.isEmpty
-                            ? 'Unnamed customer'
-                            : customer.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.bodyMedium.override(
-                            fontFamily: theme.bodyMediumFamily,
-                            color: theme.primaryText,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 3),
-                    Text(
-                        customer.email.isNotEmpty
-                            ? customer.email
-                            : customer.phone,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.bodySmall.override(
-                            fontFamily: theme.bodySmallFamily,
-                            color: theme.secondaryText)),
-                  ]),
-            ),
-            if (customer.ticketsCount != null) ...[
-              const SizedBox(width: 8),
-              Text('${customer.ticketsCount} tickets',
-                  style: theme.bodySmall.override(
-                      fontFamily: theme.bodySmallFamily,
-                      color: theme.secondaryText,
-                      fontSize: 11)),
-            ],
-            const SizedBox(width: 5),
-            Icon(IconsaxPlusBroken.arrow_right_3,
-                size: 17, color: theme.secondaryText),
-          ]),
-        ),
+  Widget build(BuildContext context) => IconButton(
+        tooltip: label,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints.tightFor(width: 32, height: 40),
+        padding: EdgeInsets.zero,
+        onPressed: onTap,
+        icon: Icon(icon, size: 17, color: theme.secondaryText),
       );
 }
 

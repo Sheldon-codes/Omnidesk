@@ -113,7 +113,7 @@ class CustomerDetailNotifier extends _$CustomerDetailNotifier {
     final changedScope = _sessionScope != null && _sessionScope != scope;
     if (changedScope) {
       _generation++;
-      _request?.cancel('Customer workspace changed.');
+      _cancelRequest('Customer workspace changed.');
     }
     _sessionScope = scope;
     final cached = changedScope
@@ -122,9 +122,10 @@ class CustomerDetailNotifier extends _$CustomerDetailNotifier {
             .read(customersStoreProvider)
             .where((customer) => customer.id == customerId)
             .firstOrNull;
-    ref.onDispose(
-        () => _request?.cancel('Customer details no longer observed.'));
-    scheduleMicrotask(load);
+    ref.onDispose(() => _cancelRequest('Customer details no longer observed.'));
+    scheduleMicrotask(() {
+      if (ref.mounted) unawaited(load());
+    });
     return CustomerDetailState(
       customerId: customerId,
       customer: cached,
@@ -138,7 +139,7 @@ class CustomerDetailNotifier extends _$CustomerDetailNotifier {
   }
 
   Future<void> load() async {
-    _request?.cancel('Customer profile refresh superseded request.');
+    _cancelRequest('Customer profile refresh superseded request.');
     final token = CancelToken();
     _request = token;
     final generation = ++_generation;
@@ -176,6 +177,11 @@ class CustomerDetailNotifier extends _$CustomerDetailNotifier {
                 : error.toString().replaceFirst('Exception: ', ''),
       );
     }
+  }
+
+  void _cancelRequest(Object reason) {
+    final request = _request;
+    if (request != null && !request.isCancelled) request.cancel(reason);
   }
 
   void _publishProfile(CustomerProfile profile, {required bool loading}) {

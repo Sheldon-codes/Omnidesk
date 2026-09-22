@@ -51,6 +51,13 @@ class _CustomersRepository implements CustomerRepository {
         tickets: const [],
         callLogs: const [],
       );
+
+  @override
+  Future<CustomerRecord> update(String id,
+          {required Map<String, Object?> fields,
+          required CustomerRecord fallback,
+          CancelToken? cancelToken}) async =>
+      fallback;
 }
 
 void main() {

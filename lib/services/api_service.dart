@@ -164,9 +164,11 @@ class ApiService {
             onSendProgress: onSendProgress,
           ));
   Future<dynamic> put(String path, Map<String, dynamic> body,
-          {bool requiresAuth = true}) =>
-      _request(
-          () => _dio.put(path, data: body, options: _options(requiresAuth)));
+          {bool requiresAuth = true, CancelToken? cancelToken}) =>
+      _request(() => _dio.put(path,
+          data: body,
+          cancelToken: cancelToken,
+          options: _options(requiresAuth)));
   Future<dynamic> patch(String path, Map<String, dynamic> body,
           {bool requiresAuth = true}) =>
       _request(

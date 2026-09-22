@@ -7,9 +7,10 @@ import 'package:omnidesk_agent/pages/customer_editor_page/customer_editor_page_m
 import 'package:omnidesk_agent/pages/customers_page/customer_repository.dart';
 
 class _FakeCustomerRepository implements CustomerRepository {
-  _FakeCustomerRepository({this.fail = false});
+  _FakeCustomerRepository({this.fail = false, this.noContact = false});
 
   final bool fail;
+  final bool noContact;
 
   @override
   Future<CustomerPageResult> list({
@@ -29,11 +30,11 @@ class _FakeCustomerRepository implements CustomerRepository {
       void Function()? onCacheMiss}) async {
     if (fail) throw Exception('Offline');
     return CustomerProfile(
-      customer: const CustomerRecord(
+      customer: CustomerRecord(
         id: '88',
         name: 'David Mwangi',
-        phone: '+254768270973',
-        email: 'david@example.com',
+        phone: noContact ? '' : '+254768270973',
+        email: noContact ? '' : 'david@example.com',
         company: 'Nairobi Tech Ltd',
         ticketsCount: 4,
       ),
@@ -64,6 +65,13 @@ class _FakeCustomerRepository implements CustomerRepository {
       ],
     );
   }
+
+  @override
+  Future<CustomerRecord> update(String id,
+          {required Map<String, Object?> fields,
+          required CustomerRecord fallback,
+          CancelToken? cancelToken}) async =>
+      fallback;
 }
 
 void main() {
@@ -126,5 +134,21 @@ void main() {
     expect(find.text('Inbound call · Missed'), findsOneWidget);
     expect(find.textContaining('Alice Agent'), findsOneWidget);
     expect(find.byTooltip('Edit customer'), findsOneWidget);
+  });
+
+  testWidgets('contact actions are omitted when contact data is unavailable',
+      (tester) async {
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        customerRepositoryProvider
+            .overrideWithValue(_FakeCustomerRepository(noContact: true))
+      ],
+      child:
+          const MaterialApp(home: CustomerDetailsPageWidget(customerId: '88')),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Call'), findsNothing);
+    expect(find.text('WhatsApp'), findsNothing);
+    expect(find.text('Email'), findsNothing);
   });
 }

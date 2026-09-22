@@ -199,6 +199,51 @@ class ResponseCache {
     return didWrite;
   }
 
+  /// Applies a JSON transformation to every cached snapshot in a module for
+  /// the active user/workspace. This is used after confirmed mutations so
+  /// cached list pages and detail snapshots do not regress to stale values.
+  Future<void> updateModuleJson({
+    required ResponseCacheScope scope,
+    required String module,
+    required Object? Function(String key, Object? current) update,
+    int? expectedEpoch,
+  }) async {
+    if (expectedEpoch != null && expectedEpoch != _writeEpoch) return;
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      if (expectedEpoch != null && expectedEpoch != _writeEpoch) return;
+      final rows = await txn.query(
+        'server_cache',
+        columns: ['cache_key', 'payload'],
+        where: 'user_id = ? AND workspace_id = ? AND module = ?',
+        whereArgs: [scope.userId, scope.workspaceId, module],
+      );
+      for (final row in rows) {
+        if (expectedEpoch != null && expectedEpoch != _writeEpoch) return;
+        final key = row['cache_key']! as String;
+        Object? current;
+        try {
+          current = jsonDecode(row['payload']! as String);
+        } on Object {
+          continue;
+        }
+        final next = update(key, current);
+        if (identical(next, current)) continue;
+        await txn.update(
+          'server_cache',
+          {
+            'payload': jsonEncode(next),
+            'fetched_at': DateTime.now().toUtc().millisecondsSinceEpoch,
+            'schema_version': responseCacheSchemaVersion,
+          },
+          where:
+              'user_id = ? AND workspace_id = ? AND module = ? AND cache_key = ?',
+          whereArgs: [scope.userId, scope.workspaceId, module, key],
+        );
+      }
+    });
+  }
+
   Future<void> clearAllServerData() async {
     // Increment before waiting for SQLite. Network responses holding an older
     // epoch cannot repopulate the just-cleared account cache.

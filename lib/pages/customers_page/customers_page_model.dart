@@ -119,6 +119,20 @@ class CustomersPageNotifier extends _$CustomersPageNotifier {
 
   Future<void> retry() => state.hasLoaded ? refresh() : load();
 
+  void applyConfirmedUpdate(CustomerRecord customer) {
+    if (!state.customers.any((item) => item.id == customer.id)) return;
+    // A GET started before the PUT confirmation must not publish an older
+    // version over the newly confirmed record.
+    _generation++;
+    _activeRequest?.cancel('Customer was updated.');
+    state = state.copyWith(
+      customers: [
+        for (final item in state.customers)
+          if (item.id == customer.id) customer else item,
+      ],
+    );
+  }
+
   Future<void> _fetch(
       {required int page, required bool replace, required bool initial}) async {
     _activeRequest?.cancel('Superseded by a newer customer query.');

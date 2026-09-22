@@ -44,6 +44,13 @@ class _PhoneCustomersRepository implements CustomerRepository {
           void Function(CustomerProfile)? onCached,
           void Function()? onCacheMiss}) =>
       throw UnimplementedError();
+
+  @override
+  Future<CustomerRecord> update(String id,
+          {required Map<String, Object?> fields,
+          required CustomerRecord fallback,
+          CancelToken? cancelToken}) async =>
+      fallback;
 }
 
 void main() {

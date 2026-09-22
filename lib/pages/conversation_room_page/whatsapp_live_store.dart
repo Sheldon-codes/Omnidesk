@@ -319,6 +319,37 @@ class WhatsAppRepository {
   }
 
   Future<void> markRead(String id) => _api.post('/tickets/$id/mark-read', {});
+
+  Future<int> compose({
+    required String message,
+    String? customerId,
+    String? phone,
+    String? name,
+  }) async {
+    final body = <String, dynamic>{
+      'message': message.trim(),
+      if (customerId != null && int.tryParse(customerId) != null)
+        'customer_id': int.parse(customerId),
+      if (customerId == null && phone != null && phone.trim().isNotEmpty)
+        'phone': phone.trim(),
+      if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
+    };
+    if (body['message'] == '') {
+      throw const ApiClientException(message: 'Enter a message.');
+    }
+    if (body['customer_id'] == null && body['phone'] == null) {
+      throw const ApiClientException(
+          message: 'A customer ID or phone number is required.');
+    }
+    final response = _map(await _api.post('/whatsapp/compose', body));
+    final ticketId = int.tryParse('${response['ticket_id'] ?? ''}');
+    if (response['success'] != true || ticketId == null) {
+      throw const FormatException(
+          'The WhatsApp service did not return a conversation.');
+    }
+    return ticketId;
+  }
+
   Future<void> typing(String id, {bool isTyping = true}) =>
       _api.post('/tickets/$id/typing', {'typing': isTyping});
   Future<void> status(String id, String status,

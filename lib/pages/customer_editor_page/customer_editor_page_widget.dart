@@ -217,10 +217,10 @@ class _CustomerEditorPageWidgetState
           child: FilledButton(
             onPressed: state.submitting
                 ? null
-                : () {
+                : () async {
                     FocusManager.instance.primaryFocus?.unfocus();
                     if (!(_formKey.currentState?.validate() ?? false)) return;
-                    final result = notifier.submit();
+                    final result = await notifier.submit();
                     if (context.mounted && result != null) context.pop(result);
                   },
             style: FilledButton.styleFrom(

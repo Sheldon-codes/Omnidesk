@@ -1,13 +1,17 @@
+import 'dart:async';
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../components/call_experience/call_session_controller.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../customer_editor_page/customer_editor_page_model.dart';
+import '../conversation_room_page/whatsapp_compose_sheet.dart';
+import '../conversation_room_page/whatsapp_live_store.dart';
 import 'customer_details_page_model.dart';
 
 export 'customer_details_page_model.dart';
@@ -124,8 +128,17 @@ class _CustomerDetailsPageWidgetState
                 theme: theme,
                 customer: customer,
                 onBack: context.pop,
-                onEdit: () =>
-                    context.push('/customers/${widget.customerId}/edit'),
+                onEdit: () async {
+                  final updated = await context.push<CustomerRecord>(
+                      '/customers/${widget.customerId}/edit');
+                  if (mounted && updated != null) {
+                    ref
+                        .read(customerDetailProvider(
+                                customerId: widget.customerId)
+                            .notifier)
+                        .seedCustomer(updated);
+                  }
+                },
                 onDownload: () => _showComingSoon(context),
               ),
             ),
@@ -134,11 +147,9 @@ class _CustomerDetailsPageWidgetState
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
                 child: _QuickActions(
                   theme: theme,
+                  hasPhone: customer.phone.trim().isNotEmpty,
+                  hasEmail: customer.email.trim().isNotEmpty,
                   onCall: () {
-                    if (customer.phone.trim().isEmpty) {
-                      _showMessage(context, 'No phone number available');
-                      return;
-                    }
                     final started = ref
                         .read(callSessionControllerProvider.notifier)
                         .startOutgoing(CallParty(
@@ -156,6 +167,11 @@ class _CustomerDetailsPageWidgetState
                       );
                     }
                   },
+                  onMessage: () => _composeWhatsApp(customer),
+                  onEmail: () => launchUrl(
+                    Uri(scheme: 'mailto', path: customer.email.trim()),
+                    mode: LaunchMode.externalApplication,
+                  ),
                 ),
               ),
             ),
@@ -201,6 +217,18 @@ class _CustomerDetailsPageWidgetState
         ),
       ),
     );
+  }
+
+  Future<void> _composeWhatsApp(CustomerRecord customer) async {
+    final ticketId = await WhatsAppComposeSheet.show(
+      context,
+      customerId: customer.id,
+      customerName: customer.name,
+      phone: customer.phone,
+    );
+    if (!mounted || ticketId == null) return;
+    unawaited(ref.read(whatsAppInboxProvider.notifier).load());
+    context.push('/chats/whatsapp/$ticketId');
   }
 }
 
@@ -357,31 +385,47 @@ class _Avatar extends StatelessWidget {
 }
 
 class _QuickActions extends StatelessWidget {
-  const _QuickActions({required this.theme, required this.onCall});
+  const _QuickActions({
+    required this.theme,
+    required this.hasPhone,
+    required this.hasEmail,
+    required this.onCall,
+    required this.onMessage,
+    required this.onEmail,
+  });
   final FlutterFlowTheme theme;
+  final bool hasPhone;
+  final bool hasEmail;
   final VoidCallback onCall;
+  final VoidCallback onMessage;
+  final VoidCallback onEmail;
 
   @override
-  Widget build(BuildContext context) => Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _QuickAction(
-              label: 'Call',
-              icon: IconsaxPlusBroken.call,
-              theme: theme,
-              onTap: onCall),
-          _QuickAction(
-              label: 'Message',
-              icon: IconsaxPlusBroken.messages,
-              theme: theme,
-              onTap: () => _showComingSoon(context)),
-          _QuickAction(
-              label: 'Email',
-              icon: IconsaxPlusBroken.sms,
-              theme: theme,
-              onTap: () => _showComingSoon(context)),
-        ],
-      );
+  Widget build(BuildContext context) {
+    final actions = <Widget>[
+      if (hasPhone)
+        _QuickAction(
+            label: 'Call',
+            icon: IconsaxPlusBroken.call,
+            theme: theme,
+            onTap: onCall),
+      if (hasPhone)
+        _QuickAction(
+            label: 'WhatsApp',
+            icon: IconsaxPlusBroken.messages,
+            theme: theme,
+            onTap: onMessage),
+      if (hasEmail)
+        _QuickAction(
+            label: 'Email',
+            icon: IconsaxPlusBroken.sms,
+            theme: theme,
+            onTap: onEmail),
+    ];
+    if (actions.isEmpty) return const SizedBox.shrink();
+    return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: actions);
+  }
 }
 
 class _QuickAction extends StatelessWidget {
