@@ -74,16 +74,29 @@ class CustomersPageNotifier extends _$CustomersPageNotifier {
 
   @override
   CustomersPageState build() {
-    final auth = ref.watch(authSessionControllerProvider);
+    final authenticated =
+        ref.read(authSessionControllerProvider).isAuthenticated;
+    ref.listen<AuthState>(authSessionControllerProvider, (_, next) {
+      Future.microtask(() {
+        if (ref.mounted) _handleScopeChange(next);
+      });
+    }, fireImmediately: true);
+    ref.onDispose(() => _activeRequest?.cancel('Customer page disposed.'));
+    return CustomersPageState(loading: authenticated);
+  }
+
+  void _handleScopeChange(AuthState auth) {
     final scope =
         '${auth.session?.user.id ?? 'anonymous'}:${auth.session?.user.activeWorkspace?.id ?? 'none'}';
-    if (_sessionScope != null && _sessionScope != scope) {
-      _generation++;
-      _activeRequest?.cancel('Customer workspace changed.');
-    }
+    if (scope == _sessionScope) return;
+    final query = state.search;
     _sessionScope = scope;
-    ref.onDispose(() => _activeRequest?.cancel('Customer page disposed.'));
-    return const CustomersPageState();
+    _generation++;
+    _activeRequest?.cancel('Customer workspace changed.');
+    state = CustomersPageState(search: query);
+    if (auth.isAuthenticated) {
+      unawaited(_fetch(page: 1, replace: true, initial: true));
+    }
   }
 
   Future<void> load() async {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -593,26 +594,43 @@ class EmailStore extends Notifier<EmailStoreState> {
   var _scopeGeneration = 0;
   var _folderGeneration = 0;
   final _threadGenerations = <String, int>{};
+  EmailFolder? _activeFolder;
+  String _activeQuery = '';
 
   @override
   EmailStoreState build() {
-    final auth = ref.watch(authSessionControllerProvider);
+    final repository = ref.read(emailRepositoryProvider);
+    final authenticated =
+        ref.read(authSessionControllerProvider).isAuthenticated;
+    ref.listen<AuthState>(authSessionControllerProvider, (_, next) {
+      Future.microtask(() {
+        if (ref.mounted) _handleScopeChange(next);
+      });
+    }, fireImmediately: true);
+    return EmailStoreState(
+        threads: repository is LocalEmailRepository ? _emailFixtures : const [],
+        loading: authenticated && repository is! LocalEmailRepository);
+  }
+
+  void _handleScopeChange(AuthState auth) {
     final nextScope = auth.session == null
         ? 'anonymous'
         : '${auth.session!.user.id}:${auth.session!.user.activeWorkspace?.id ?? 'none'}';
-    if (_scope != null && _scope != nextScope) {
-      _scopeGeneration++;
-      _folderGeneration++;
-      _threadGenerations.clear();
-    }
+    if (nextScope == _scope) return;
     _scope = nextScope;
-    final repository = ref.watch(emailRepositoryProvider);
-    return EmailStoreState(
-        threads:
-            repository is LocalEmailRepository ? _emailFixtures : const []);
+    _scopeGeneration++;
+    _folderGeneration++;
+    _threadGenerations.clear();
+    final folder = _activeFolder ?? state.loadedFolder;
+    state = EmailStoreState(threads: const [], loadedFolder: folder);
+    if (auth.isAuthenticated && folder != null) {
+      unawaited(loadFolder(folder, query: _activeQuery));
+    }
   }
 
   Future<void> loadFolder(EmailFolder folder, {String query = ''}) async {
+    _activeFolder = folder;
+    _activeQuery = query;
     final generation = ++_folderGeneration;
     final scopeGeneration = _scopeGeneration;
     var hadCachedValue = false;

@@ -501,13 +501,15 @@ class WhatsAppInboxController extends Notifier<WhatsAppInboxState> {
 
   @override
   WhatsAppInboxState build() {
+    final authenticated =
+        ref.read(authSessionControllerProvider).isAuthenticated;
     ref.listen(authSessionControllerProvider, (_, next) {
       Future.microtask(() {
         if (ref.mounted) _handleScopeChange(next);
       });
     }, fireImmediately: true);
     ref.onDispose(() => unawaited(_events?.cancel()));
-    return const WhatsAppInboxState();
+    return WhatsAppInboxState(loading: authenticated);
   }
 
   void _handleScopeChange(AuthState auth) {
@@ -515,10 +517,15 @@ class WhatsAppInboxController extends Notifier<WhatsAppInboxState> {
         ? 'anonymous'
         : '${auth.session!.user.id}:${auth.session!.user.activeWorkspace?.id ?? 'none'}';
     if (next == _scopeKey) return;
+    final status = state.status;
+    final query = state.query;
     _scopeKey = next;
     _request++;
     unawaited(stopWatching());
     state = const WhatsAppInboxState();
+    if (auth.isAuthenticated) {
+      unawaited(load(status: status, query: query));
+    }
   }
 
   Future<void> load(
@@ -764,6 +771,11 @@ class WhatsAppThreadController
         ? 'anonymous'
         : '${auth.session!.user.id}:${auth.session!.user.activeWorkspace?.id ?? 'none'}';
     if (next == _scopeKey) return;
+    // A cache-first bootstrap may start loading a room using the restored
+    // session just before `/auth/me` refreshes its workspace membership. The
+    // in-flight response must not leak across scopes, but the visible room
+    // still needs to load again under the new authoritative scope.
+    final activeThreadIds = state.keys.toList(growable: false);
     _scopeKey = next;
     for (final id in _realtimeSubs.keys.toList(growable: false)) {
       unawaited(ref.read(realtimeServiceProvider).unwatchTicket(id));
@@ -774,6 +786,11 @@ class WhatsAppThreadController
     _realtimeSubs.clear();
     _polling.clear();
     state = {};
+    if (auth.isAuthenticated) {
+      for (final id in activeThreadIds) {
+        unawaited(load(id));
+      }
+    }
   }
 
   WhatsAppThreadState? byId(String id) => state[id];

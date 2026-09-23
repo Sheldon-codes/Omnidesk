@@ -153,20 +153,31 @@ class TicketsPageNotifier extends _$TicketsPageNotifier {
 
   @override
   TicketsPageState build() {
-    final auth = ref.watch(authSessionControllerProvider);
-    final scope =
-        '${auth.session?.user.id ?? 'anonymous'}:${auth.session?.user.activeWorkspace?.id ?? 'none'}';
-    if (_sessionScope != null && _sessionScope != scope) {
-      _generation++;
-      _activeRequest?.cancel('Ticket workspace changed.');
-      _searchDebounce?.cancel();
-    }
-    _sessionScope = scope;
+    final authenticated =
+        ref.read(authSessionControllerProvider).isAuthenticated;
+    ref.listen<AuthState>(authSessionControllerProvider, (_, next) {
+      Future.microtask(() {
+        if (ref.mounted) _handleScopeChange(next);
+      });
+    }, fireImmediately: true);
     ref.onDispose(() {
+      _generation++;
       _searchDebounce?.cancel();
       _activeRequest?.cancel('Tickets page disposed.');
     });
-    return const TicketsPageState();
+    return TicketsPageState(loading: authenticated);
+  }
+
+  void _handleScopeChange(AuthState auth) {
+    final scope =
+        '${auth.session?.user.id ?? 'anonymous'}:${auth.session?.user.activeWorkspace?.id ?? 'none'}';
+    if (scope == _sessionScope) return;
+    _sessionScope = scope;
+    _generation++;
+    _activeRequest?.cancel('Ticket workspace changed.');
+    _searchDebounce?.cancel();
+    state = const TicketsPageState();
+    if (auth.isAuthenticated) unawaited(load());
   }
 
   Future<void> load() async {
