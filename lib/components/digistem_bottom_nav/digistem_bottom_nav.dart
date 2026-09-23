@@ -10,6 +10,7 @@ class DigiStemBottomNavItem {
     this.selectedIcon,
     this.semanticLabel,
     this.selected = false,
+    this.badgeCount = 0,
   });
 
   final IconData icon;
@@ -18,6 +19,9 @@ class DigiStemBottomNavItem {
   final String? id;
   final String? semanticLabel;
   final bool selected;
+
+  /// A server-owned count. Zero deliberately renders no badge.
+  final int badgeCount;
 }
 
 /// Edge-to-edge application shell matching the bottom dock used by DigiStem.
@@ -291,7 +295,10 @@ class _BottomDockItem extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      label: item.semanticLabel ?? item.label,
+      label: item.badgeCount > 0
+          ? '${item.semanticLabel ?? item.label}, '
+              '${item.badgeCount > 99 ? '99 plus' : item.badgeCount} unread'
+          : item.semanticLabel ?? item.label,
       child: InkResponse(
         onTap: onTap,
         containedInkWell: true,
@@ -321,42 +328,54 @@ class _BottomDockItem extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   SizedBox(
-                    width: 32,
-                    height: 32,
-                    child: item.selectedIcon == null ||
-                            item.selectedIcon == item.icon
-                        ? Icon(
-                            item.icon,
-                            color: color,
-                            size: 24 + (selectionProgress * 6),
-                          )
-                        : Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              Opacity(
-                                opacity: 1 - selectionProgress,
-                                child: Transform.scale(
-                                  scale: 1 - (selectionProgress * 0.08),
-                                  child: Icon(
-                                    item.icon,
-                                    color: color,
-                                    size: 24,
+                    width: 34,
+                    height: 34,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      alignment: Alignment.center,
+                      children: [
+                        item.selectedIcon == null ||
+                                item.selectedIcon == item.icon
+                            ? Icon(
+                                item.icon,
+                                color: color,
+                                size: 24 + (selectionProgress * 6),
+                              )
+                            : Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Opacity(
+                                    opacity: 1 - selectionProgress,
+                                    child: Transform.scale(
+                                      scale: 1 - (selectionProgress * 0.08),
+                                      child: Icon(
+                                        item.icon,
+                                        color: color,
+                                        size: 24,
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
-                              Opacity(
-                                opacity: selectionProgress,
-                                child: Transform.scale(
-                                  scale: 0.82 + (selectionProgress * 0.18),
-                                  child: Icon(
-                                    item.selectedIcon!,
-                                    color: color,
-                                    size: 30,
+                                  Opacity(
+                                    opacity: selectionProgress,
+                                    child: Transform.scale(
+                                      scale: 0.82 + (selectionProgress * 0.18),
+                                      child: Icon(
+                                        item.selectedIcon!,
+                                        color: color,
+                                        size: 30,
+                                      ),
+                                    ),
                                   ),
-                                ),
+                                ],
                               ),
-                            ],
+                        if (item.badgeCount > 0)
+                          Positioned(
+                            top: -1,
+                            right: -3,
+                            child: _NavigationBadge(count: item.badgeCount),
                           ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 3),
                   Transform.scale(
@@ -378,6 +397,41 @@ class _BottomDockItem extends StatelessWidget {
                 ],
               );
             },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavigationBadge extends StatelessWidget {
+  const _NavigationBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FlutterFlowTheme.of(context);
+    final diameter = count > 99 ? 22.0 : 18.0;
+    return ExcludeSemantics(
+      child: SizedBox.square(
+        dimension: diameter,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: theme.error,
+            shape: BoxShape.circle,
+            border: Border.all(color: theme.primaryBackground, width: 1.5),
+          ),
+          child: Center(
+            child: Text(
+              count > 99 ? '99+' : '$count',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                height: 1,
+              ),
+            ),
           ),
         ),
       ),

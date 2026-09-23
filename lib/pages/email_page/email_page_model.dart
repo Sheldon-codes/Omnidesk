@@ -10,6 +10,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../services/api_service.dart';
 import '../../services/auth_session_controller.dart';
+import '../../services/agent_counters.dart';
 import '../../services/response_cache.dart';
 
 part 'email_page_model.g.dart';
@@ -684,6 +685,7 @@ class EmailStore extends Notifier<EmailStoreState> {
     _replace(id, (item) => item.copyWith(unread: false));
     try {
       await ref.read(emailRepositoryProvider).markRead(id);
+      unawaited(ref.read(agentCountersProvider.notifier).refresh());
     } catch (_) {}
   }
 

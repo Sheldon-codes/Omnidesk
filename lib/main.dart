@@ -26,6 +26,7 @@ import 'pages/chats_page/chats_page_widget.dart';
 import 'pages/email_page/email_page_widget.dart';
 import 'pages/tickets_page/tickets_page_widget.dart';
 import 'services/auth_session_controller.dart';
+import 'services/agent_counters.dart';
 import 'services/calls/call_lifecycle_coordinator.dart';
 import 'services/fcm_service.dart';
 import 'services/onboarding_controller.dart';
@@ -65,6 +66,7 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
   ProviderSubscription<AuthState>? _authSubscription;
   ProviderSubscription<OnboardingState>? _onboardingSubscription;
   StreamSubscription<AppNotification>? _notificationTapSubscription;
+  StreamSubscription<void>? _counterRefreshSubscription;
 
   @override
   void initState() {
@@ -81,11 +83,13 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
         );
         if (next.isAuthenticated) {
           ref.read(homeDashboardProvider.notifier).startHeartbeat();
+          ref.read(agentCountersProvider.notifier).setAppActive(true);
           unawaited(
             ref.read(callLifecycleCoordinatorProvider).updateAuth(next),
           );
         } else if (ref.exists(homeDashboardProvider)) {
           ref.read(homeDashboardProvider.notifier).stopHeartbeat();
+          ref.read(agentCountersProvider.notifier).setAppActive(false);
           unawaited(ref.read(callLifecycleCoordinatorProvider).stop());
         }
       },
@@ -112,6 +116,15 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
           }
         });
       });
+      // Notification payloads are not a source of truth for counts. A
+      // foreground event simply asks the lightweight counter endpoint for a
+      // fresh workspace-scoped snapshot. Incoming-call delivery continues to
+      // be owned by the existing native/FCM call path.
+      _counterRefreshSubscription = ref
+          .read(fcmServiceProvider)
+          .notificationRefreshEvents
+          .listen((_) =>
+              unawaited(ref.read(agentCountersProvider.notifier).refresh()));
       Future.microtask(() => ref.read(fcmServiceProvider).initialize());
     } else {
       developer.log(
@@ -128,12 +141,14 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
     _authSubscription?.close();
     _onboardingSubscription?.close();
     _notificationTapSubscription?.cancel();
+    _counterRefreshSubscription?.cancel();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      ref.read(agentCountersProvider.notifier).setAppActive(true);
       unawaited(
         ref.read(authSessionControllerProvider.notifier).refreshSession(),
       );
@@ -145,6 +160,7 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
       }
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      ref.read(agentCountersProvider.notifier).setAppActive(false);
       ref.read(homeDashboardProvider.notifier).stopHeartbeat();
     }
   }
@@ -242,17 +258,17 @@ class _AppCallOverlay extends ConsumerWidget {
 ///
 /// Feature pages intentionally remain unaware of the bottom dock. Destinations
 /// are selected by route while the dock remains owned by the app root.
-class NavBarPage extends StatefulWidget {
+class NavBarPage extends ConsumerStatefulWidget {
   const NavBarPage({super.key, this.initialPage, this.initialTicketStatus});
 
   final String? initialPage;
   final TicketStatus? initialTicketStatus;
 
   @override
-  State<NavBarPage> createState() => _NavBarPageState();
+  ConsumerState<NavBarPage> createState() => _NavBarPageState();
 }
 
-class _NavBarPageState extends State<NavBarPage> {
+class _NavBarPageState extends ConsumerState<NavBarPage> {
   late int _currentIndex;
 
   static const _routePaths = <String>[
@@ -277,43 +293,47 @@ class _NavBarPageState extends State<NavBarPage> {
     _currentIndex = _indexForPage(widget.initialPage);
   }
 
-  static const _items = <DigiStemBottomNavItem>[
-    DigiStemBottomNavItem(
-      id: 'home',
-      label: 'Home',
-      semanticLabel: 'Home',
-      icon: IconsaxPlusBroken.home_1,
-      selectedIcon: IconsaxPlusBold.home_1,
-    ),
-    DigiStemBottomNavItem(
-      id: 'phone',
-      label: 'Phone',
-      semanticLabel: 'Phone',
-      icon: IconsaxPlusBroken.call,
-      selectedIcon: IconsaxPlusBold.call,
-    ),
-    DigiStemBottomNavItem(
-      id: 'chats',
-      label: 'Chats',
-      semanticLabel: 'Chats',
-      icon: IconsaxPlusBroken.messages,
-      selectedIcon: IconsaxPlusBold.messages,
-    ),
-    DigiStemBottomNavItem(
-      id: 'email',
-      label: 'Email',
-      semanticLabel: 'Email',
-      icon: IconsaxPlusBroken.sms,
-      selectedIcon: IconsaxPlusBold.sms,
-    ),
-    DigiStemBottomNavItem(
-      id: 'tickets',
-      label: 'Tickets',
-      semanticLabel: 'Tickets',
-      icon: IconsaxPlusBroken.ticket,
-      selectedIcon: IconsaxPlusBold.ticket,
-    ),
-  ];
+  static List<DigiStemBottomNavItem> _items(AgentCounters counters) => [
+        const DigiStemBottomNavItem(
+          id: 'home',
+          label: 'Home',
+          semanticLabel: 'Home',
+          icon: IconsaxPlusBroken.home_1,
+          selectedIcon: IconsaxPlusBold.home_1,
+        ),
+        DigiStemBottomNavItem(
+          id: 'phone',
+          label: 'Phone',
+          semanticLabel: 'Phone',
+          icon: IconsaxPlusBroken.call,
+          selectedIcon: IconsaxPlusBold.call,
+          badgeCount: counters.missedCalls,
+        ),
+        DigiStemBottomNavItem(
+          id: 'chats',
+          label: 'Chats',
+          semanticLabel: 'Chats',
+          icon: IconsaxPlusBroken.messages,
+          selectedIcon: IconsaxPlusBold.messages,
+          badgeCount: counters.chatUnread,
+        ),
+        DigiStemBottomNavItem(
+          id: 'email',
+          label: 'Email',
+          semanticLabel: 'Email',
+          icon: IconsaxPlusBroken.sms,
+          selectedIcon: IconsaxPlusBold.sms,
+          badgeCount: counters.emailUnread,
+        ),
+        DigiStemBottomNavItem(
+          id: 'tickets',
+          label: 'Tickets',
+          semanticLabel: 'Tickets',
+          icon: IconsaxPlusBroken.ticket,
+          selectedIcon: IconsaxPlusBold.ticket,
+          badgeCount: counters.openTickets,
+        ),
+      ];
 
   Widget _pageForIndex(int index) {
     switch (index) {
@@ -331,10 +351,13 @@ class _NavBarPageState extends State<NavBarPage> {
   }
 
   @override
-  Widget build(BuildContext context) => DigiStemBottomNav(
-        items: _items,
-        initialIndex: _currentIndex,
-        onSelected: (index) => context.go(_routePaths[index]),
-        body: _pageForIndex(_currentIndex),
-      );
+  Widget build(BuildContext context) {
+    final counters = ref.watch(agentCountersProvider).counters;
+    return DigiStemBottomNav(
+      items: _items(counters),
+      initialIndex: _currentIndex,
+      onSelected: (index) => context.go(_routePaths[index]),
+      body: _pageForIndex(_currentIndex),
+    );
+  }
 }

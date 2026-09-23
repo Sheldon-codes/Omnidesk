@@ -41,6 +41,7 @@ class FcmService {
   final _tokenChanges = StreamController<String?>.broadcast();
   final _notificationEvents = StreamController<AppNotification>.broadcast();
   final _notificationTaps = StreamController<AppNotification>.broadcast();
+  final _notificationRefreshEvents = StreamController<void>.broadcast();
   String? get currentToken => _token;
   String? get apnsToken => _apnsToken;
   String? get voipPushToken => _voipPushToken;
@@ -48,6 +49,13 @@ class FcmService {
   Stream<String?> get tokenChanges => _tokenChanges.stream;
   Stream<AppNotification> get notificationEvents => _notificationEvents.stream;
   Stream<AppNotification> get notificationTaps => _notificationTaps.stream;
+
+  /// Non-call push event signal for lightweight badge refreshes.
+  ///
+  /// Call offers deliberately bypass this stream: their native delivery and
+  /// lifecycle are latency-sensitive and must stay on the existing path.
+  Stream<void> get notificationRefreshEvents =>
+      _notificationRefreshEvents.stream;
 
   FirebaseMessaging? _resolveMessaging() {
     final existing = _messaging;
@@ -114,6 +122,7 @@ class FcmService {
       _offers.add(offer);
       return;
     }
+    _notificationRefreshEvents.add(null);
     try {
       final notification = AppNotification.fromJson(message.data);
       _notificationEvents.add(notification);
@@ -151,6 +160,7 @@ class FcmService {
     await _tokenChanges.close();
     await _notificationEvents.close();
     await _notificationTaps.close();
+    await _notificationRefreshEvents.close();
   }
 }
 

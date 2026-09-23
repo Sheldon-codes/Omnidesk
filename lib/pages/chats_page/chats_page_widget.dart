@@ -10,6 +10,7 @@ import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../services/realtime/connection_monitor.dart';
 import '../../services/realtime/realtime_event.dart';
 import '../../services/realtime/realtime_service.dart';
+import '../../services/agent_counters.dart';
 import '../conversation_room_page/whatsapp_live_store.dart';
 import 'chats_page_model.dart';
 
@@ -106,6 +107,7 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final counters = ref.watch(agentCountersProvider).counters;
     final state = ref.watch(chatsPageProvider);
     final whatsApp = ref.watch(whatsAppInboxProvider);
     final localConversations = ref.watch(conversationStoreProvider);
@@ -195,6 +197,8 @@ class _ChatsPageWidgetState extends ConsumerState<ChatsPageWidget> {
                 theme: theme,
                 selected: state.channel,
                 onSelected: _selectChannel,
+                whatsAppUnread: counters.whatsAppUnread,
+                widgetUnread: counters.widgetUnread,
               ),
             ),
             if (state.searchActive)
@@ -473,11 +477,15 @@ class _ChatsTabsDelegate extends SliverPersistentHeaderDelegate {
     required this.theme,
     required this.selected,
     required this.onSelected,
+    required this.whatsAppUnread,
+    required this.widgetUnread,
   });
 
   final FlutterFlowTheme theme;
   final ChatChannel selected;
   final ValueChanged<ChatChannel> onSelected;
+  final int whatsAppUnread;
+  final int widgetUnread;
 
   @override
   double get minExtent => 46;
@@ -493,7 +501,7 @@ class _ChatsTabsDelegate extends SliverPersistentHeaderDelegate {
         child: Align(
           alignment: Alignment.topCenter,
           child: SizedBox(
-            width: 220,
+            width: 258,
             height: 46,
             child: Row(
               children: [
@@ -502,12 +510,14 @@ class _ChatsTabsDelegate extends SliverPersistentHeaderDelegate {
                   selected: selected == ChatChannel.whatsapp,
                   onTap: () => onSelected(ChatChannel.whatsapp),
                   theme: theme,
+                  badgeCount: whatsAppUnread,
                 ),
                 _ChatTabButton(
                   label: 'Widget Chat',
                   selected: selected == ChatChannel.widgetChat,
                   onTap: () => onSelected(ChatChannel.widgetChat),
                   theme: theme,
+                  badgeCount: widgetUnread,
                 ),
               ],
             ),
@@ -519,6 +529,8 @@ class _ChatsTabsDelegate extends SliverPersistentHeaderDelegate {
   bool shouldRebuild(covariant _ChatsTabsDelegate oldDelegate) =>
       oldDelegate.theme != theme ||
       oldDelegate.selected != selected ||
+      oldDelegate.whatsAppUnread != whatsAppUnread ||
+      oldDelegate.widgetUnread != widgetUnread ||
       oldDelegate.onSelected != onSelected;
 }
 
@@ -528,19 +540,23 @@ class _ChatTabButton extends StatelessWidget {
     required this.selected,
     required this.onTap,
     required this.theme,
+    required this.badgeCount,
   });
 
   final String label;
   final bool selected;
   final VoidCallback onTap;
   final FlutterFlowTheme theme;
+  final int badgeCount;
 
   @override
   Widget build(BuildContext context) => Expanded(
         child: Semantics(
           button: true,
           selected: selected,
-          label: label,
+          label: badgeCount > 0
+              ? '$label, ${badgeCount > 99 ? '99 plus' : badgeCount} unread'
+              : label,
           child: InkWell(
             onTap: onTap,
             overlayColor: const WidgetStatePropertyAll(Colors.transparent),
@@ -554,14 +570,49 @@ class _ChatTabButton extends StatelessWidget {
                   ),
                 ),
               ),
-              child: Text(
-                label,
-                style: theme.bodyMedium.override(
-                  fontFamily: theme.bodyMediumFamily,
-                  color: selected ? theme.primary : theme.secondaryText,
-                  fontSize: 13,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.bodyMedium.override(
+                        fontFamily: theme.bodyMediumFamily,
+                        color: selected ? theme.primary : theme.secondaryText,
+                        fontSize: 13,
+                        fontWeight:
+                            selected ? FontWeight.w600 : FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  if (badgeCount > 0) ...[
+                    const SizedBox(width: 6),
+                    ExcludeSemantics(
+                      child: SizedBox.square(
+                        dimension: badgeCount > 99 ? 22 : 18,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: theme.error,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Text(
+                              badgeCount > 99 ? '99+' : '$badgeCount',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                height: 1,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),

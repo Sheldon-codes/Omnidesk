@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../services/auth_session_controller.dart';
+import '../../services/agent_counters.dart';
 import 'ticket_api_repository.dart';
 import 'ticket_store.dart';
 
@@ -306,6 +307,7 @@ class TicketsPageNotifier extends _$TicketsPageNotifier {
     try {
       await ref.read(ticketsRepositoryProvider).updateStatus(ticketId, status);
       await refresh();
+      unawaited(ref.read(agentCountersProvider.notifier).refresh());
     } catch (error) {
       state = state.copyWith(error: _message(error));
       rethrow;

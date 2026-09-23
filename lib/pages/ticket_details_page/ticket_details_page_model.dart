@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:collection/collection.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../services/auth_session_controller.dart';
+import '../../services/agent_counters.dart';
 import '../tickets_page/tickets_page_model.dart';
 
 part 'ticket_details_page_model.g.dart';
@@ -150,6 +153,7 @@ class TicketDetailsNotifier extends _$TicketDetailsNotifier {
       state = state.copyWith(mutating: false);
       await load();
       await ref.read(ticketsPageProvider.notifier).refresh();
+      unawaited(ref.read(agentCountersProvider.notifier).refresh());
     } catch (error) {
       state = state.copyWith(mutating: false, failure: _message(error));
       rethrow;

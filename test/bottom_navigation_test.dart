@@ -49,6 +49,43 @@ void main() {
       expect(router.routeInformationProvider.value.uri.path, '/home');
     }
   });
+
+  testWidgets('renders a capped accessible badge only for positive counts',
+      (tester) async {
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DigiStemBottomNav(
+          body: const SizedBox.shrink(),
+          items: const [
+            DigiStemBottomNavItem(
+              label: 'Chats',
+              semanticLabel: 'Chats',
+              icon: IconsaxPlusBroken.messages,
+              badgeCount: 125,
+            ),
+            DigiStemBottomNavItem(
+              label: 'Email',
+              icon: IconsaxPlusBroken.sms,
+              badgeCount: 0,
+            ),
+          ],
+        ),
+      ),
+    );
+
+    expect(find.text('99+'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Semantics &&
+            widget.properties.label == 'Chats, 99 plus unread',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('0'), findsNothing);
+    semantics.dispose();
+  });
 }
 
 class _TestPage extends StatelessWidget {

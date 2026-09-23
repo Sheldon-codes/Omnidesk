@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 
 import '../../services/api_service.dart';
 import '../../services/auth_session_controller.dart';
+import '../../services/agent_counters.dart';
 import '../../services/realtime/realtime_event.dart';
 import '../../services/realtime/realtime_service.dart';
 import '../../services/realtime/whatsapp_message_mapper.dart';
@@ -830,7 +831,11 @@ class WhatsAppThreadController
       _set(id,
           WhatsAppThreadState(thread: thread, live: previous?.live ?? false));
       unawaited(_attachRealtime(id));
-      unawaited(ref.read(whatsAppRepositoryProvider).markRead(id));
+      unawaited(
+        ref.read(whatsAppRepositoryProvider).markRead(id).then(
+              (_) => ref.read(agentCountersProvider.notifier).refresh(),
+            ),
+      );
       ref.read(whatsAppInboxProvider.notifier).markLocalRead(id);
       unawaited(flushOutbox(id));
     } catch (error) {
