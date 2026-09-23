@@ -42,7 +42,7 @@ final class CustomersPageNotifierProvider
 }
 
 String _$customersPageNotifierHash() =>
-    r'd38ffce94b54dd3ddaa2a22ead3e75966038b8ea';
+    r'187fa90c748d37eb628d26d3e08dce6d66590ecc';
 
 abstract class _$CustomersPageNotifier extends $Notifier<CustomersPageState> {
   CustomersPageState build();

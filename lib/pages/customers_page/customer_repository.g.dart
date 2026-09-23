@@ -51,4 +51,4 @@ final class CustomerRepositoryProvider extends $FunctionalProvider<
 }
 
 String _$customerRepositoryHash() =>
-    r'8fe9850228576a17af7acb398f5e92c8f0b31684';
+    r'e5f41841bd28f5e81f7c854c1fb4d6b6a06518b9';

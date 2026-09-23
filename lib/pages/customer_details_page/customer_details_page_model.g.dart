@@ -60,7 +60,7 @@ final class CustomerDetailNotifierProvider
 }
 
 String _$customerDetailNotifierHash() =>
-    r'470d1bb96810c5bab2e7427ea90f9cb1af5b08e6';
+    r'a6eb6f4c8b896712afd7a77ef42d7b663f8d118b';
 
 final class CustomerDetailNotifierFamily extends $Family
     with

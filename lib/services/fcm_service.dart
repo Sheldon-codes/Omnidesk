@@ -9,6 +9,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../firebase_options.dart';
 import 'calls/call_models.dart';
+import '../pages/notifications_page/notifications_models.dart';
 part 'fcm_service.g.dart';
 
 @Riverpod(keepAlive: true)
@@ -38,11 +39,15 @@ class FcmService {
   bool _initialized = false;
   final _offers = StreamController<CallOffer>.broadcast();
   final _tokenChanges = StreamController<String?>.broadcast();
+  final _notificationEvents = StreamController<AppNotification>.broadcast();
+  final _notificationTaps = StreamController<AppNotification>.broadcast();
   String? get currentToken => _token;
   String? get apnsToken => _apnsToken;
   String? get voipPushToken => _voipPushToken;
   Stream<CallOffer> get incomingCallOffers => _offers.stream;
   Stream<String?> get tokenChanges => _tokenChanges.stream;
+  Stream<AppNotification> get notificationEvents => _notificationEvents.stream;
+  Stream<AppNotification> get notificationTaps => _notificationTaps.stream;
 
   FirebaseMessaging? _resolveMessaging() {
     final existing = _messaging;
@@ -66,7 +71,10 @@ class FcmService {
     }
     try {
       final permissions = await messaging.requestPermission(
-          alert: true, badge: true, sound: true);
+        alert: true,
+        badge: true,
+        sound: true,
+      );
       _token = await messaging.getToken();
       _apnsToken = await messaging.getAPNSToken();
       _tokenChanges.add(_token);
@@ -87,9 +95,11 @@ class FcmService {
       // Static-only in this firebase_messaging release; guarded by the
       // surrounding try/catch when no Firebase app exists.
       FirebaseMessaging.onMessage.listen(_handleMessage);
-      FirebaseMessaging.onMessageOpenedApp.listen(_handleMessage);
+      FirebaseMessaging.onMessageOpenedApp.listen(
+        (message) => _handleMessage(message, opened: true),
+      );
       final initial = await messaging.getInitialMessage();
-      if (initial != null) _handleMessage(initial);
+      if (initial != null) _handleMessage(initial, opened: true);
       final pending = await PendingCallOfferStore().take();
       if (pending != null && !pending.isExpired) _offers.add(pending);
       _initialized = true;
@@ -98,11 +108,23 @@ class FcmService {
     }
   }
 
-  void _handleMessage(RemoteMessage message) {
+  void _handleMessage(RemoteMessage message, {bool opened = false}) {
     final offer = _incomingCallOffer(message.data);
     if (offer != null && !offer.isExpired) {
       _offers.add(offer);
       return;
+    }
+    try {
+      final notification = AppNotification.fromJson(message.data);
+      _notificationEvents.add(notification);
+      if (opened) _notificationTaps.add(notification);
+      developer.log(
+        'FCM notification event received type=${notification.type}',
+        name: 'FcmService',
+      );
+    } on Object {
+      // Non-notification payloads remain ignored; call handling above is
+      // intentionally untouched.
     }
     developer.log('FCM message: ${message.messageId}', name: 'FcmService');
   }
@@ -127,6 +149,8 @@ class FcmService {
   Future<void> dispose() async {
     await _offers.close();
     await _tokenChanges.close();
+    await _notificationEvents.close();
+    await _notificationTaps.close();
   }
 }
 

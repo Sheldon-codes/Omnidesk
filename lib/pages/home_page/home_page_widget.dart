@@ -6,6 +6,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import '../../components/home_app_bar/home_app_bar.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../services/auth_session_controller.dart';
+import '../notifications_page/notifications_page_model.dart';
 import 'home_dashboard_store.dart';
 
 export 'home_page_model.dart';
@@ -17,9 +18,19 @@ class HomePageWidget extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final user = ref.watch(authSessionControllerProvider).session!.user;
+    // The router redirects immediately when a background `/auth/me`
+    // revalidation invalidates a cached session. Flutter can still schedule
+    // one final Home build before that redirect is applied, so never force
+    // unwrap the session here.
+    final session = ref.watch(authSessionControllerProvider).session;
+    if (session == null) {
+      return const Scaffold(body: SizedBox.shrink());
+    }
+    final user = session.user;
     final theme = FlutterFlowTheme.of(context);
     final dashboard = ref.watch(homeDashboardProvider);
+    final unreadNotifications =
+        ref.watch(notificationsPageProvider).unreadCount;
     final stats = dashboard.stats;
     final greeting = stats?.greeting;
     return Scaffold(
@@ -35,7 +46,8 @@ class HomePageWidget extends ConsumerWidget {
           includeTopInset: false,
           locationLabel: user.activeWorkspace?.name ?? 'Your workspace',
           onAvatarTap: () => context.push('/profile'),
-          onNotificationTap: () {},
+          unreadCount: unreadNotifications,
+          onNotificationTap: () => context.push('/notifications'),
         ),
         actions: const [],
       ),
@@ -56,9 +68,10 @@ class HomePageWidget extends ConsumerWidget {
                   const SizedBox(height: 12),
                   Container(
                     decoration: BoxDecoration(
-                        color: theme.primaryBackground,
-                        border: Border.all(color: theme.alternate),
-                        borderRadius: BorderRadius.all(Radius.circular(12))),
+                      color: theme.primaryBackground,
+                      border: Border.all(color: theme.alternate),
+                      borderRadius: BorderRadius.all(Radius.circular(12)),
+                    ),
                     child: Padding(
                       padding: const EdgeInsets.all(12.0),
                       child: Column(
@@ -215,26 +228,27 @@ class HomePageWidget extends ConsumerWidget {
                     child: Column(
                       children: dashboard.tickets
                           .take(3)
-                          .map((ticket) => _TicketRow(
-                                theme: theme,
-                                ticketId: ticket.displayNumber,
-                                status: ticket.isOverdue
-                                    ? 'Overdue'
-                                    : ticket.status,
-                                statusColor: ticket.isOverdue
-                                    ? theme.error
-                                    : const {
-                                        'resolved',
-                                        'closed'
-                                      }.contains(ticket.status.toLowerCase())
-                                        ? theme.success
-                                        : theme.secondaryText,
-                                subject: ticket.subject,
-                                meta:
-                                    '${ticket.priority} · ${ticket.customerName}',
-                                onTap: () =>
-                                    context.push('/tickets/${ticket.id}'),
-                              ))
+                          .map(
+                            (ticket) => _TicketRow(
+                              theme: theme,
+                              ticketId: ticket.displayNumber,
+                              status:
+                                  ticket.isOverdue ? 'Overdue' : ticket.status,
+                              statusColor: ticket.isOverdue
+                                  ? theme.error
+                                  : const {
+                                      'resolved',
+                                      'closed',
+                                    }.contains(ticket.status.toLowerCase())
+                                      ? theme.success
+                                      : theme.secondaryText,
+                              subject: ticket.subject,
+                              meta:
+                                  '${ticket.priority} · ${ticket.customerName}',
+                              onTap: () =>
+                                  context.push('/tickets/${ticket.id}'),
+                            ),
+                          )
                           .toList(growable: false),
                     ),
                   ),
@@ -253,30 +267,29 @@ class HomePageWidget extends ConsumerWidget {
                     ),
                     child: Column(
                       children: [
-                        ...?stats?.recentCallers
-                            .take(2)
-                            .map((caller) => _ActivityRow(
-                                  theme: theme,
-                                  icon: IconsaxPlusBroken.call_incoming,
-                                  text: '${caller.label} · ${caller.phone}',
-                                  time:
-                                      caller.timestamp?.toLocal().toString() ??
-                                          'Recent',
-                                  isLast: false,
-                                )),
-                        ...?stats?.recentCalls
-                            .take(1)
-                            .map((call) => _ActivityRow(
-                                  theme: theme,
-                                  icon: call.missed
-                                      ? IconsaxPlusBroken.call_slash
-                                      : IconsaxPlusBroken.call_incoming,
-                                  iconColor: call.missed ? theme.error : null,
-                                  text: call.label,
-                                  time: call.timestamp?.toLocal().toString() ??
-                                      'Recent',
-                                  isLast: true,
-                                )),
+                        ...?stats?.recentCallers.take(2).map(
+                              (caller) => _ActivityRow(
+                                theme: theme,
+                                icon: IconsaxPlusBroken.call_incoming,
+                                text: '${caller.label} · ${caller.phone}',
+                                time: caller.timestamp?.toLocal().toString() ??
+                                    'Recent',
+                                isLast: false,
+                              ),
+                            ),
+                        ...?stats?.recentCalls.take(1).map(
+                              (call) => _ActivityRow(
+                                theme: theme,
+                                icon: call.missed
+                                    ? IconsaxPlusBroken.call_slash
+                                    : IconsaxPlusBroken.call_incoming,
+                                iconColor: call.missed ? theme.error : null,
+                                text: call.label,
+                                time: call.timestamp?.toLocal().toString() ??
+                                    'Recent',
+                                isLast: true,
+                              ),
+                            ),
                       ],
                     ),
                   ),
@@ -475,19 +488,22 @@ class _QuickActionButton extends StatelessWidget {
     return ElevatedButton(
       onPressed: onTap,
       style: OutlinedButton.styleFrom(
-          foregroundColor: theme.primaryText,
-          side: BorderSide(color: theme.alternate),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          elevation: 0,
-          backgroundColor: theme.primaryBackground),
+        foregroundColor: theme.primaryText,
+        side: BorderSide(color: theme.alternate),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        elevation: 0,
+        backgroundColor: theme.primaryBackground,
+      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(icon, size: 16),
           const SizedBox(width: 6),
-          Text(label,
-              style: theme.bodySmall.copyWith(color: theme.primaryText)),
+          Text(
+            label,
+            style: theme.bodySmall.copyWith(color: theme.primaryText),
+          ),
         ],
       ),
     );
@@ -554,8 +570,9 @@ class _TicketRow extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               meta,
-              style: theme.bodySmall
-                  .copyWith(color: theme.secondaryText.withValues(alpha: 0.7)),
+              style: theme.bodySmall.copyWith(
+                color: theme.secondaryText.withValues(alpha: 0.7),
+              ),
             ),
           ],
         ),

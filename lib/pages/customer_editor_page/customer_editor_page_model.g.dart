@@ -41,7 +41,7 @@ final class CustomersStoreProvider
   }
 }
 
-String _$customersStoreHash() => r'c973caa4ba08fb1533e8ded3af7819be2407e471';
+String _$customersStoreHash() => r'dfc9a87e89a9d3cd1e47bf5a11323c1c6cbd3442';
 
 abstract class _$CustomersStore extends $Notifier<List<CustomerRecord>> {
   List<CustomerRecord> build();
@@ -109,7 +109,7 @@ final class CustomerEditorNotifierProvider
 }
 
 String _$customerEditorNotifierHash() =>
-    r'c80afacf3f9c77a8736f04313d004473ee217400';
+    r'2c25e0b12c2f9dc05b107d67f917543dd5dba237';
 
 final class CustomerEditorNotifierFamily extends $Family
     with

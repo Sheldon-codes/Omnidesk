@@ -50,4 +50,4 @@ final class TicketsRepositoryProvider extends $FunctionalProvider<
   }
 }
 
-String _$ticketsRepositoryHash() => r'526234b402b37277c14ba60a586366f68c8c49ad';
+String _$ticketsRepositoryHash() => r'f65b06d0af5895a541d1b0cb79c9ce118a1c5b68';

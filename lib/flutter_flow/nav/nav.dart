@@ -5,6 +5,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../index.dart';
 import '../../main.dart';
+import '../../pages/notifications_page/notifications_page_widget.dart';
 import '../../services/auth_session_controller.dart';
 import '../../services/onboarding_controller.dart';
 
@@ -52,6 +53,7 @@ GoRouter goRouter(Ref ref) {
                 location == TicketsPageWidget.routePath ||
                 location.startsWith('/tickets/') ||
                 location == ProfilePageWidget.routePath ||
+                location == NotificationsPageWidget.routePath ||
                 location == ChangePasswordPageWidget.routePath ||
                 location == CustomersPageWidget.routePath ||
                 location == '/customers/new' ||
@@ -103,23 +105,20 @@ GoRouter goRouter(Ref ref) {
       GoRoute(
         name: HomePageWidget.routeName,
         path: HomePageWidget.routePath,
-        builder: (_, __) => const NavBarPage(
-          initialPage: HomePageWidget.routeName,
-        ),
+        builder: (_, __) =>
+            const NavBarPage(initialPage: HomePageWidget.routeName),
       ),
       GoRoute(
         name: PhonePageWidget.routeName,
         path: PhonePageWidget.routePath,
-        builder: (_, __) => const NavBarPage(
-          initialPage: PhonePageWidget.routeName,
-        ),
+        builder: (_, __) =>
+            const NavBarPage(initialPage: PhonePageWidget.routeName),
       ),
       GoRoute(
         name: ChatsPageWidget.routeName,
         path: ChatsPageWidget.routePath,
-        builder: (_, __) => const NavBarPage(
-          initialPage: ChatsPageWidget.routeName,
-        ),
+        builder: (_, __) =>
+            const NavBarPage(initialPage: ChatsPageWidget.routeName),
       ),
       GoRoute(
         name: ConversationRoomPageWidget.routeName,
@@ -147,16 +146,14 @@ GoRouter goRouter(Ref ref) {
       GoRoute(
         name: EmailPageWidget.routeName,
         path: EmailPageWidget.routePath,
-        builder: (_, __) => const NavBarPage(
-          initialPage: EmailPageWidget.routeName,
-        ),
+        builder: (_, __) =>
+            const NavBarPage(initialPage: EmailPageWidget.routeName),
       ),
       GoRoute(
         name: EmailComposerPageWidget.routeName,
         path: '/email/compose',
-        builder: (_, state) => EmailComposerPageWidget(
-          initialTo: state.uri.queryParameters['to'],
-        ),
+        builder: (_, state) =>
+            EmailComposerPageWidget(initialTo: state.uri.queryParameters['to']),
       ),
       GoRoute(
         name: 'EmailThreadComposer',
@@ -169,9 +166,8 @@ GoRouter goRouter(Ref ref) {
       GoRoute(
         name: EmailThreadPageWidget.routeName,
         path: EmailThreadPageWidget.routePath,
-        builder: (_, state) => EmailThreadPageWidget(
-          threadId: state.pathParameters['threadId']!,
-        ),
+        builder: (_, state) =>
+            EmailThreadPageWidget(threadId: state.pathParameters['threadId']!),
       ),
       GoRoute(
         name: TicketsPageWidget.routeName,
@@ -196,9 +192,8 @@ GoRouter goRouter(Ref ref) {
       GoRoute(
         name: 'TicketEdit',
         path: '/tickets/:ticketId/edit',
-        builder: (_, state) => TicketEditorPageWidget(
-          ticketId: state.pathParameters['ticketId']!,
-        ),
+        builder: (_, state) =>
+            TicketEditorPageWidget(ticketId: state.pathParameters['ticketId']!),
       ),
       GoRoute(
         name: TicketDetailsPageWidget.routeName,
@@ -211,6 +206,11 @@ GoRouter goRouter(Ref ref) {
         name: ProfilePageWidget.routeName,
         path: ProfilePageWidget.routePath,
         builder: (_, __) => const ProfilePageWidget(),
+      ),
+      GoRoute(
+        name: NotificationsPageWidget.routeName,
+        path: NotificationsPageWidget.routePath,
+        builder: (_, __) => const NotificationsPageWidget(),
       ),
       GoRoute(
         name: ChangePasswordPageWidget.routeName,
@@ -243,16 +243,19 @@ GoRouter goRouter(Ref ref) {
       GoRoute(
         name: 'CustomerEdit',
         path: '/customers/:id/edit',
-        builder: (_, state) => CustomerEditorPageWidget(
-          customerId: state.pathParameters['id'],
-        ),
+        builder: (_, state) =>
+            CustomerEditorPageWidget(customerId: state.pathParameters['id']),
       ),
     ],
   );
   ref.listen<AuthState>(
-      authSessionControllerProvider, (_, __) => router.refresh());
+    authSessionControllerProvider,
+    (_, __) => router.refresh(),
+  );
   ref.listen<OnboardingState>(
-      onboardingControllerProvider, (_, __) => router.refresh());
+    onboardingControllerProvider,
+    (_, __) => router.refresh(),
+  );
   ref.onDispose(router.dispose);
   return router;
 }

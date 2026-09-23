@@ -42,7 +42,7 @@ final class TicketsPageNotifierProvider
 }
 
 String _$ticketsPageNotifierHash() =>
-    r'551e97a10d1aea4776ed06b3afd0294c0b07030c';
+    r'4770cce9ef6fcae52b8c8fea62f9792a04fb07b5';
 
 abstract class _$TicketsPageNotifier extends $Notifier<TicketsPageState> {
   TicketsPageState build();

@@ -20,6 +20,8 @@ import 'pages/home_page/home_page_widget.dart';
 import 'pages/home_page/home_dashboard_store.dart';
 import 'pages/phone_page/phone_page_widget.dart';
 import 'pages/profile_page/profile_page_model.dart';
+import 'pages/notifications_page/notification_target_resolver.dart';
+import 'pages/notifications_page/notifications_models.dart';
 import 'pages/chats_page/chats_page_widget.dart';
 import 'pages/email_page/email_page_widget.dart';
 import 'pages/tickets_page/tickets_page_widget.dart';
@@ -62,6 +64,7 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
     with WidgetsBindingObserver {
   ProviderSubscription<AuthState>? _authSubscription;
   ProviderSubscription<OnboardingState>? _onboardingSubscription;
+  StreamSubscription<AppNotification>? _notificationTapSubscription;
 
   @override
   void initState() {
@@ -79,7 +82,8 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
         if (next.isAuthenticated) {
           ref.read(homeDashboardProvider.notifier).startHeartbeat();
           unawaited(
-              ref.read(callLifecycleCoordinatorProvider).updateAuth(next));
+            ref.read(callLifecycleCoordinatorProvider).updateAuth(next),
+          );
         } else if (ref.exists(homeDashboardProvider)) {
           ref.read(homeDashboardProvider.notifier).stopHeartbeat();
           unawaited(ref.read(callLifecycleCoordinatorProvider).stop());
@@ -99,6 +103,15 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
       fireImmediately: true,
     );
     if (widget.fcmEnabled) {
+      _notificationTapSubscription =
+          ref.read(fcmServiceProvider).notificationTaps.listen((notification) {
+        if (!mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            ref.read(goRouterProvider).push(notificationRoute(notification));
+          }
+        });
+      });
       Future.microtask(() => ref.read(fcmServiceProvider).initialize());
     } else {
       developer.log(
@@ -114,6 +127,7 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
     WidgetsBinding.instance.removeObserver(this);
     _authSubscription?.close();
     _onboardingSubscription?.close();
+    _notificationTapSubscription?.cancel();
     super.dispose();
   }
 

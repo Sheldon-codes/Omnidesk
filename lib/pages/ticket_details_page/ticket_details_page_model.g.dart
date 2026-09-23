@@ -59,7 +59,7 @@ final class TicketDetailsNotifierProvider
 }
 
 String _$ticketDetailsNotifierHash() =>
-    r'83a03bbe0e8af8337102fe01bcb9fef00a3c3935';
+    r'17e43e2dc50000bfe58e87a58116f407abe43257';
 
 final class TicketDetailsNotifierFamily extends $Family
     with
