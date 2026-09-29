@@ -164,6 +164,7 @@ class WebViewCallMediaService implements CallMediaService {
   // to standby after a caller has already claimed it.
   int _clientReservation = 0;
   String? _readyConfigKey;
+  DateTime? _standbyCredentialExpiresAt;
   Future<String>? _initialization;
   // Last-known bridge state for failure messages. Updated at every step so
   // a timeout names the actual stall point instead of a generic string.
@@ -461,6 +462,7 @@ class WebViewCallMediaService implements CallMediaService {
     } catch (error) {
       _engineReady = false;
       _readyConfigKey = null;
+      _standbyCredentialExpiresAt = null;
       _log('AT client standby prewarm failed: ${error.runtimeType}');
     }
   }
@@ -502,6 +504,7 @@ class WebViewCallMediaService implements CallMediaService {
       _engineReady = false;
       _clientInUse = false;
       _readyConfigKey = null;
+      _standbyCredentialExpiresAt = null;
       _bridgePrimed = false;
       return _initialize(
         config,
@@ -530,14 +533,22 @@ class WebViewCallMediaService implements CallMediaService {
       throw const MediaUnavailable(
           'Another media call is already in progress.');
     }
-    final configKey = _configKey(config);
+    final configKey = _standbyConfigKey(config);
     final newSessionId =
         'webview-media-${DateTime.now().microsecondsSinceEpoch}';
-    if (!forceFresh &&
+    final sameClientIdentity = _readyConfigKey == configKey;
+    final standbyCredentialFresh = _standbyCredentialIsFresh;
+    final mayReuseStandby = !forceFresh &&
         _engineReady &&
         config.isWebRtcCredentialFresh &&
-        _readyConfigKey == configKey &&
-        await _isHealthyStandby(controller)) {
+        standbyCredentialFresh &&
+        sameClientIdentity;
+    _log('standby eligibility forceFresh=$forceFresh '
+        'engineReady=$_engineReady requestCredentialFresh='
+        '${config.isWebRtcCredentialFresh} '
+        'standbyCredentialFresh=$standbyCredentialFresh '
+        'sameClientIdentity=$sameClientIdentity');
+    if (mayReuseStandby && await _isHealthyStandby(controller)) {
       _sessionId = newSessionId;
       _callSid = null;
       final prepared = normalizeJavaScriptStringResult(
@@ -554,6 +565,7 @@ class WebViewCallMediaService implements CallMediaService {
       }
       _engineReady = false;
       _readyConfigKey = null;
+      _standbyCredentialExpiresAt = null;
     }
     _callSid = null;
     _ready = Completer<void>();
@@ -655,11 +667,13 @@ class WebViewCallMediaService implements CallMediaService {
       _engineReady = true;
       _clientInUse = true;
       _readyConfigKey = configKey;
+      _standbyCredentialExpiresAt = config.webrtcExpiresAt;
       _log('engine ready; SDK owns the first microphone request during dial');
     } catch (_) {
       _engineReady = false;
       _clientInUse = false;
       _readyConfigKey = null;
+      _standbyCredentialExpiresAt = null;
       rethrow;
     } finally {
       _ready = null;
@@ -667,12 +681,22 @@ class WebViewCallMediaService implements CallMediaService {
     return _sessionId!;
   }
 
-  String _configKey(CallMediaConfig config) => [
+  /// The provider can rotate capability tokens on each read of media-config.
+  /// A token value is therefore not a client identity: recreating a healthy
+  /// AT client solely because it changed defeats standby and can leave a
+  /// second hidden WebView client waiting for a gateway slot.  The first
+  /// client's expiry is retained separately and remains the reuse authority.
+  String _standbyConfigKey(CallMediaConfig config) => [
         config.provider,
         config.webrtcClientName ?? '',
         config.webrtcGatewayUrl ?? '',
-        config.webrtcToken ?? '',
       ].join('|');
+
+  bool get _standbyCredentialIsFresh {
+    final expiry = _standbyCredentialExpiresAt;
+    return expiry == null ||
+        expiry.isAfter(DateTime.now().toUtc().add(const Duration(minutes: 2)));
+  }
 
   Future<bool> _isHealthyStandby(WebViewController controller) async {
     try {
@@ -902,6 +926,7 @@ class WebViewCallMediaService implements CallMediaService {
     if (event.type == CallMediaEventType.error) {
       _engineReady = false;
       _readyConfigKey = null;
+      _standbyCredentialExpiresAt = null;
       final ready = _ready;
       if (ready != null && !ready.isCompleted) {
         ready.completeError(MediaUnavailable(
