@@ -43,6 +43,10 @@ class CustomerCallLog {
     required this.fromNumber,
     required this.toNumber,
     required this.recordingUrl,
+    this.transcript,
+    this.ticketId,
+    this.ticketNumber,
+    this.ticketSubject,
     required this.agentName,
     required this.createdAt,
     required this.endedAt,
@@ -55,6 +59,10 @@ class CustomerCallLog {
   final String fromNumber;
   final String toNumber;
   final String? recordingUrl;
+  final String? transcript;
+  final String? ticketId;
+  final String? ticketNumber;
+  final String? ticketSubject;
   final String? agentName;
   final DateTime? createdAt;
   final DateTime? endedAt;
@@ -351,6 +359,9 @@ class RemoteCustomerRepository implements CustomerRepository {
     final agent = json['agent'] is Map
         ? _map(json['agent'], 'call agent')
         : const <String, dynamic>{};
+    final ticket = json['ticket'] is Map
+        ? _map(json['ticket'], 'call ticket')
+        : const <String, dynamic>{};
     return CustomerCallLog(
       id: _requiredString(json['id'], 'call log id'),
       direction: _string(json['direction']).ifEmpty('unknown'),
@@ -360,6 +371,13 @@ class RemoteCustomerRepository implements CustomerRepository {
       fromNumber: _string(json['from_number']),
       toNumber: _string(json['to_number']),
       recordingUrl: _nullableString(json['recording_url']),
+      transcript: _nullableString(json['transcript']),
+      ticketId:
+          _nullableString(json['ticket_id']) ?? _nullableString(ticket['id']),
+      ticketNumber: _nullableString(json['ticket_number']) ??
+          _nullableString(ticket['display_number']),
+      ticketSubject: _nullableString(json['ticket_subject']) ??
+          _nullableString(ticket['subject']),
       agentName: _nullableString(agent['name']),
       createdAt: DateTime.tryParse(_string(json['created_at']))?.toUtc(),
       endedAt: DateTime.tryParse(_string(json['ended_at']))?.toUtc(),

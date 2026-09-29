@@ -9,6 +9,8 @@ import 'package:just_audio/just_audio.dart';
 import '../../components/call_experience/call_session_controller.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../services/calls/call_log_store.dart';
+import '../customer_details_page/customer_details_page_widget.dart';
+import '../customer_editor_page/customer_editor_page_model.dart';
 import 'phone_dial_pad_widget.dart';
 import 'phone_page_model.dart';
 
@@ -244,6 +246,7 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
                 CallParty(displayName: recent.name, phoneNumber: recent.phone),
               ),
               onPlay: () => _openRecording(context, recent),
+              onTap: () => _openCallContact(context, recent),
               showCallAction: true,
               showPlayAction: recent.hasRecording,
               child: _RecentRow(recent: recent, theme: theme),
@@ -340,6 +343,46 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
         title: recent.name,
         subtitle: '${recent.phone} · ${recent.detail}',
         recordingUrl: recordingUrl,
+      ),
+    );
+  }
+
+  void _openCallContact(BuildContext context, PhoneRecent recent) {
+    final customerId = recent.customerId?.trim();
+    final hasLinkedCustomer = customerId != null && customerId.isNotEmpty;
+    // Keep unlinked callers local to this detail screen: a placeholder ID
+    // must never cause an accidental GET/PUT against /customers.
+    final detailId = hasLinkedCustomer
+        ? customerId
+        : 'call-contact-${recent.callLogId ?? recent.phone.hashCode}';
+    final customer = CustomerRecord(
+      id: detailId,
+      name: recent.name,
+      phone: recent.phone,
+      email: recent.customerEmail ?? '',
+    );
+    final call = CustomerDetailCallLog(
+      id: recent.callLogId ?? detailId,
+      direction: recent.directionValue ?? recent.direction.name,
+      status: recent.statusValue ?? 'unknown',
+      fromNumber: recent.fromNumber ?? '',
+      toNumber: recent.toNumber ?? '',
+      durationSeconds: recent.durationSeconds,
+      recordingUrl: recent.recordingUrl,
+      transcript: recent.transcript,
+      ticketId: recent.ticketId,
+      ticketNumber: recent.ticket,
+      ticketSubject: recent.ticketSubject,
+      agentName: recent.agentName,
+      createdAt: recent.occurredAt,
+      endedAt: recent.endedAt,
+    );
+    context.push(
+      '/customers/${Uri.encodeComponent(detailId)}',
+      extra: CustomerDetailsRouteData(
+        initialCustomer: customer,
+        initialCallLog: call,
+        loadRemoteProfile: hasLinkedCustomer,
       ),
     );
   }

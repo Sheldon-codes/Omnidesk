@@ -39,6 +39,10 @@ class CustomerDetailCallLog {
     required this.toNumber,
     required this.durationSeconds,
     required this.recordingUrl,
+    this.transcript,
+    this.ticketId,
+    this.ticketNumber,
+    this.ticketSubject,
     required this.agentName,
     required this.createdAt,
     required this.endedAt,
@@ -51,6 +55,10 @@ class CustomerDetailCallLog {
   final String toNumber;
   final int? durationSeconds;
   final String? recordingUrl;
+  final String? transcript;
+  final String? ticketId;
+  final String? ticketNumber;
+  final String? ticketSubject;
   final String? agentName;
   final DateTime? createdAt;
   final DateTime? endedAt;
@@ -209,6 +217,10 @@ class CustomerDetailNotifier extends _$CustomerDetailNotifier {
                 toNumber: call.toNumber,
                 durationSeconds: call.durationSeconds,
                 recordingUrl: call.recordingUrl,
+                transcript: call.transcript,
+                ticketId: call.ticketId,
+                ticketNumber: call.ticketNumber,
+                ticketSubject: call.ticketSubject,
                 agentName: call.agentName,
                 createdAt: call.createdAt,
                 endedAt: call.endedAt,

@@ -233,12 +233,20 @@ GoRouter goRouter(Ref ref) {
       GoRoute(
         name: 'CustomerDetails',
         path: '/customers/:id',
-        builder: (_, state) => CustomerDetailsPageWidget(
-          customerId: state.pathParameters['id']!,
-          initialCustomer: state.extra is CustomerRecord
-              ? state.extra as CustomerRecord
-              : null,
-        ),
+        builder: (_, state) {
+          final handoff = state.extra is CustomerDetailsRouteData
+              ? state.extra as CustomerDetailsRouteData
+              : null;
+          return CustomerDetailsPageWidget(
+            customerId: state.pathParameters['id']!,
+            initialCustomer: handoff?.initialCustomer ??
+                (state.extra is CustomerRecord
+                    ? state.extra as CustomerRecord
+                    : null),
+            initialCallLog: handoff?.initialCallLog,
+            loadRemoteProfile: handoff?.loadRemoteProfile ?? true,
+          );
+        },
       ),
       GoRoute(
         name: 'CustomerEdit',

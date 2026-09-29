@@ -74,6 +74,13 @@ const String atBridgeChannel = 'OmniDeskBridge';
 const String defaultBridgeRemoteUrl =
     'https://unvisual-nedra-depressively.ngrok-free.dev/at_call_bridge.html';
 
+// A WebView process can be cold-started while Android is restoring the app
+// after a Telecom action. Twenty seconds proved too short on slower devices
+// and congested networks, but this must remain bounded: a permanently stuck
+// navigation must never leave an outgoing call "Connecting" forever.
+const Duration _remoteBridgeLoadTimeout = Duration(seconds: 35);
+const Duration _assetBridgeLoadTimeout = Duration(seconds: 20);
+
 /// Parses one bridge-protocol JSON message into a [CallMediaEvent].
 /// Unknown shapes and versions return null (treated as noise, never crash).
 CallMediaEvent? parseBridgeEvent(Object? raw, {required String? callSid}) {
@@ -219,10 +226,14 @@ class WebViewCallMediaService implements CallMediaService {
     }
   }
 
-  Future<void> _loadBridgePage(WebViewController controller) async {
+  Future<void> _loadBridgePage(
+    WebViewController controller, {
+    bool forceAsset = false,
+  }) async {
     final configured = dotenv.env['AT_BRIDGE_URL'] ?? defaultBridgeRemoteUrl;
     final bridgeTarget = resolveBridgeOrigin(configured);
-    if (bridgeTarget.origin == CallBridgeOrigin.remote &&
+    if (!forceAsset &&
+        bridgeTarget.origin == CallBridgeOrigin.remote &&
         bridgeTarget.url != null) {
       _log('loading bridge from remote HTTPS: ${bridgeTarget.url}');
       try {
@@ -246,7 +257,10 @@ class WebViewCallMediaService implements CallMediaService {
   /// The AT client requires a clean page per call attempt, but concurrent
   /// WebView navigation is not safe: an older page-finished callback can
   /// otherwise complete the wrong attempt or leave the current one waiting.
-  Future<void> _reloadBridgePage(WebViewController controller) {
+  Future<void> _reloadBridgePage(
+    WebViewController controller, {
+    bool forceAsset = false,
+  }) {
     final active = _bridgeLoad;
     if (active != null) return active;
     final generation = ++_bridgeGeneration;
@@ -256,9 +270,9 @@ class WebViewCallMediaService implements CallMediaService {
     _log('bridge navigation started generation=$generation');
     final load = () async {
       try {
-        await _loadBridgePage(controller);
+        await _loadBridgePage(controller, forceAsset: forceAsset);
         await ready.future.timeout(
-          const Duration(seconds: 20),
+          forceAsset ? _assetBridgeLoadTimeout : _remoteBridgeLoadTimeout,
           onTimeout: () => throw const MediaUnavailable(
             'The hidden call engine page did not finish loading.',
           ),
@@ -274,6 +288,22 @@ class WebViewCallMediaService implements CallMediaService {
     });
     _bridgeLoad = tracked;
     return tracked;
+  }
+
+  /// Loads a fresh page for a media attempt. The remote bridge is preferred
+  /// for a secure WebView origin, but an ngrok/CDN navigation can occasionally
+  /// stall without producing an error callback. Retrying once from the
+  /// bundled asset replaces that navigation and gives the app a deterministic
+  /// local recovery path. We intentionally do not retry forever.
+  Future<void> _reloadBridgeForCall(WebViewController controller) async {
+    try {
+      await _reloadBridgePage(controller);
+    } on MediaUnavailable catch (error) {
+      if (!error.message.contains('did not finish loading')) rethrow;
+      _log('remote bridge navigation timed out; retrying bundled asset once');
+      _bridgeNote = 'remote bridge navigation timed out; retrying asset';
+      await _reloadBridgePage(controller, forceAsset: true);
+    }
   }
 
   /// Called by the host widget for every console line the bridge page emits
@@ -391,7 +421,7 @@ class WebViewCallMediaService implements CallMediaService {
         if (_bridgePrimed && _pageLoaded) {
           _log('using prewarmed bridge generation=$_bridgeGeneration');
         } else {
-          await _reloadBridgePage(controller);
+          await _reloadBridgeForCall(controller);
         }
       } catch (error) {
         _log('bridge reload failed: $error');

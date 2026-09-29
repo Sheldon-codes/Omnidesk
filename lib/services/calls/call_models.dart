@@ -285,13 +285,18 @@ class CallLogRecord {
     required this.occurredAt,
     this.customerId,
     this.customerName,
+    this.customerEmail,
     this.duration = Duration.zero,
     this.formattedDuration,
     this.ticketNumber,
     this.ticketSubject,
+    this.ticketId,
     this.agentName,
     this.transcript,
     this.recordingUrl,
+    this.fromNumber = '',
+    this.toNumber = '',
+    this.endedAt,
   });
 
   final String id;
@@ -301,13 +306,18 @@ class CallLogRecord {
   final DateTime occurredAt;
   final String? customerId;
   final String? customerName;
+  final String? customerEmail;
   final Duration duration;
   final String? formattedDuration;
   final String? ticketNumber;
   final String? ticketSubject;
+  final String? ticketId;
   final String? agentName;
   final String? transcript;
   final String? recordingUrl;
+  final String fromNumber;
+  final String toNumber;
+  final DateTime? endedAt;
 
   bool get isAnswered =>
       status == CallLogStatus.completed && duration > Duration.zero;
@@ -395,6 +405,8 @@ class CallLogRecord {
           nestedCustomer['id']?.toString() ??
           nestedTicketCustomer['id']?.toString(),
       customerName: resolvedName,
+      customerEmail:
+          firstPresent([nestedCustomer['email'], json['customer_email']]),
       duration: Duration(seconds: durationSeconds.clamp(0, 31536000).toInt()),
       formattedDuration: firstPresent([json['formatted_duration']]),
       ticketNumber: firstPresent([
@@ -404,10 +416,14 @@ class CallLogRecord {
       ]),
       ticketSubject:
           firstPresent([nestedTicket['subject'], json['ticket_subject']]),
+      ticketId: firstPresent([json['ticket_id'], nestedTicket['id']]),
       agentName:
           firstPresent([json['agent_name'], (json['agent'] as Map?)?['name']]),
       transcript: firstPresent([json['transcript']]),
       recordingUrl: firstPresent([json['recording_url']]),
+      fromNumber: fromNumber,
+      toNumber: toNumber,
+      endedAt: DateTime.tryParse(json['ended_at']?.toString() ?? '')?.toLocal(),
     );
   }
 }

@@ -28,6 +28,20 @@ class PhoneRecent {
     this.direction = PhoneCallDirection.inbound,
     this.ticket,
     this.recordingUrl,
+    this.callLogId,
+    this.customerId,
+    this.customerEmail,
+    this.directionValue,
+    this.statusValue,
+    this.durationSeconds,
+    this.fromNumber,
+    this.toNumber,
+    this.agentName,
+    this.transcript,
+    this.ticketId,
+    this.ticketSubject,
+    this.occurredAt,
+    this.endedAt,
   });
 
   final String name;
@@ -37,6 +51,20 @@ class PhoneRecent {
   final PhoneCallDirection direction;
   final String? ticket;
   final String? recordingUrl;
+  final String? callLogId;
+  final String? customerId;
+  final String? customerEmail;
+  final String? directionValue;
+  final String? statusValue;
+  final int? durationSeconds;
+  final String? fromNumber;
+  final String? toNumber;
+  final String? agentName;
+  final String? transcript;
+  final String? ticketId;
+  final String? ticketSubject;
+  final DateTime? occurredAt;
+  final DateTime? endedAt;
 
   /// A recording control is shown only for answered server records.
   bool get isAnswered =>
@@ -63,6 +91,20 @@ class PhoneRecent {
         },
         ticket: record.ticketNumber,
         recordingUrl: record.recordingUrl,
+        callLogId: record.id,
+        customerId: record.customerId,
+        customerEmail: record.customerEmail,
+        directionValue: record.direction.name,
+        statusValue: record.status.name,
+        durationSeconds: record.duration.inSeconds,
+        fromNumber: record.fromNumber,
+        toNumber: record.toNumber,
+        agentName: record.agentName,
+        transcript: record.transcript,
+        ticketId: record.ticketId,
+        ticketSubject: record.ticketSubject,
+        occurredAt: record.occurredAt,
+        endedAt: record.endedAt,
       );
 
   static String _timeLabel(DateTime value) =>

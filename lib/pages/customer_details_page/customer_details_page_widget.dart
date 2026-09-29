@@ -16,12 +16,33 @@ import 'customer_details_page_model.dart';
 
 export 'customer_details_page_model.dart';
 
+/// Typed navigation handoff for opening a customer/contact from Call History.
+/// A call can be linked to a CRM customer or be an unlinked contact known only
+/// from its call record. The latter deliberately avoids a synthetic API lookup.
+class CustomerDetailsRouteData {
+  const CustomerDetailsRouteData({
+    required this.initialCustomer,
+    required this.initialCallLog,
+    required this.loadRemoteProfile,
+  });
+
+  final CustomerRecord initialCustomer;
+  final CustomerDetailCallLog initialCallLog;
+  final bool loadRemoteProfile;
+}
+
 class CustomerDetailsPageWidget extends ConsumerStatefulWidget {
   const CustomerDetailsPageWidget(
-      {super.key, required this.customerId, this.initialCustomer});
+      {super.key,
+      required this.customerId,
+      this.initialCustomer,
+      this.initialCallLog,
+      this.loadRemoteProfile = true});
 
   final String customerId;
   final CustomerRecord? initialCustomer;
+  final CustomerDetailCallLog? initialCallLog;
+  final bool loadRemoteProfile;
   static const routeName = 'CustomerDetailsPage';
 
   @override
@@ -35,7 +56,7 @@ class _CustomerDetailsPageWidgetState
   void initState() {
     super.initState();
     final customer = widget.initialCustomer;
-    if (customer != null) {
+    if (customer != null && widget.loadRemoteProfile) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           ref.read(customersStoreProvider.notifier).upsert(customer);
@@ -51,8 +72,16 @@ class _CustomerDetailsPageWidgetState
   @override
   Widget build(BuildContext context) {
     final theme = FlutterFlowTheme.of(context);
-    final state =
-        ref.watch(customerDetailProvider(customerId: widget.customerId));
+    final state = widget.loadRemoteProfile
+        ? ref.watch(customerDetailProvider(customerId: widget.customerId))
+        : CustomerDetailState(
+            customerId: widget.customerId,
+            customer: widget.initialCustomer,
+            callLogs: widget.initialCallLog == null
+                ? const []
+                : [widget.initialCallLog!],
+            hasLoaded: true,
+          );
     if (state.notFound) {
       return Scaffold(
         backgroundColor: theme.primaryBackground,
@@ -128,17 +157,19 @@ class _CustomerDetailsPageWidgetState
                 theme: theme,
                 customer: customer,
                 onBack: context.pop,
-                onEdit: () async {
-                  final updated = await context.push<CustomerRecord>(
-                      '/customers/${widget.customerId}/edit');
-                  if (mounted && updated != null) {
-                    ref
-                        .read(customerDetailProvider(
-                                customerId: widget.customerId)
-                            .notifier)
-                        .seedCustomer(updated);
-                  }
-                },
+                onEdit: widget.loadRemoteProfile
+                    ? () async {
+                        final updated = await context.push<CustomerRecord>(
+                            '/customers/${widget.customerId}/edit');
+                        if (mounted && updated != null) {
+                          ref
+                              .read(customerDetailProvider(
+                                      customerId: widget.customerId)
+                                  .notifier)
+                              .seedCustomer(updated);
+                        }
+                      }
+                    : null,
                 onDownload: () => _showComingSoon(context),
               ),
             ),
@@ -167,6 +198,7 @@ class _CustomerDetailsPageWidgetState
                       );
                     }
                   },
+                  canMessage: widget.loadRemoteProfile,
                   onMessage: () => _composeWhatsApp(customer),
                   onEmail: () => launchUrl(
                     Uri(scheme: 'mailto', path: customer.email.trim()),
@@ -209,7 +241,8 @@ class _CustomerDetailsPageWidgetState
                     title: 'Recent activity',
                     child: _ActivitySection(
                         tickets: state.tickets,
-                        callLogs: state.callLogs,
+                        callLogs: _mergedCallLogs(
+                            state.callLogs, widget.initialCallLog),
                         loading: state.loading,
                         theme: theme))),
             const SliverToBoxAdapter(child: SizedBox(height: 36)),
@@ -230,6 +263,17 @@ class _CustomerDetailsPageWidgetState
     unawaited(ref.read(whatsAppInboxProvider.notifier).load());
     context.push('/chats/whatsapp/$ticketId');
   }
+
+  List<CustomerDetailCallLog> _mergedCallLogs(
+    List<CustomerDetailCallLog> callLogs,
+    CustomerDetailCallLog? selectedCall,
+  ) {
+    if (selectedCall == null ||
+        callLogs.any((call) => call.id == selectedCall.id)) {
+      return callLogs;
+    }
+    return [selectedCall, ...callLogs];
+  }
 }
 
 class _DetailsHeaderDelegate extends SliverPersistentHeaderDelegate {
@@ -244,7 +288,7 @@ class _DetailsHeaderDelegate extends SliverPersistentHeaderDelegate {
   final FlutterFlowTheme theme;
   final CustomerRecord customer;
   final VoidCallback onBack;
-  final VoidCallback onEdit;
+  final VoidCallback? onEdit;
   final VoidCallback onDownload;
 
   static const _expanded = 184.0;
@@ -290,16 +334,17 @@ class _DetailsHeaderDelegate extends SliverPersistentHeaderDelegate {
                   color: theme.primaryText, size: 22),
             ),
           ),
-          Positioned(
-            right: 52,
-            top: 0,
-            child: IconButton(
-              tooltip: 'Edit customer',
-              onPressed: onEdit,
-              icon: Icon(IconsaxPlusBroken.edit,
-                  color: theme.primaryText, size: 20),
+          if (onEdit != null)
+            Positioned(
+              right: 52,
+              top: 0,
+              child: IconButton(
+                tooltip: 'Edit customer',
+                onPressed: onEdit,
+                icon: Icon(IconsaxPlusBroken.edit,
+                    color: theme.primaryText, size: 20),
+              ),
             ),
-          ),
           Positioned(
             right: 8,
             top: 0,
@@ -392,6 +437,7 @@ class _QuickActions extends StatelessWidget {
     required this.onCall,
     required this.onMessage,
     required this.onEmail,
+    this.canMessage = true,
   });
   final FlutterFlowTheme theme;
   final bool hasPhone;
@@ -399,11 +445,12 @@ class _QuickActions extends StatelessWidget {
   final VoidCallback onCall;
   final VoidCallback onMessage;
   final VoidCallback onEmail;
+  final bool canMessage;
 
   @override
   Widget build(BuildContext context) {
     final actions = <Widget>[
-      if (hasPhone)
+      if (hasPhone && canMessage)
         _QuickAction(
             label: 'Call',
             icon: IconsaxPlusBroken.call,
@@ -661,32 +708,132 @@ class _ActivitySection extends StatelessWidget {
           )
         ),
       for (final call in callLogs)
-        (
-          at: call.createdAt,
-          row: _DenseRow(
-            theme: theme,
-            icon: IconsaxPlusBroken.call,
-            title:
-                '${_humanize(call.direction)} call · ${_humanize(call.status)}',
-            subtitle:
-                call.fromNumber.isNotEmpty ? call.fromNumber : call.toNumber,
-            metadata: [
-              if (call.durationSeconds != null)
-                _durationLabel(call.durationSeconds!),
-              if (call.agentName != null) 'by ${call.agentName}',
-              call.recordingUrl == null
-                  ? 'No recording'
-                  : 'Recording available',
-              _dateLabel(call.createdAt),
-            ].where((value) => value.isNotEmpty).join(' · '),
-          )
-        ),
+        (at: call.createdAt, row: _CallActivityRow(call: call, theme: theme)),
     ]..sort((a, b) => (b.at ?? DateTime.fromMillisecondsSinceEpoch(0))
         .compareTo(a.at ?? DateTime.fromMillisecondsSinceEpoch(0)));
     return Column(
       children: [
         for (final entry in entries) entry.row,
       ],
+    );
+  }
+}
+
+class _CallActivityRow extends StatelessWidget {
+  const _CallActivityRow({required this.call, required this.theme});
+
+  final CustomerDetailCallLog call;
+  final FlutterFlowTheme theme;
+
+  @override
+  Widget build(BuildContext context) {
+    final number = call.fromNumber.isNotEmpty ? call.fromNumber : call.toNumber;
+    final metadata = [
+      if (call.durationSeconds != null) _durationLabel(call.durationSeconds!),
+      if (call.agentName != null) 'by ${call.agentName}',
+      call.recordingUrl == null ? 'No recording' : 'Recording available',
+      _dateLabel(call.createdAt),
+    ].where((value) => value.isNotEmpty).join(' · ');
+    final transcript = call.transcript?.trim();
+    final ticketLabel = [
+      call.ticketNumber,
+      call.ticketSubject,
+    ].whereType<String>().where((value) => value.trim().isNotEmpty).join(' · ');
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: theme.alternate)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(IconsaxPlusBroken.call, color: theme.secondaryText, size: 18),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${_humanize(call.direction)} call · ${_humanize(call.status)}',
+                  style: theme.bodyMedium.override(
+                    fontFamily: theme.bodyMediumFamily,
+                    color: theme.primaryText,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (number.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: Text(
+                      number,
+                      style: theme.bodySmall.override(
+                        fontFamily: theme.bodySmallFamily,
+                        color: theme.primaryText,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 3),
+                  child: Text(
+                    metadata,
+                    style: theme.bodySmall.override(
+                      fontFamily: theme.bodySmallFamily,
+                      color: theme.secondaryText,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                if (ticketLabel.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 5),
+                    child: InkWell(
+                      onTap: call.ticketId == null
+                          ? null
+                          : () => context.push(
+                              '/tickets/${Uri.encodeComponent(call.ticketId!)}'),
+                      child: Text(
+                        'Ticket: $ticketLabel',
+                        style: theme.bodySmall.override(
+                          fontFamily: theme.bodySmallFamily,
+                          color: call.ticketId == null
+                              ? theme.secondaryText
+                              : theme.primary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                if (transcript != null && transcript.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'Transcript',
+                    style: theme.bodySmall.override(
+                      fontFamily: theme.bodySmallFamily,
+                      color: theme.secondaryText,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  SelectableText(
+                    transcript,
+                    style: theme.bodySmall.override(
+                      fontFamily: theme.bodySmallFamily,
+                      color: theme.primaryText,
+                      fontSize: 13,
+                      lineHeight: 1.35,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

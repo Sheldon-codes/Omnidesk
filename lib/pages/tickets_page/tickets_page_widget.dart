@@ -187,15 +187,6 @@ class _TicketsPageWidgetState extends ConsumerState<TicketsPageWidget> {
               const SliverToBoxAdapter(child: SizedBox(height: 24)),
             ],
           )),
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'ticket-create',
-        tooltip: 'Create ticket',
-        onPressed: () => context.push('/tickets/new'),
-        backgroundColor: theme.primary,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add),
-        label: const Text('Create ticket'),
-      ),
     );
   }
 
