@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -149,6 +150,9 @@ class AgentCountersController extends Notifier<AgentCountersState> {
   int _generation = 0;
   Timer? _timer;
   bool _appActive = true;
+  bool _callCritical = false;
+  bool _deferredRefresh = false;
+  Future<void>? _refreshInFlight;
 
   @override
   AgentCountersState build() {
@@ -173,7 +177,7 @@ class AgentCountersController extends Notifier<AgentCountersState> {
     _timer?.cancel();
     state = AgentCountersState(loading: auth.isAuthenticated);
     if (!auth.isAuthenticated) return;
-    unawaited(refresh());
+    unawaited(refresh(reason: 'auth_scope'));
     _startTimer();
   }
 
@@ -185,20 +189,51 @@ class AgentCountersController extends Notifier<AgentCountersState> {
       return;
     }
     if (ref.read(authSessionControllerProvider).isAuthenticated) {
-      unawaited(refresh());
+      unawaited(refresh(reason: 'app_resumed'));
       _startTimer();
+    }
+  }
+
+  void setCallCritical(bool active) {
+    if (_callCritical == active) return;
+    _callCritical = active;
+    if (!active && _deferredRefresh) {
+      _deferredRefresh = false;
+      unawaited(refresh(reason: 'call_terminal'));
     }
   }
 
   void _startTimer() {
     _timer?.cancel();
     if (!_appActive) return;
-    _timer = Timer.periodic(_refreshInterval, (_) => unawaited(refresh()));
+    _timer = Timer.periodic(
+      _refreshInterval,
+      (_) => unawaited(refresh(reason: 'periodic')),
+    );
   }
 
-  Future<void> refresh() async {
+  Future<void> refresh({String reason = 'manual'}) {
+    if (_callCritical) {
+      _deferredRefresh = true;
+      developer.log('Counter refresh deferred reason=$reason',
+          name: 'AgentCounters');
+      return Future<void>.value();
+    }
+    final active = _refreshInFlight;
+    if (active != null) return active;
+    late final Future<void> operation;
+    operation = _performRefresh(reason).whenComplete(() {
+      if (identical(_refreshInFlight, operation)) _refreshInFlight = null;
+    });
+    _refreshInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _performRefresh(String reason) async {
     final auth = ref.read(authSessionControllerProvider);
     if (!auth.isAuthenticated) return;
+    developer.log('Counter refresh started reason=$reason',
+        name: 'AgentCounters');
     final generation = _generation;
     state = state.copyWith(
       loading: !state.hasLoaded,

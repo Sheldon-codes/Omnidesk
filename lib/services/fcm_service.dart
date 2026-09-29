@@ -117,11 +117,15 @@ class FcmService {
   }
 
   void _handleMessage(RemoteMessage message, {bool opened = false}) {
+    final type = '${message.data['type'] ?? ''}'.toLowerCase();
     final offer = _incomingCallOffer(message.data);
     if (offer != null && !offer.isExpired) {
       _offers.add(offer);
       return;
     }
+    // Native Android/iOS call coordinators own cancellation delivery. It is
+    // latency-sensitive and must not trigger unrelated badge/network work.
+    if (type == 'call_cancelled') return;
     _notificationRefreshEvents.add(null);
     try {
       final notification = AppNotification.fromJson(message.data);

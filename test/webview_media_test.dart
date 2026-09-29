@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omnidesk_agent/services/calls/call_media_provider.dart';
 import 'package:omnidesk_agent/services/calls/call_media_service.dart';
@@ -108,6 +109,23 @@ void main() {
     // Heartbeats are consumed by the watchdog, not the state machine.
     expect(parseBridgeEvent({'v': 1, 'event': 'heartbeat'}, callSid: null),
         isNull);
+  });
+
+  test('bundled bridge has no runtime CDN dependency and is diagnostic',
+      () async {
+    final shell =
+        await rootBundle.loadString('assets/html/at_call_bridge.html');
+    final adapter =
+        await rootBundle.loadString('assets/js/omnidesk-call-bridge.js');
+    final sdk = await rootBundle
+        .loadString('assets/js/africastalking-client-1.0.7.min.js');
+
+    expect(shell, isNot(contains('unpkg.com')));
+    expect(shell, contains('data-omnidesk-shell="2.0.0"'));
+    expect(adapter, contains("event: 'diagnostic'"));
+    expect(adapter, contains("'client_event_binding_completed'"));
+    expect(adapter, contains("'get_user_media_rejected'"));
+    expect(sdk, contains('Africastalking'));
   });
 
   test('normalizes JSON-encoded WebView string results across platforms', () {

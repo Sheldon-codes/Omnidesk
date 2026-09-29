@@ -131,6 +131,7 @@ class CallMediaConfig {
     this.webrtcToken,
     this.webrtcGatewayUrl,
     this.webrtcClientName,
+    this.webrtcExpiresAt,
   });
 
   final String provider;
@@ -155,6 +156,13 @@ class CallMediaConfig {
   final String? webrtcToken;
   final String? webrtcGatewayUrl;
   final String? webrtcClientName;
+  final DateTime? webrtcExpiresAt;
+
+  bool get isWebRtcCredentialFresh {
+    final expiry = webrtcExpiresAt;
+    return expiry == null ||
+        expiry.isAfter(DateTime.now().toUtc().add(const Duration(minutes: 2)));
+  }
 
   /// A native SIP stack must reject incomplete configuration rather than
   /// falling back to anonymous or non-TLS registration. These credentials are
@@ -187,6 +195,18 @@ class CallMediaConfig {
         : const <String, dynamic>{};
     bool boolValue(Object? value) =>
         value == true || value == 1 || value == '1';
+    DateTime? expiry;
+    final explicitExpiry =
+        webrtc['expires_at'] ?? webrtc['expiresAt'] ?? json['expires_at'];
+    if (explicitExpiry != null) {
+      expiry = DateTime.tryParse('$explicitExpiry')?.toUtc();
+    } else {
+      final expiresIn =
+          int.tryParse('${webrtc['expires_in'] ?? webrtc['expiresIn'] ?? ''}');
+      if (expiresIn != null && expiresIn > 0) {
+        expiry = DateTime.now().toUtc().add(Duration(seconds: expiresIn));
+      }
+    }
     return CallMediaConfig(
       provider: '${json['provider'] ?? ''}',
       transport: '${json['transport'] ?? ''}',
@@ -209,6 +229,7 @@ class CallMediaConfig {
           (webrtc['gateway_url'] ?? webrtc['gatewayUrl'])?.toString(),
       webrtcClientName:
           (webrtc['client_name'] ?? webrtc['clientName'])?.toString(),
+      webrtcExpiresAt: expiry,
     );
   }
 
@@ -217,7 +238,8 @@ class CallMediaConfig {
   /// production gateway when none is supplied.
   bool get canUseWebRtc =>
       provider == 'africas_talking' &&
-      (webrtcToken != null && webrtcToken!.isNotEmpty);
+      (webrtcToken != null && webrtcToken!.isNotEmpty) &&
+      isWebRtcCredentialFresh;
 }
 
 class ActiveCallSnapshot {

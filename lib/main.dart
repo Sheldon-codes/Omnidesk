@@ -65,6 +65,7 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
     with WidgetsBindingObserver {
   ProviderSubscription<AuthState>? _authSubscription;
   ProviderSubscription<OnboardingState>? _onboardingSubscription;
+  ProviderSubscription<CallSessionState>? _callSubscription;
   StreamSubscription<AppNotification>? _notificationTapSubscription;
   StreamSubscription<void>? _counterRefreshSubscription;
 
@@ -106,6 +107,16 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
       },
       fireImmediately: true,
     );
+    _callSubscription = ref.listenManual<CallSessionState>(
+      callSessionControllerProvider,
+      (_, next) {
+        final critical = next.hasCall &&
+            next.lifecycle != CallLifecycle.terminalNotice &&
+            next.lifecycle != CallLifecycle.failed;
+        ref.read(agentCountersProvider.notifier).setCallCritical(critical);
+      },
+      fireImmediately: true,
+    );
     if (widget.fcmEnabled) {
       _notificationTapSubscription =
           ref.read(fcmServiceProvider).notificationTaps.listen((notification) {
@@ -123,8 +134,9 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
       _counterRefreshSubscription = ref
           .read(fcmServiceProvider)
           .notificationRefreshEvents
-          .listen((_) =>
-              unawaited(ref.read(agentCountersProvider.notifier).refresh()));
+          .listen((_) => unawaited(ref
+              .read(agentCountersProvider.notifier)
+              .refresh(reason: 'notification')));
       Future.microtask(() => ref.read(fcmServiceProvider).initialize());
     } else {
       developer.log(
@@ -140,6 +152,7 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
     WidgetsBinding.instance.removeObserver(this);
     _authSubscription?.close();
     _onboardingSubscription?.close();
+    _callSubscription?.close();
     _notificationTapSubscription?.cancel();
     _counterRefreshSubscription?.cancel();
     super.dispose();
@@ -149,12 +162,17 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       ref.read(agentCountersProvider.notifier).setAppActive(true);
-      unawaited(
-        ref.read(authSessionControllerProvider.notifier).refreshSession(),
-      );
+      final hasLocalCall = ref.read(callSessionControllerProvider).hasCall;
+      if (!hasLocalCall) {
+        unawaited(
+          ref.read(authSessionControllerProvider.notifier).refreshSession(),
+        );
+      }
       if (ref.read(authSessionControllerProvider).isAuthenticated) {
         ref.read(homeDashboardProvider.notifier).startHeartbeat();
-        unawaited(ref.read(callLifecycleCoordinatorProvider).recover());
+        if (!hasLocalCall) {
+          unawaited(ref.read(callLifecycleCoordinatorProvider).recover());
+        }
       } else if (ref.exists(homeDashboardProvider)) {
         ref.read(homeDashboardProvider.notifier).stopHeartbeat();
       }
@@ -255,6 +273,13 @@ class _AppCallOverlayState extends ConsumerState<_AppCallOverlay> {
           return;
         }
         setState(() => _warmMedia = true);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            unawaited(ref
+                .read(callSessionControllerProvider.notifier)
+                .prewarmMedia());
+          }
+        });
       });
     });
   }

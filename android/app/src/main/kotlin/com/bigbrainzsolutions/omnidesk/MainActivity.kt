@@ -45,8 +45,9 @@ class MainActivity : FlutterActivity() {
 
     private fun handleCallMethod(call: MethodCall, result: MethodChannel.Result) {
         val args = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
-        val callId = args["callId"]?.toString() ?: "none"
-        val callSid = args["callSid"]?.toString() ?: "none"
+        val callId = args["callId"]?.toString().orEmpty()
+        val callSid = args["callSid"]?.toString().orEmpty()
+        val systemCallId = callId.ifBlank { callSid }
         Log.i(logTag, "Flutter native call method=${call.method} callId=$callId callSid=$callSid")
         when (call.method) {
             // Gate 1 system-call boundary. Android Telecom takes ownership in
@@ -66,9 +67,9 @@ class MainActivity : FlutterActivity() {
                 try { OmniDeskTelecomManager.beginOutgoing(applicationContext, args.mapNotNull { (key, value) -> value?.toString()?.let { key.toString() to it } }.toMap()); result.success(null) }
                 catch (error: Throwable) { result.error("telecom_outgoing_failed", error.message, null) }
             }
-            "markSystemCallActive" -> { OmniDeskTelecomManager.markActive(applicationContext, callId); result.success(null) }
-            "markSystemCallFailed" -> { OmniDeskTelecomManager.markFailed(applicationContext, callId, args["reason"]?.toString()); result.success(null) }
-            "dismissSystemCall" -> { OmniDeskTelecomManager.dismiss(applicationContext, callId); result.success(null) }
+            "markSystemCallActive" -> { OmniDeskTelecomManager.markActive(applicationContext, systemCallId); result.success(null) }
+            "markSystemCallFailed" -> { OmniDeskTelecomManager.markFailed(applicationContext, systemCallId, args["reason"]?.toString()); result.success(null) }
+            "dismissSystemCall" -> { OmniDeskTelecomManager.dismiss(applicationContext, systemCallId); result.success(null) }
             "setSystemSpeaker" -> { OmniDeskTelecomManager.setSpeaker(applicationContext, args["enabled"] == true); result.success(null) }
             else -> result.notImplemented()
         }

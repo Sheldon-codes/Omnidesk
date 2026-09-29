@@ -1,0 +1,8 @@
+Package: africastalking-client
+Version: 1.0.7
+Source: https://www.npmjs.com/package/africastalking-client/v/1.0.7
+Artifact: package/build/africastalking.js
+SHA-256: 69f00678044979a868588c4cc717f69c91da20f3681aeb4b6f4755e233e8b3bf
+
+The JavaScript artifact is bundled verbatim from the published npm package.
+The adjacent africastalking-client.txt contains the package license.

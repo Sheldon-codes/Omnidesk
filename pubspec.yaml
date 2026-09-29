@@ -139,6 +139,7 @@ flutter:
     - assets/certs/
     - assets/fonts/
     - assets/html/
+    - assets/js/
     - assets/images/
     - assets/videos/
     - assets/audios/

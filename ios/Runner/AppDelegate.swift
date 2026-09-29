@@ -1,4 +1,5 @@
 import CallKit
+import AVFAudio
 import Flutter
 import PushKit
 import os.log
@@ -19,6 +20,7 @@ import UIKit
   private var voipRegistry: PKPushRegistry?
   private var callChannel: FlutterMethodChannel?
   private var mediaAdapter: OmniDeskBaresipAdapter?
+  private let callController = CXCallController()
   private let mediaLogger = Logger(subsystem: "com.bigbrainzsolutions.omnidesk", category: "NativeCallMedia")
   private lazy var callProvider: CXProvider = {
     let configuration = CXProviderConfiguration(localizedName: "OmniDesk")
@@ -135,6 +137,11 @@ import UIKit
     action.fulfill()
   }
 
+  func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+    provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: Date())
+    action.fulfill()
+  }
+
   func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
     forwardNativeAction("end", uuid: action.callUUID)
     action.fulfill()
@@ -146,7 +153,19 @@ import UIKit
   }
 
   func providerDidReset(_ provider: CXProvider) {
+    mediaLogger.info("CallKit provider reset")
     UserDefaults.standard.removeObject(forKey: pendingActionKey)
+  }
+
+  func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+    mediaLogger.info(
+      "CallKit audio activated category=\(audioSession.category.rawValue, privacy: .public) " +
+      "mode=\(audioSession.mode.rawValue, privacy: .public)"
+    )
+  }
+
+  func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+    mediaLogger.info("CallKit audio deactivated")
   }
 
   private func forwardNativeAction(_ action: String, uuid: UUID) {
@@ -158,7 +177,7 @@ import UIKit
 
   private func handleFlutterCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
-    case "readVoipPushToken":
+    case "readVoipPushToken", "readNativePushToken":
       result(UserDefaults.standard.string(forKey: voipTokenKey))
     case "takePendingOffer":
       let offer = UserDefaults.standard.dictionary(forKey: pendingOfferKey)
@@ -179,14 +198,31 @@ import UIKit
       offer["call_id"] = callId
       offer["caller_number"] = args["callerNumber"] as? String ?? "Unknown"
       reportIncoming(offer: offer) { result(nil) }
-    case "dismiss":
+    case "beginOutgoingSystemCall":
       guard let args = call.arguments as? [String: Any],
-        let callId = args["callId"] as? String
+        let identity = (args["callId"] as? String) ?? (args["callSid"] as? String),
+        !identity.isEmpty
       else {
-        result(nil)
+        result(FlutterError(code: "invalid_call", message: "Missing call identity", details: nil))
         return
       }
-      callProvider.reportCall(with: uuid(for: callId), endedAt: Date(), reason: .remoteEnded)
+      let handle = CXHandle(type: .phoneNumber, value: args["phoneNumber"] as? String ?? "Unknown")
+      let action = CXStartCallAction(call: uuid(for: identity), handle: handle)
+      action.contactIdentifier = args["displayName"] as? String
+      callController.request(CXTransaction(action: action)) { error in
+        if let error {
+          result(FlutterError(code: "callkit_outgoing_failed", message: error.localizedDescription, details: nil))
+        } else {
+          result(nil)
+        }
+      }
+    case "markSystemCallActive":
+      guard let identity = systemCallIdentity(from: call.arguments) else { result(nil); return }
+      callProvider.reportOutgoingCall(with: uuid(for: identity), connectedAt: Date())
+      result(nil)
+    case "markSystemCallFailed", "dismissSystemCall", "dismiss":
+      guard let identity = systemCallIdentity(from: call.arguments) else { result(nil); return }
+      callProvider.reportCall(with: uuid(for: identity), endedAt: Date(), reason: .remoteEnded)
       result(nil)
     case "ensureRegistered":
       guard let args = call.arguments as? [String: Any],
@@ -240,13 +276,24 @@ import UIKit
       let digit = (call.arguments as? [String: Any])?["digit"] as? String ?? ""
       do { try mediaAdapter?.sendDtmf(digit); result(nil) }
       catch { result(FlutterError(code: "native_media_error", message: error.localizedDescription, details: nil)) }
-    case "setSpeaker":
-      // CallKit owns the audio session route; the adapter will receive route
-      // changes through AVAudioSession once the call is active.
-      result(nil)
+    case "setSpeaker", "setSystemSpeaker":
+      let enabled = (call.arguments as? [String: Any])?["enabled"] as? Bool ?? false
+      do {
+        try AVAudioSession.sharedInstance().overrideOutputAudioPort(enabled ? .speaker : .none)
+        result(nil)
+      } catch {
+        result(FlutterError(code: "audio_route_failed", message: error.localizedDescription, details: nil))
+      }
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+
+  private func systemCallIdentity(from arguments: Any?) -> String? {
+    guard let args = arguments as? [String: Any] else { return nil }
+    if let callId = args["callId"] as? String, !callId.isEmpty { return callId }
+    if let callSid = args["callSid"] as? String, !callSid.isEmpty { return callSid }
+    return nil
   }
 
   private func emitMediaEvent(type: String, reason: String?) {

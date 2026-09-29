@@ -58,12 +58,21 @@ void main() {
       'nested': {
         'password': 'hunter2',
         'safe': 'visible',
+        'sdp_offer': 'secret media description',
       },
+      'phone': '+254743379990',
+      'list': [
+        {'media_data': 'base64-secret'}
+      ],
     }) as Map;
 
     expect(redacted['Authorization'], '[REDACTED]');
     expect((redacted['nested'] as Map)['password'], '[REDACTED]');
     expect((redacted['nested'] as Map)['safe'], 'visible');
+    expect((redacted['nested'] as Map)['sdp_offer'], '[REDACTED]');
+    expect(redacted['phone'], '[PHONE REDACTED]');
+    expect(
+        ((redacted['list'] as List).single as Map)['media_data'], '[REDACTED]');
   });
 
   test('Dio failures map to ApiClientException', () {

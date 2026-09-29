@@ -93,38 +93,39 @@ class ApiService {
   static bool get _diagnosticsEnabled => kDebugMode || kProfileMode;
 
   @visibleForTesting
-  static dynamic redactForDiagnostics(dynamic value) => value;
+  static dynamic redactForDiagnostics(dynamic value) => _redactPayload(value);
 
   String _formatRequest(RequestOptions options) =>
-      'REQUEST ${options.method} ${options.uri}\n'
+      'REQUEST ${options.method} ${_redactUri(options.uri)}\n'
       'Headers: ${_stringify(_redactHeaders(options.headers))}\n'
-      'Body: ${_stringify(options.data)}';
+      'Body: ${_stringify(_redactPayload(options.data))}';
 
   String _formatResponse(Response<dynamic> response) {
     final elapsed = _elapsed(response.requestOptions);
     return 'RESPONSE ${response.statusCode} '
-        '${response.requestOptions.method} ${response.requestOptions.uri} '
+        '${response.requestOptions.method} '
+        '${_redactUri(response.requestOptions.uri)} '
         '(${elapsed}ms)\n'
         'Headers: ${_stringify(_redactHeaders(response.headers.map))}\n'
-        'Body: ${_stringify(response.data)}';
+        'Body: ${_stringify(_redactPayload(response.data))}';
   }
 
   String _formatError(DioException error) {
     final response = error.response;
     final elapsed = _elapsed(error.requestOptions);
     return 'ERROR ${error.requestOptions.method} '
-        '${error.requestOptions.uri} (${elapsed}ms)\n'
+        '${_redactUri(error.requestOptions.uri)} (${elapsed}ms)\n'
         'Type: ${error.type}\n'
         'Status: ${response?.statusCode}\n'
         'Request headers: '
         '${_stringify(_redactHeaders(error.requestOptions.headers))}\n'
         'Request body: '
-        '${_stringify(error.requestOptions.data)}\n'
+        '${_stringify(_redactPayload(error.requestOptions.data))}\n'
         'Response headers: '
         '${_stringify(response == null ? null : _redactHeaders(response.headers.map))}\n'
         'Response body: '
-        '${_stringify(response?.data)}\n'
-        'Message: ${error.message}';
+        '${_stringify(_redactPayload(response?.data))}\n'
+        'Message: ${_sanitizeText(error.message)}';
   }
 
   int _elapsed(RequestOptions options) {
@@ -194,27 +195,54 @@ class ApiService {
     return headers.map(
       (key, value) => MapEntry(
         key,
-        value,
+        _isSensitiveKey(key) ? '[REDACTED]' : _redactPayload(value),
       ),
     );
   }
 
-  // static dynamic _redactPayload(dynamic value) {
-  //   if (value is Map) {
-  //     return value.map(
-  //       (key, nestedValue) => MapEntry(
-  //         key,
-  //         _isSensitiveKey(key.toString())
-  //             ? '[REDACTED]'
-  //             : _redactPayload(nestedValue),
-  //       ),
-  //     );
-  //   }
-  //   if (value is Iterable) {
-  //     return value.map(_redactPayload).toList(growable: false);
-  //   }
-  //   return value;
-  // }
+  static Uri _redactUri(Uri uri) {
+    if (uri.queryParameters.isEmpty) return uri;
+    final redacted = uri.queryParameters.map((key, value) {
+      if (_isSensitiveKey(key)) return MapEntry(key, '[REDACTED]');
+      return MapEntry(key, _sanitizeText(value) ?? '');
+    });
+    return uri.replace(queryParameters: redacted);
+  }
+
+  static dynamic _redactPayload(dynamic value) {
+    if (value is Map) {
+      return value.map(
+        (key, nestedValue) => MapEntry(
+          key,
+          _isSensitiveKey(key.toString())
+              ? '[REDACTED]'
+              : _redactPayload(nestedValue),
+        ),
+      );
+    }
+    if (value is Iterable) {
+      return value.map(_redactPayload).toList(growable: false);
+    }
+    if (value is String) return _sanitizeText(value);
+    return value;
+  }
+
+  static String? _sanitizeText(String? value) {
+    if (value == null) return null;
+    var result = value
+        .replaceAll(
+          RegExp(r'Bearer\s+[A-Za-z0-9._~+\-/=]+', caseSensitive: false),
+          'Bearer [REDACTED]',
+        )
+        .replaceAll(
+          RegExp(r'(?<!\d)\+?\d[\d\s().-]{7,}\d'),
+          '[PHONE REDACTED]',
+        );
+    if (result.length > 16000) {
+      result = '${result.substring(0, 16000)}…[TRUNCATED]';
+    }
+    return result;
+  }
 
   static bool _isSensitiveKey(String key) {
     final normalized = key.toLowerCase().replaceAll(RegExp(r'[-_]'), '');
@@ -226,7 +254,9 @@ class ApiService {
         normalized.contains('token') ||
         normalized.contains('apikey') ||
         normalized.contains('mediadata') ||
-        normalized.contains('message');
+        normalized == 'message' ||
+        normalized.contains('sdp') ||
+        normalized.contains('credential');
   }
 
   static String _stringify(dynamic value) {

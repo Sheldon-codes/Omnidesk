@@ -36,7 +36,7 @@ class OmniDeskConnectionService : ConnectionService() {
 class OmniDeskConnection(
     private val context: Context,
     private val callId: String,
-    private val incoming: Boolean,
+    val incoming: Boolean,
 ) : Connection() {
     init {
         connectionCapabilities = CAPABILITY_HOLD or CAPABILITY_MUTE

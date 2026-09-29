@@ -160,6 +160,7 @@ object OmniDeskTelecomManager {
     }
 
     fun markActive(context: Context, callId: String) {
+        val outbound = connections[callId]?.incoming == false
         connections[callId]?.setActive()
         if (androidx.core.content.ContextCompat.checkSelfPermission(
                 context, android.Manifest.permission.RECORD_AUDIO
@@ -169,17 +170,19 @@ object OmniDeskTelecomManager {
         } else {
             Log.w(logTag, "Skipping call foreground service: RECORD_AUDIO is not granted")
         }
-        AndroidCallEventBridge.emitActive(callId)
+        AndroidCallEventBridge.emitActive(callId, outbound)
     }
 
     fun markFailed(context: Context, callId: String, reason: String?) {
+        // Read the direction before cleanup removes the native connection.
+        val outbound = connections[callId]?.incoming == false
         cleanup(
             context,
             callId,
             null,
             android.telecom.DisconnectCause(android.telecom.DisconnectCause.ERROR, reason),
         )
-        AndroidCallEventBridge.emitFailed(callId, reason)
+        AndroidCallEventBridge.emitFailed(callId, reason, outbound)
     }
 
     fun answer(context: Context, callId: String) {

@@ -10,6 +10,7 @@ import '../../services/calls/call_media_service.dart';
 import '../../services/calls/call_models.dart';
 import '../../services/calls/device_installation_service.dart';
 import '../../services/calls/native_call_service.dart';
+import '../../services/calls/webview_call_media_service.dart';
 
 part 'call_session_controller.g.dart';
 
@@ -196,6 +197,9 @@ class CallSessionController extends _$CallSessionController {
   Completer<void>? _incomingMedia;
   bool _isFinishing = false;
   bool _backendAccepted = false;
+  CallMediaConfig? _warmMediaConfig;
+  DateTime? _warmMediaConfigAt;
+  Future<CallMediaConfig>? _mediaConfigRequest;
   final Set<CallId> _ownershipDeniedCallIds = <CallId>{};
 
   CallApi get _api => ref.read(callApiProvider);
@@ -217,6 +221,42 @@ class CallSessionController extends _$CallSessionController {
     }
     _activeMedia = _webView;
     return _webView;
+  }
+
+  Future<void> prewarmMedia() async {
+    if (state.hasCall) return;
+    try {
+      final config = await _getMediaConfig();
+      if (!usesSupportedWebViewMedia(config) || state.hasCall) return;
+      await ref.read(webViewCallMediaServiceProvider).prewarmClient(config);
+    } catch (error) {
+      developer.log(
+        'Media standby prewarm unavailable: ${error.runtimeType}.',
+        name: 'CallSession',
+      );
+    }
+  }
+
+  Future<CallMediaConfig> _getMediaConfig() async {
+    final cached = _warmMediaConfig;
+    final cachedAt = _warmMediaConfigAt;
+    if (cached != null &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < const Duration(minutes: 10)) {
+      return cached;
+    }
+    final active = _mediaConfigRequest;
+    if (active != null) return active;
+    late final Future<CallMediaConfig> request;
+    request = _api.getMediaConfig().then((config) {
+      _warmMediaConfig = config;
+      _warmMediaConfigAt = DateTime.now();
+      return config;
+    }).whenComplete(() {
+      if (identical(_mediaConfigRequest, request)) _mediaConfigRequest = null;
+    });
+    _mediaConfigRequest = request;
+    return request;
   }
 
   @override
@@ -244,7 +284,9 @@ class CallSessionController extends _$CallSessionController {
     );
     if (offer.isExpired ||
         state.hasCall ||
-        _ownershipDeniedCallIds.contains(offer.callId)) return false;
+        _ownershipDeniedCallIds.contains(offer.callId)) {
+      return false;
+    }
     _terminalTimer?.cancel();
     final party = CallParty(
       customerId: offer.customerId,
@@ -315,7 +357,7 @@ class CallSessionController extends _$CallSessionController {
   /// flow. The native `connected` event, not the originate response, starts
   /// the displayed duration clock.
   bool startOutgoing(CallParty party, {String? ticketId}) {
-    if (state.hasCall) return false;
+    if (state.hasCall || _isFinishing) return false;
     state = CallSessionState(
       lifecycle: CallLifecycle.connecting,
       phase: CallPhase.outgoingPreparing,
@@ -332,10 +374,12 @@ class CallSessionController extends _$CallSessionController {
   }) async {
     OutboundCallResult? created;
     try {
-      created = await _api.initiateOutbound(
+      final configFuture = _getMediaConfig();
+      final initiateFuture = _api.initiateOutbound(
         toNumber: party.phoneNumber,
         ticketId: ticketId,
       );
+      created = await initiateFuture;
       final result = created;
       // Ignore a late response after the agent has ended the local surface.
       if (state.party != party || state.phase != CallPhase.outgoingPreparing) {
@@ -347,7 +391,7 @@ class CallSessionController extends _$CallSessionController {
         failureMessage: null,
       );
       await _native.beginOutgoing(_identityFor(state));
-      final config = await _api.getMediaConfig();
+      final config = await configFuture;
       if (!config.canAuthenticate && !config.canUseWebRtc) {
         throw const CallApiException(
           CallApiErrorKind.unavailable,
@@ -418,11 +462,13 @@ class CallSessionController extends _$CallSessionController {
         failureMessage: null,
       );
       final installationId = await _installationId();
-      final accepted = await _api.accept(
+      final configFuture = _getMediaConfig();
+      final acceptFuture = _api.accept(
         callId: callId,
         offerId: offerId,
         installationId: installationId,
       );
+      final accepted = await acceptFuture;
       developer.log('Backend accept confirmed callId=$callId.',
           name: 'CallSession');
       _backendAccepted = true;
@@ -430,7 +476,7 @@ class CallSessionController extends _$CallSessionController {
         phase: CallPhase.mediaPreparing,
         startedAt: accepted.answeredAt,
       );
-      final config = await _api.getMediaConfig();
+      final config = await configFuture;
       if (!config.canAuthenticate && !config.canUseWebRtc) {
         throw const CallApiException(
           CallApiErrorKind.unavailable,
@@ -503,18 +549,26 @@ class CallSessionController extends _$CallSessionController {
     final mediaSessionId = finishingState.mediaSessionId;
     final isOutbound = callSid != null && callSid.isNotEmpty;
     final wasBackendCall = callId != null && callId.isNotEmpty;
+    final hasNativeCall = wasBackendCall || isOutbound;
     _durationTimer?.cancel();
     final finishingMedia = _activeMedia;
     _activeMedia = null;
     _backendAccepted = false;
     final oldState = finishingState;
-    state = const CallSessionState();
     try {
       // Local media always closes first. This avoids billing an outbound media
       // leg after its UI is gone even if the completion request is offline.
       if (mediaSessionId != null && mediaSessionId.isNotEmpty) {
         await (finishingMedia ?? _webView).endMedia(mediaSessionId);
       }
+      if (hasNativeCall) {
+        try {
+          await _native.dismiss(_identityFor(oldState));
+        } catch (_) {
+          // Backend completion must not resurrect a locally-ended system call.
+        }
+      }
+      state = const CallSessionState();
       if (isOutbound) {
         await _api.completeOutbound(
           callSid: callSid,
@@ -533,24 +587,16 @@ class CallSessionController extends _$CallSessionController {
         }
       }
     } catch (error) {
-      // The backend did not confirm termination. Preserve a retryable failed
-      // surface; successful termination is never undone by local cleanup.
-      if (!state.hasCall) {
-        state = oldState.copyWith(
-          lifecycle: CallLifecycle.failed,
-          phase: CallPhase.failed,
-          failureMessage: _messageFor(error),
-        );
-      }
+      // Local media and the OS call surface are authoritative for teardown.
+      // A late/offline completion request must never resurrect the call UI or
+      // leave Telecom believing another call is still active.
+      developer.log(
+        'Backend call completion pending identity='
+        '${callId ?? callSid ?? "unknown"} error=${error.runtimeType}.',
+        name: 'CallSession',
+      );
+      if (state.hasCall) state = const CallSessionState();
     } finally {
-      // CallKit cleanup remains best-effort after native media has closed.
-      if (wasBackendCall) {
-        try {
-          await _native.dismiss(_identityFor(oldState));
-        } catch (_) {
-          // The next native-media implementation will reconcile its own state.
-        }
-      }
       _isFinishing = false;
     }
   }
@@ -693,10 +739,9 @@ class CallSessionController extends _$CallSessionController {
     // matches by provider/session IDs because outbound surfaces may not
     // carry a canonical call ID yet.
     final matches = (event.callId != null && event.callId == state.callId) ||
-        (event.type == NativeCallEventType.end &&
-            ((event.callSid != null && event.callSid == state.callSid) ||
-                (event.mediaSessionId != null &&
-                    event.mediaSessionId == state.mediaSessionId)));
+        (event.callSid != null && event.callSid == state.callSid) ||
+        (event.mediaSessionId != null &&
+            event.mediaSessionId == state.mediaSessionId);
     if (!matches) return;
     switch (event.type) {
       case NativeCallEventType.offerAvailable:
