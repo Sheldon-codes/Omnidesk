@@ -48,6 +48,19 @@ object IncomingCallStateStore {
         jsonMap(raw)
     }
 
+    /**
+     * Removes only the offer just rejected by native presentation. This is
+     * deliberately narrower than clearPresentation: a failed new offer must
+     * not erase another active call's persisted identity.
+     */
+    fun discardOffer(context: Context, callId: String, offerId: String) = synchronized(lock) {
+        val prefs = preferences(context)
+        val stored = prefs.getString(offerKey, null)?.let(::jsonMap)
+        if (stored?.get("call_id") == callId && stored["offer_id"] == offerId) {
+            prefs.edit().remove(offerKey).commit()
+        }
+    }
+
     fun isPresentationActive(context: Context, callId: String, offerId: String): Boolean =
         preferences(context).getString(activePresentationKey, null) == presentationKey(callId, offerId)
 
@@ -81,7 +94,12 @@ object IncomingCallStateStore {
     fun clearPresentation(context: Context, callId: String? = null, offerId: String? = null) = synchronized(lock) {
         val prefs = preferences(context)
         val current = prefs.getString(activePresentationKey, null)
-        if (callId == null || offerId == null || current == presentationKey(callId, offerId)) {
+        val shouldClear = when {
+            callId == null -> true
+            offerId == null -> current?.startsWith("$callId::") == true
+            else -> current == presentationKey(callId, offerId)
+        }
+        if (shouldClear) {
             prefs.edit().remove(activePresentationKey).remove(presentationReceiptKey).remove(offerKey).commit()
         }
     }

@@ -130,6 +130,25 @@ class _CallMainSurface extends ConsumerWidget {
           ),
         );
       }
+      if (state.isTerminalNotice) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+          child: Column(
+            children: [
+              Expanded(
+                child: Center(
+                  child: _CallIdentity(
+                    state: state,
+                    theme: theme,
+                    large: true,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 42),
+            ],
+          ),
+        );
+      }
       final topGap = (constraints.maxHeight * .08).clamp(20.0, 64.0);
       final actionGap = (constraints.maxHeight * .12).clamp(32.0, 88.0);
       return SingleChildScrollView(
@@ -356,20 +375,6 @@ class _CallControls extends ConsumerWidget {
           selected: state.onHold,
           theme: theme,
           onTap: controller.toggleHold,
-        ),
-        _ControlButton(
-          label: 'Contact',
-          icon: IconsaxPlusBroken.user,
-          selected: false,
-          theme: theme,
-          onTap: () => _comingSoon(context),
-        ),
-        _ControlButton(
-          label: 'Notes',
-          icon: IconsaxPlusBroken.note,
-          selected: false,
-          theme: theme,
-          onTap: () => _comingSoon(context),
         ),
       ]);
     }
@@ -751,6 +756,3 @@ class _CompactAction extends StatelessWidget {
         ),
       );
 }
-
-void _comingSoon(BuildContext context) => ScaffoldMessenger.of(context)
-    .showSnackBar(const SnackBar(content: Text('Coming soon')));

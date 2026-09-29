@@ -93,12 +93,12 @@ class ApiService {
   static bool get _diagnosticsEnabled => kDebugMode || kProfileMode;
 
   @visibleForTesting
-  static dynamic redactForDiagnostics(dynamic value) => _redactPayload(value);
+  static dynamic redactForDiagnostics(dynamic value) => value;
 
   String _formatRequest(RequestOptions options) =>
       'REQUEST ${options.method} ${options.uri}\n'
       'Headers: ${_stringify(_redactHeaders(options.headers))}\n'
-      'Body: ${_stringify(_redactPayload(options.data))}';
+      'Body: ${_stringify(options.data)}';
 
   String _formatResponse(Response<dynamic> response) {
     final elapsed = _elapsed(response.requestOptions);
@@ -106,7 +106,7 @@ class ApiService {
         '${response.requestOptions.method} ${response.requestOptions.uri} '
         '(${elapsed}ms)\n'
         'Headers: ${_stringify(_redactHeaders(response.headers.map))}\n'
-        'Body: ${_stringify(_redactPayload(response.data))}';
+        'Body: ${_stringify(response.data)}';
   }
 
   String _formatError(DioException error) {
@@ -119,11 +119,11 @@ class ApiService {
         'Request headers: '
         '${_stringify(_redactHeaders(error.requestOptions.headers))}\n'
         'Request body: '
-        '${_stringify(_redactPayload(error.requestOptions.data))}\n'
+        '${_stringify(error.requestOptions.data)}\n'
         'Response headers: '
         '${_stringify(response == null ? null : _redactHeaders(response.headers.map))}\n'
         'Response body: '
-        '${_stringify(_redactPayload(response?.data))}\n'
+        '${_stringify(response?.data)}\n'
         'Message: ${error.message}';
   }
 
@@ -194,27 +194,27 @@ class ApiService {
     return headers.map(
       (key, value) => MapEntry(
         key,
-        _isSensitiveKey(key) ? '[REDACTED]' : _redactPayload(value),
+        value,
       ),
     );
   }
 
-  static dynamic _redactPayload(dynamic value) {
-    if (value is Map) {
-      return value.map(
-        (key, nestedValue) => MapEntry(
-          key,
-          _isSensitiveKey(key.toString())
-              ? '[REDACTED]'
-              : _redactPayload(nestedValue),
-        ),
-      );
-    }
-    if (value is Iterable) {
-      return value.map(_redactPayload).toList(growable: false);
-    }
-    return value;
-  }
+  // static dynamic _redactPayload(dynamic value) {
+  //   if (value is Map) {
+  //     return value.map(
+  //       (key, nestedValue) => MapEntry(
+  //         key,
+  //         _isSensitiveKey(key.toString())
+  //             ? '[REDACTED]'
+  //             : _redactPayload(nestedValue),
+  //       ),
+  //     );
+  //   }
+  //   if (value is Iterable) {
+  //     return value.map(_redactPayload).toList(growable: false);
+  //   }
+  //   return value;
+  // }
 
   static bool _isSensitiveKey(String key) {
     final normalized = key.toLowerCase().replaceAll(RegExp(r'[-_]'), '');

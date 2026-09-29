@@ -224,25 +224,35 @@
       activeCallSid = null;
     },
     mute: function (enabled) {
-      // The client exposes muteAudio/unmuteAudio (no mute/unmute); the
-      // wrong names throw inside a swallowed catch, muting silently never.
       try {
-        if (!client) return;
-        if (enabled && typeof client.muteAudio === 'function') client.muteAudio();
-        else if (!enabled && typeof client.unmuteAudio === 'function') client.unmuteAudio();
-      } catch (e) {}
+        if (!client) return 'not_initialized';
+        if (enabled && typeof client.muteAudio === 'function') {
+          client.muteAudio(); return 'ok';
+        }
+        if (!enabled && typeof client.unmuteAudio === 'function') {
+          client.unmuteAudio(); return 'ok';
+        }
+        return 'unsupported';
+      } catch (e) { return 'failed'; }
     },
     hold: function (enabled) {
       try {
-        if (!client) return;
-        if (enabled && typeof client.hold === 'function') client.hold();
-        else if (!enabled && typeof client.unhold === 'function') client.unhold();
-      } catch (e) {}
+        if (!client) return 'not_initialized';
+        if (enabled && typeof client.hold === 'function') {
+          client.hold(); return 'ok';
+        }
+        if (!enabled && typeof client.unhold === 'function') {
+          client.unhold(); return 'ok';
+        }
+        return 'unsupported';
+      } catch (e) { return 'failed'; }
     },
     dtmf: function (digit) {
       try {
-        if (client && typeof client.dtmf === 'function') client.dtmf(digit);
-      } catch (e) {}
+        if (!client) return 'not_initialized';
+        if (typeof client.dtmf !== 'function') return 'unsupported';
+        client.dtmf(digit); return 'ok';
+      } catch (e) { return 'failed'; }
     },
     // Probes microphone capture without keeping the stream: the AT client's
     // createOffer fails silently (no-op logger) when capture is unavailable,

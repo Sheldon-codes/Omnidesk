@@ -21,6 +21,10 @@ enum CallLifecycle {
   outgoingRinging,
   connecting,
   active,
+
+  /// A short, non-interactive acknowledgement after a remote terminal event.
+  /// Keeping the party visible avoids the abrupt disappearance of the call UI.
+  terminalNotice,
   failed
 }
 
@@ -103,6 +107,7 @@ class CallSessionState {
   bool get hasCall => lifecycle != CallLifecycle.idle && party != null;
   bool get isIncoming => phase == CallPhase.incomingRinging;
   bool get isActive => lifecycle == CallLifecycle.active;
+  bool get isTerminalNotice => lifecycle == CallLifecycle.terminalNotice;
   bool get isBackendCall => callId != null && callId!.isNotEmpty;
 
   String get statusLabel => switch (lifecycle) {
@@ -111,6 +116,7 @@ class CallSessionState {
         CallLifecycle.outgoingRinging => 'Calling…',
         CallLifecycle.connecting => 'Connecting…',
         CallLifecycle.active => formatCallDuration(elapsed),
+        CallLifecycle.terminalNotice => failureMessage ?? 'Call ended',
         CallLifecycle.failed => failureMessage ?? 'Call unavailable',
       };
 
@@ -183,11 +189,14 @@ String formatCallDuration(Duration duration) {
 @Riverpod(keepAlive: true)
 class CallSessionController extends _$CallSessionController {
   Timer? _durationTimer;
+  Timer? _terminalTimer;
   StreamSubscription<NativeCallEvent>? _nativeEvents;
   StreamSubscription<CallMediaEvent>? _webViewEvents;
   CallMediaService? _activeMedia;
   Completer<void>? _incomingMedia;
   bool _isFinishing = false;
+  bool _backendAccepted = false;
+  final Set<CallId> _ownershipDeniedCallIds = <CallId>{};
 
   CallApi get _api => ref.read(callApiProvider);
   Future<String> Function() get _installationId =>
@@ -218,6 +227,7 @@ class CallSessionController extends _$CallSessionController {
     );
     ref.onDispose(() {
       _durationTimer?.cancel();
+      _terminalTimer?.cancel();
       unawaited(_nativeEvents?.cancel() ?? Future<void>.value());
       unawaited(_webViewEvents?.cancel() ?? Future<void>.value());
     });
@@ -232,7 +242,10 @@ class CallSessionController extends _$CallSessionController {
       'expired=${offer.isExpired}.',
       name: 'CallSession',
     );
-    if (offer.isExpired || state.hasCall) return false;
+    if (offer.isExpired ||
+        state.hasCall ||
+        _ownershipDeniedCallIds.contains(offer.callId)) return false;
+    _terminalTimer?.cancel();
     final party = CallParty(
       customerId: offer.customerId,
       displayName: offer.callerName?.trim().isNotEmpty == true
@@ -412,6 +425,7 @@ class CallSessionController extends _$CallSessionController {
       );
       developer.log('Backend accept confirmed callId=$callId.',
           name: 'CallSession');
+      _backendAccepted = true;
       state = state.copyWith(
         phase: CallPhase.mediaPreparing,
         startedAt: accepted.answeredAt,
@@ -458,6 +472,10 @@ class CallSessionController extends _$CallSessionController {
       await _media.answerIncoming(callSid: callId);
       // Native media emits `connected`; only that starts the duration clock.
     } catch (error) {
+      if (error is CallApiException &&
+          error.kind == CallApiErrorKind.alreadyClaimed) {
+        _ownershipDeniedCallIds.add(callId);
+      }
       developer.log(
         'Answer flow failed callId=$callId error=${error.runtimeType}.',
         name: 'CallSession',
@@ -477,6 +495,7 @@ class CallSessionController extends _$CallSessionController {
     if (_isFinishing) return;
     _isFinishing = true;
     _incomingMedia = null;
+    _terminalTimer?.cancel();
     final finishingState = state;
     final callId = finishingState.callId;
     final offerId = state.offerId;
@@ -487,6 +506,7 @@ class CallSessionController extends _$CallSessionController {
     _durationTimer?.cancel();
     final finishingMedia = _activeMedia;
     _activeMedia = null;
+    _backendAccepted = false;
     final oldState = finishingState;
     state = const CallSessionState();
     try {
@@ -537,6 +557,19 @@ class CallSessionController extends _$CallSessionController {
 
   Future<void> recover(ActiveCallSnapshot? snapshot) async {
     if (snapshot == null || state.hasCall) return;
+    // `/calls/active` does not currently expose the installation that owns
+    // the call. A snapshot without an offer cannot be proven to belong to
+    // this handset, so restoring it could resurrect a call that was answered
+    // on another device. Fail closed until the backend returns ownership.
+    if (snapshot.offerId == null ||
+        _ownershipDeniedCallIds.contains(snapshot.callId)) {
+      developer.log(
+        'Ignored active-call recovery callId=${snapshot.callId}; '
+        'ownership cannot be proven locally.',
+        name: 'CallSession',
+      );
+      return;
+    }
     final party = CallParty(
       customerId: snapshot.customerId,
       displayName: snapshot.customerName?.trim().isNotEmpty == true
@@ -580,7 +613,10 @@ class CallSessionController extends _$CallSessionController {
       await _media.setMuted(enabled);
     } catch (error) {
       if (!ref.mounted) return;
-      state = state.copyWith(failureMessage: _messageFor(error));
+      state = state.copyWith(
+        muted: !enabled,
+        failureMessage: _messageFor(error),
+      );
     }
   }
 
@@ -592,7 +628,10 @@ class CallSessionController extends _$CallSessionController {
       await _native.setSystemSpeaker(enabled);
     } catch (error) {
       if (!ref.mounted) return;
-      state = state.copyWith(failureMessage: _messageFor(error));
+      state = state.copyWith(
+        speakerEnabled: !enabled,
+        failureMessage: _messageFor(error),
+      );
     }
   }
 
@@ -607,7 +646,11 @@ class CallSessionController extends _$CallSessionController {
       await _media.setHeld(enabled);
     } catch (error) {
       if (!ref.mounted) return;
-      state = state.copyWith(failureMessage: _messageFor(error));
+      state = state.copyWith(
+        onHold: !enabled,
+        phase: !enabled ? CallPhase.held : CallPhase.active,
+        failureMessage: _messageFor(error),
+      );
     }
   }
 
@@ -620,10 +663,11 @@ class CallSessionController extends _$CallSessionController {
 
   Future<void> appendDtmfDigit(String digit) async {
     if (!state.keypadVisible || !RegExp(r'^[0-9*#]$').hasMatch(digit)) return;
-    state = state.copyWith(dtmfDigits: '${state.dtmfDigits}$digit');
     if (!state.isActive) return;
     try {
       await _media.sendDtmf(digit);
+      if (!ref.mounted) return;
+      state = state.copyWith(dtmfDigits: '${state.dtmfDigits}$digit');
     } catch (error) {
       if (!ref.mounted) return;
       state = state.copyWith(failureMessage: _messageFor(error));
@@ -713,7 +757,7 @@ class CallSessionController extends _$CallSessionController {
       case CallMediaEventType.held:
         state = state.copyWith(onHold: true, phase: CallPhase.held);
       case CallMediaEventType.ended:
-        unawaited(end());
+        _handleRemoteMediaEnded(event.reason);
       case CallMediaEventType.error:
         _fail(event.reason ?? 'The call connection failed.');
       case CallMediaEventType.processTerminated:
@@ -746,19 +790,96 @@ class CallSessionController extends _$CallSessionController {
   /// local hang-up and must not issue a duplicate /end call to the server.
   void _handleRemoteDisconnect(String? reason) {
     if (!state.hasCall) return;
+    if ((reason ?? '').toLowerCase().contains('answered_elsewhere')) {
+      final callId = state.callId;
+      if (callId != null && callId.isNotEmpty) {
+        _ownershipDeniedCallIds.add(callId);
+      }
+    }
+    _showTerminalNotice(
+      reason: reason,
+      phase: _phaseForRemoteReason(reason),
+      message: _messageForRemoteReason(reason),
+    );
+    developer.log(
+      'Remote/native call terminal notice shown reason=${reason ?? "none"}.',
+      name: 'CallSession',
+    );
+  }
+
+  void _handleRemoteMediaEnded(String? reason) {
+    if (!state.hasCall || state.isTerminalNotice) return;
+    _showTerminalNotice(
+      reason: reason,
+      phase: _phaseForRemoteReason(reason),
+      message: _messageForRemoteReason(reason),
+    );
+  }
+
+  void _showTerminalNotice({
+    required String? reason,
+    required CallPhase phase,
+    required String message,
+  }) {
+    final terminal = state;
+    final callId = terminal.callId;
     _durationTimer?.cancel();
+    _terminalTimer?.cancel();
     _incomingMedia = null;
     final media = _activeMedia;
-    final mediaSessionId = state.mediaSessionId;
+    final mediaSessionId = terminal.mediaSessionId;
     _activeMedia = null;
-    state = const CallSessionState();
+    _backendAccepted = false;
+    state = terminal.copyWith(
+      lifecycle: CallLifecycle.terminalNotice,
+      phase: phase,
+      keypadVisible: false,
+      nativeIncomingSurfaceActive: false,
+      failureMessage: message,
+    );
     if (media != null && mediaSessionId != null && mediaSessionId.isNotEmpty) {
       unawaited(media.endMedia(mediaSessionId).catchError((_) {}));
     }
-    developer.log(
-      'Remote/native call cancellation cleared local state reason=${reason ?? "none"}.',
-      name: 'CallSession',
-    );
+    if (terminal.callId != null || terminal.callSid != null) {
+      unawaited(_native.dismiss(_identityFor(terminal)).catchError((_) {}));
+    }
+    _terminalTimer = Timer(const Duration(milliseconds: 2500), () {
+      if (!ref.mounted ||
+          state.callId != callId ||
+          state.lifecycle != CallLifecycle.terminalNotice) {
+        return;
+      }
+      state = const CallSessionState();
+    });
+  }
+
+  CallPhase _phaseForRemoteReason(String? reason) {
+    final normalized = (reason ?? '').toLowerCase();
+    if (normalized.contains('answered_elsewhere')) {
+      return CallPhase.answeredElsewhere;
+    }
+    if (normalized.contains('expired')) return CallPhase.expired;
+    if (normalized.contains('declin') ||
+        normalized.contains('reject') ||
+        normalized.contains('busy')) {
+      return CallPhase.declined;
+    }
+    if (normalized.contains('cancel')) return CallPhase.cancelled;
+    return CallPhase.completed;
+  }
+
+  String _messageForRemoteReason(String? reason) {
+    final normalized = (reason ?? '').toLowerCase();
+    if (normalized.contains('answered_elsewhere')) {
+      return 'Answered on another device';
+    }
+    if (normalized.contains('expired')) return 'Call offer expired';
+    if (normalized.contains('declin') ||
+        normalized.contains('reject') ||
+        normalized.contains('busy')) {
+      return 'Call declined';
+    }
+    return 'Call ended';
   }
 
   void _fail(String message) {
@@ -768,6 +889,8 @@ class CallSessionController extends _$CallSessionController {
     final media = _activeMedia;
     final mediaSessionId = state.mediaSessionId;
     _activeMedia = null;
+    final acceptedCallId = _backendAccepted ? state.callId : null;
+    _backendAccepted = false;
     if (media != null && mediaSessionId != null && mediaSessionId.isNotEmpty) {
       unawaited(media.endMedia(mediaSessionId).catchError((_) {}));
     }
@@ -781,6 +904,16 @@ class CallSessionController extends _$CallSessionController {
     if (failed.callId != null || failed.callSid != null) {
       unawaited(_native
           .markFailed(_identityFor(failed), reason: message)
+          .catchError((_) {}));
+    }
+    // If this handset won the backend claim but failed before media could be
+    // prepared, release the backend call instead of leaving it accepted and
+    // recoverable by another lifecycle pass.
+    if (acceptedCallId != null &&
+        acceptedCallId.isNotEmpty &&
+        !failed.isActive) {
+      unawaited(_api
+          .end(callId: acceptedCallId, reason: 'media_setup_failed')
           .catchError((_) {}));
     }
   }

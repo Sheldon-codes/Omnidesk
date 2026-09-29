@@ -149,6 +149,10 @@ class WebViewCallMediaService implements CallMediaService {
   String _bridgeNote = 'engine never started';
   bool _pageLoaded = false;
   Completer<void>? _pageReady;
+  Future<void>? _bridgeLoad;
+  int _bridgeGeneration = 0;
+  bool _bridgePrimed = false;
+  bool _bridgeIsBeingConsumed = false;
   Completer<void>? _attached;
   // Tail of the page's own console (AT client internals, resource errors).
   // Bounded; the latest line is attached to timeout failures.
@@ -174,12 +178,14 @@ class WebViewCallMediaService implements CallMediaService {
     controller.setOnConsoleMessage(
       (message) => noteConsoleMessage(message.level.name, message.message),
     );
-    _log('hidden engine mounted; loading bridge page');
-    unawaited(_loadBridgePage(controller));
+    // Navigation is deliberately deferred to initialize(). Starting a load
+    // here and another during initialize used to create two concurrent
+    // navigations on a cold WebView, making page-finished nondeterministic.
+    _log('hidden engine mounted; bridge load deferred until call setup');
   }
 
-  /// Mounting the platform WebView is deferred until the first call so it
-  /// cannot block Android's initial splash frame.
+  /// The platform WebView is mounted only after the authenticated first frame
+  /// (or during an urgent call setup), so it cannot block Android's splash.
   Future<void> waitForController() async {
     if (_controller != null) return;
     _attached ??= Completer<void>();
@@ -189,6 +195,28 @@ class WebViewCallMediaService implements CallMediaService {
         'The call engine could not be mounted.',
       ),
     );
+  }
+
+  /// Starts loading the HTML/JS shell before Answer without creating an AT
+  /// client or asking for microphone access. It removes the cold WebView/CDN
+  /// hop from the post-accept critical path while keeping the actual media
+  /// lifecycle exactly where it belongs: after backend acceptance.
+  Future<void> prewarmBridge() async {
+    try {
+      await waitForController();
+      final controller = _requireController();
+      if (_bridgePrimed && _pageLoaded) return;
+      final generation = _bridgeGeneration + 1;
+      await _reloadBridgePage(controller);
+      if (!_bridgeIsBeingConsumed && _bridgeGeneration == generation) {
+        _bridgePrimed = true;
+        _log('bridge prewarmed generation=$generation');
+      }
+    } catch (error) {
+      // Prewarming is an optimization only. initialize() retries with a
+      // fresh navigation and will surface a typed error if that also fails.
+      _log('bridge prewarm failed; setup will retry: $error');
+    }
   }
 
   Future<void> _loadBridgePage(WebViewController controller) async {
@@ -213,6 +241,41 @@ class WebViewCallMediaService implements CallMediaService {
     await controller.loadFlutterAsset('assets/html/at_call_bridge.html');
   }
 
+  /// Reloads the bridge exactly once for a media setup generation.
+  ///
+  /// The AT client requires a clean page per call attempt, but concurrent
+  /// WebView navigation is not safe: an older page-finished callback can
+  /// otherwise complete the wrong attempt or leave the current one waiting.
+  Future<void> _reloadBridgePage(WebViewController controller) {
+    final active = _bridgeLoad;
+    if (active != null) return active;
+    final generation = ++_bridgeGeneration;
+    final ready = Completer<void>();
+    _pageLoaded = false;
+    _pageReady = ready;
+    _log('bridge navigation started generation=$generation');
+    final load = () async {
+      try {
+        await _loadBridgePage(controller);
+        await ready.future.timeout(
+          const Duration(seconds: 20),
+          onTimeout: () => throw const MediaUnavailable(
+            'The hidden call engine page did not finish loading.',
+          ),
+        );
+        _log('bridge navigation finished generation=$generation');
+      } finally {
+        if (identical(_pageReady, ready)) _pageReady = null;
+      }
+    }();
+    late final Future<void> tracked;
+    tracked = load.whenComplete(() {
+      if (identical(_bridgeLoad, tracked)) _bridgeLoad = null;
+    });
+    _bridgeLoad = tracked;
+    return tracked;
+  }
+
   /// Called by the host widget for every console line the bridge page emits
   /// (AT client internals, JS exceptions, failed subresources). This is how
   /// gateway/token rejections with no bridge event still reach Dart logs.
@@ -234,12 +297,17 @@ class WebViewCallMediaService implements CallMediaService {
   List<String> get consoleTailForTest => List.unmodifiable(_consoleTail);
 
   /// Called by the host widget's navigation delegate.
+  void notePageStarted(String url) {
+    _log('bridge page started generation=$_bridgeGeneration url=$url');
+  }
+
+  /// Called by the host widget's navigation delegate.
   void notePageFinished() {
     _pageLoaded = true;
     _bridgeNote = 'bridge page loaded, no client initialized yet';
     final ready = _pageReady;
     if (ready != null && !ready.isCompleted) ready.complete();
-    _log('bridge page loaded');
+    _log('bridge page loaded generation=$_bridgeGeneration');
   }
 
   /// Called by the host widget's navigation delegate.
@@ -247,6 +315,10 @@ class WebViewCallMediaService implements CallMediaService {
     _pageLoaded = false;
     _bridgeNote = 'bridge page failed to load: $description';
     _log('bridge page load FAILED: $description');
+    final ready = _pageReady;
+    if (ready != null && !ready.isCompleted) {
+      ready.completeError(MediaUnavailable(_bridgeNote));
+    }
   }
 
   @override
@@ -314,30 +386,19 @@ class WebViewCallMediaService implements CallMediaService {
         await Future<void>.delayed(settle);
       }
       _lastInitAt = DateTime.now();
-      _pageLoaded = false;
-      _pageReady = Completer<void>();
+      _bridgeIsBeingConsumed = true;
       try {
-        await _loadBridgePage(controller);
+        if (_bridgePrimed && _pageLoaded) {
+          _log('using prewarmed bridge generation=$_bridgeGeneration');
+        } else {
+          await _reloadBridgePage(controller);
+        }
       } catch (error) {
         _log('bridge reload failed: $error');
-      }
-      // The hidden view may not have finished its (re)load (cold start,
-      // slow asset read). Wait briefly for it instead of probing a blank
-      // page and misreporting `bridge_missing`.
-      if (!_pageLoaded) {
-        _log('waiting for bridge page load');
-        _pageReady ??= Completer<void>();
-        try {
-          await _pageReady!.future.timeout(
-            const Duration(seconds: 10),
-            onTimeout: () => throw const MediaUnavailable(
-              'The hidden call engine page did not finish loading.',
-            ),
-          );
-        } finally {
-          _pageReady = null;
-        }
-        _log('bridge page load confirmed');
+        rethrow;
+      } finally {
+        _bridgePrimed = false;
+        _bridgeIsBeingConsumed = false;
       }
       // Fail fast when the page itself never loaded: otherwise the init call
       // vanishes into a blank WebView and the 20s ready-timeout is the only
@@ -481,20 +542,33 @@ class WebViewCallMediaService implements CallMediaService {
 
   @override
   Future<void> setMuted(bool enabled) async {
-    await _controller?.runJavaScript(
-        'window.OmniDesk.call.mute(${enabled ? 'true' : 'false'})');
+    await _runControl(
+      'mute',
+      'window.OmniDesk.call.mute(${enabled ? 'true' : 'false'})',
+    );
   }
 
   @override
   Future<void> setHeld(bool enabled) async {
-    await _controller?.runJavaScript(
-        'window.OmniDesk.call.hold(${enabled ? 'true' : 'false'})');
+    await _runControl(
+      'hold',
+      'window.OmniDesk.call.hold(${enabled ? 'true' : 'false'})',
+    );
   }
 
   @override
   Future<void> sendDtmf(String digit) async {
-    await _controller
-        ?.runJavaScript('window.OmniDesk.call.dtmf(${jsonEncode(digit)})');
+    await _runControl(
+        'DTMF', 'window.OmniDesk.call.dtmf(${jsonEncode(digit)})');
+  }
+
+  Future<void> _runControl(String label, String expression) async {
+    final result = await _requireController()
+        .runJavaScriptReturningResult(expression)
+        .timeout(const Duration(seconds: 5));
+    if (normalizeJavaScriptStringResult(result) != 'ok') {
+      throw MediaUnavailable('$label is not supported by the call provider.');
+    }
   }
 
   WebViewController _requireController() {
@@ -517,7 +591,14 @@ class WebViewCallMediaService implements CallMediaService {
     }
     if (decoded is Map &&
         (decoded['event'] == 'heartbeat' || decoded['event'] == 'page_ready')) {
-      if (decoded['event'] == 'heartbeat') {
+      if (decoded['event'] == 'page_ready') {
+        // The bridge emits this from its own script after it installs
+        // `window.OmniDesk`. It is an independent completion signal for
+        // Android WebView builds where navigation callbacks can arrive late
+        // (or be lost while the app is being restored from an answer action).
+        // Navigation is serialized, so it cannot complete a competing load.
+        notePageFinished();
+      } else {
         _lastHeartbeat = DateTime.now();
       }
       return;
@@ -685,6 +766,7 @@ class _HiddenCallWebViewState extends ConsumerState<HiddenCallWebView> {
         }
         return NavigationDecision.prevent;
       },
+      onPageStarted: service.notePageStarted,
       onPageFinished: (_) => service.notePageFinished(),
       onWebResourceError: (error) => service.notePageError(
         '${error.errorType} ${error.description}'.trim(),
@@ -694,6 +776,7 @@ class _HiddenCallWebViewState extends ConsumerState<HiddenCallWebView> {
     // otherwise a fast cached bridge can finish before page readiness is
     // observed and falsely time out during the first call.
     service.attachController(_controller);
+    unawaited(service.prewarmBridge());
   }
 
   @override

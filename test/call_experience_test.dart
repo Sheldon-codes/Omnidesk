@@ -96,6 +96,43 @@ void main() {
         CallLifecycle.active);
   });
 
+  test('remote decline keeps a short terminal acknowledgement', () async {
+    final native = _FakeNativeCallService();
+    final container = _liveContainer(native: native);
+    addTearDown(container.dispose);
+    final controller = container.read(callSessionControllerProvider.notifier);
+
+    await controller.handleIncomingOffer(_incomingOffer());
+
+    native.emit(const NativeCallEvent(
+      type: NativeCallEventType.disconnected,
+      callId: 'call-1',
+      reason: 'customer_declined',
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    final state = container.read(callSessionControllerProvider);
+    expect(state.lifecycle, CallLifecycle.terminalNotice);
+    expect(state.statusLabel, 'Call declined');
+  });
+
+  test('unowned active snapshot is not resurrected during recovery', () async {
+    final container = _liveContainer();
+    addTearDown(container.dispose);
+
+    await container.read(callSessionControllerProvider.notifier).recover(
+          ActiveCallSnapshot(
+            callId: 'call-owned-by-another-device',
+            direction: CallDirection.inbound,
+            phase: CallPhase.active,
+            remoteNumber: '+254700000001',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+    expect(container.read(callSessionControllerProvider).hasCall, isFalse);
+  });
+
   testWidgets('native incoming ringing does not duplicate Flutter UI',
       (tester) async {
     final container = _liveContainer();
@@ -174,12 +211,13 @@ void main() {
 ProviderContainer _liveContainer({
   _FakeCallApi? api,
   _FakeNativeCallService? native,
+  _FakeMedia? media,
 }) {
   return ProviderContainer(overrides: [
     callApiProvider.overrideWithValue(api ?? _FakeCallApi()),
     nativeCallServiceProvider
         .overrideWithValue(native ?? _FakeNativeCallService()),
-    callMediaServiceProvider.overrideWithValue(_FakeMedia()),
+    callMediaServiceProvider.overrideWithValue(media ?? _FakeMedia()),
     callInstallationIdProvider.overrideWithValue(() async => 'installation-1'),
   ]);
 }
@@ -303,6 +341,8 @@ class _FakeNativeCallService implements NativeCallService {
 
   @override
   Stream<NativeCallEvent> get events => _events.stream;
+
+  void emit(NativeCallEvent event) => _events.add(event);
 
   @override
   Future<String?> readNativePushToken() async => null;

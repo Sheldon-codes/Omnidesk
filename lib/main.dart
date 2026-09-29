@@ -218,36 +218,65 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
       );
 }
 
-/// App-root call overlay: the existing CallKit experience plus the hidden
-/// WebView media engine. The engine view is always mounted (1px, offscreen)
-/// so a `transport: "webrtc"` media-config works with zero warm-up delay;
-/// the page itself is inert until the media service initializes it, and the
-/// Baresip track runs with no behavioral change.
-class _AppCallOverlay extends ConsumerWidget {
+/// App-root call overlay: the existing call UI plus an authenticated warm
+/// WebView bridge. The bridge shell is preloaded only after the first app
+/// frame, and remains inert until a call obtains fresh media credentials.
+class _AppCallOverlay extends ConsumerStatefulWidget {
   const _AppCallOverlay({required this.child});
 
   final Widget child;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_AppCallOverlay> createState() => _AppCallOverlayState();
+}
+
+class _AppCallOverlayState extends ConsumerState<_AppCallOverlay> {
+  Timer? _warmupTimer;
+  bool _warmupScheduled = false;
+  bool _warmMedia = false;
+
+  @override
+  void dispose() {
+    _warmupTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleMediaWarmup() {
+    if (_warmupScheduled || _warmMedia) return;
+    _warmupScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Let the initial authenticated route paint and settle before Chromium
+      // allocates its platform view. This keeps startup responsive while
+      // still warming the bridge well before a normal incoming call.
+      _warmupTimer = Timer(const Duration(milliseconds: 750), () {
+        if (!mounted ||
+            !ref.read(authSessionControllerProvider).isAuthenticated) {
+          _warmupScheduled = false;
+          return;
+        }
+        setState(() => _warmMedia = true);
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final authenticated =
+        ref.watch(authSessionControllerProvider).isAuthenticated;
+    if (authenticated) _scheduleMediaWarmup();
     final callState = ref.watch(callSessionControllerProvider);
     final media = ref.read(webViewCallMediaServiceProvider);
+    final shouldMountMedia =
+        (authenticated && (_warmMedia || media.hasController)) ||
+            (callState.hasCall &&
+                (callState.lifecycle != CallLifecycle.incomingRinging ||
+                    !callState.nativeIncomingSurfaceActive));
     return CallExperienceHost(
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // Mount lazily on the first call. Creating Chromium's platform view
-          // and loading the bridge during startup blocks Android's first
-          // frames, especially on emulators. Keep it alive after first use.
-          // An incoming offer is only a system/UI ringing state. Do not pay
-          // the Chromium startup cost until the agent answers and media is
-          // actually being prepared. Outbound calls mount immediately while
-          // connecting. Once mounted, retain the engine for later calls.
-          if ((callState.hasCall &&
-                  callState.lifecycle != CallLifecycle.incomingRinging) ||
-              media.hasController)
-            const HiddenCallWebView(),
-          child,
+          if (shouldMountMedia) const HiddenCallWebView(),
+          widget.child,
         ],
       ),
     );

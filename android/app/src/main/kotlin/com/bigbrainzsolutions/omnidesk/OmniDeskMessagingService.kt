@@ -54,10 +54,19 @@ class OmniDeskMessagingService : FirebaseMessagingService() {
                         "receivedAt" to normalizedPayload["timestamp"].orEmpty(),
                     ))
                     Log.i(logTag, "Incoming Telecom presented callId=$callId eventId=$eventId nativePresentedAt=${receipt.nativePresentedAt}")
+                    // Flutter mirrors an offer only after the native system
+                    // surface has been accepted. Emitting this after a native
+                    // failure used to make Flutter retry a rejected offer and
+                    // produced duplicate presentation races.
+                    AndroidCallEventBridge.offerAvailable(callId)
                 } catch (error: Throwable) {
+                    IncomingCallStateStore.discardOffer(
+                        applicationContext,
+                        callId,
+                        normalizedPayload["offer_id"].orEmpty(),
+                    )
                     Log.e(logTag, "Incoming Telecom presentation failed callId=$callId eventId=$eventId", error)
                 }
-                AndroidCallEventBridge.offerAvailable(callId)
             }
             "call_cancelled" -> {
                 val callId = normalizedPayload["call_id"].orEmpty()

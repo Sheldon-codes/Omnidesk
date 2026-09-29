@@ -25,6 +25,16 @@ class MainActivity : FlutterActivity() {
         notifyIncomingIntent(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+        isForeground = true
+    }
+
+    override fun onPause() {
+        isForeground = false
+        super.onPause()
+    }
+
     private fun notifyIncomingIntent(intent: android.content.Intent?) {
         val callId = intent?.getStringExtra(OmniDeskTelecomManager.extraCallId).orEmpty()
         if (callId.isNotBlank()) {
@@ -69,7 +79,8 @@ class MainActivity : FlutterActivity() {
         super.onDestroy()
     }
 
-    private companion object {
+    companion object {
         const val logTag = "OmniDeskCallPush"
+        @Volatile var isForeground: Boolean = false
     }
 }
