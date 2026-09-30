@@ -12,6 +12,7 @@ import '../../flutter_flow/flutter_flow_theme.dart';
 import '../customer_editor_page/customer_editor_page_model.dart';
 import '../conversation_room_page/whatsapp_compose_sheet.dart';
 import '../conversation_room_page/whatsapp_live_store.dart';
+import '../phone_page/call_recording_player.dart';
 import 'customer_details_page_model.dart';
 
 export 'customer_details_page_model.dart';
@@ -725,6 +726,30 @@ class _CallActivityRow extends StatelessWidget {
   final CustomerDetailCallLog call;
   final FlutterFlowTheme theme;
 
+  void _openRecording(BuildContext context) {
+    final url = call.recordingUrl;
+    if (url == null || url.trim().isEmpty) return;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      constraints: BoxConstraints.tightFor(
+        width: MediaQuery.sizeOf(context).width,
+      ),
+      backgroundColor: theme.primaryBackground,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => CallRecordingPlayerSheet(
+        title: 'Call recording',
+        subtitle:
+            '${call.fromNumber.isNotEmpty ? call.fromNumber : call.toNumber} · '
+            '${_humanize(call.status)}',
+        recordingUrl: url,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final number = call.fromNumber.isNotEmpty ? call.fromNumber : call.toNumber;
@@ -832,6 +857,13 @@ class _CallActivityRow extends StatelessWidget {
               ],
             ),
           ),
+          if (call.recordingUrl != null && call.recordingUrl!.trim().isNotEmpty)
+            IconButton(
+              tooltip: 'Play recording',
+              onPressed: () => _openRecording(context),
+              icon: Icon(IconsaxPlusBroken.play_circle,
+                  color: theme.primary, size: 24),
+            ),
         ],
       ),
     );

@@ -1,9 +1,12 @@
+import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../../components/call_experience/call_session_controller.dart';
@@ -241,15 +244,22 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
               semanticsLabel: '${recent.name}, ${recent.phone}, '
                   '${recent.time}, ${recent.detail}',
               onAction: () => _showComingSoon(context),
-              onCall: () => _startOutgoing(
-                context,
-                CallParty(displayName: recent.name, phoneNumber: recent.phone),
-              ),
               onPlay: () => _openRecording(context, recent),
               onTap: () => _openCallContact(context, recent),
-              showCallAction: true,
               showPlayAction: recent.hasRecording,
-              child: _RecentRow(recent: recent, theme: theme),
+              recordingOnlySwipe: true,
+              child: _RecentRow(
+                recent: recent,
+                theme: theme,
+                onCall: () => _startOutgoing(
+                  context,
+                  CallParty(
+                    customerId: recent.customerId,
+                    displayName: recent.name,
+                    phoneNumber: recent.phone,
+                  ),
+                ),
+              ),
             );
           },
         ),
@@ -294,15 +304,6 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
               theme: theme,
               semanticsLabel: '${contact.title}, ${contact.subtitle}',
               onAction: () => _showComingSoon(context),
-              onCall: () => _startOutgoing(
-                context,
-                CallParty(
-                  customerId: contact.id,
-                  displayName: contact.title,
-                  phoneNumber: contact.identifier,
-                  avatar: contact.avatar,
-                ),
-              ),
               onEdit: () => context
                   .push('/customers/${contact.id ?? contact.identifier}/edit'),
               onTap: () => context
@@ -336,9 +337,18 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
   void _openRecording(BuildContext context, PhoneRecent recent) {
     final recordingUrl = recent.recordingUrl;
     if (recordingUrl == null || !recent.hasRecording) return;
+    final theme = FlutterFlowTheme.of(context);
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
+      constraints: BoxConstraints.tightFor(
+        width: MediaQuery.sizeOf(context).width,
+      ),
+      backgroundColor: theme.primaryBackground,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (_) => _PhoneRecordingSheet(
         title: recent.name,
         subtitle: '${recent.phone} · ${recent.detail}',
@@ -719,10 +729,15 @@ class _SearchField extends StatelessWidget {
 }
 
 class _RecentRow extends StatelessWidget {
-  const _RecentRow({required this.recent, required this.theme});
+  const _RecentRow({
+    required this.recent,
+    required this.theme,
+    required this.onCall,
+  });
 
   final PhoneRecent recent;
   final FlutterFlowTheme theme;
+  final VoidCallback onCall;
 
   @override
   Widget build(BuildContext context) {
@@ -745,9 +760,11 @@ class _RecentRow extends StatelessWidget {
       ),
       title: recent.name,
       subtitle: '${recent.phone} · ${recent.time} · ${recent.detail}',
-      trailing: recent.ticket == null
-          ? null
-          : Text(
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (recent.ticket != null)
+            Text(
               recent.ticket!,
               style: theme.bodySmall.override(
                 fontFamily: theme.bodySmallFamily,
@@ -756,6 +773,10 @@ class _RecentRow extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               ),
             ),
+          if (recent.ticket != null) const SizedBox(width: 6),
+          _CallButton(theme: theme, onTap: onCall),
+        ],
+      ),
     );
   }
 }
@@ -782,12 +803,28 @@ class _PhoneRecordingSheetState extends State<_PhoneRecordingSheet> {
   var _loading = false;
   String? _error;
 
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+
   @override
   void initState() {
     super.initState();
+    unawaited(_configureAudioOutput());
     _player.playerStateStream.listen((state) {
       if (mounted) setState(() => _playing = state.playing);
     });
+    _player.positionStream.listen((position) {
+      if (mounted) setState(() => _position = position);
+    });
+    _player.durationStream.listen((duration) {
+      if (mounted && duration != null) setState(() => _duration = duration);
+    });
+  }
+
+  Future<void> _configureAudioOutput() async {
+    final session = await AudioSession.instance;
+    await session.configure(const AudioSessionConfiguration.music());
+    await _player.setVolume(1.0);
   }
 
   @override
@@ -808,6 +845,7 @@ class _PhoneRecordingSheetState extends State<_PhoneRecordingSheet> {
           _loading = true;
           _error = null;
         });
+        await _configureAudioOutput();
         await _player.setUrl(widget.recordingUrl);
         if (!mounted) return;
         setState(() {
@@ -825,72 +863,181 @@ class _PhoneRecordingSheetState extends State<_PhoneRecordingSheet> {
     }
   }
 
+  Future<void> _skipBy(Duration amount) async {
+    if (!_prepared || _duration <= Duration.zero) return;
+    final next = _position + amount;
+    await _player.seek(next.isNegative
+        ? Duration.zero
+        : next > _duration
+            ? _duration
+            : next);
+  }
+
+  Future<void> _seekFromWaveform(double value) async {
+    if (_duration <= Duration.zero) return;
+    await _player.seek(_duration * value.clamp(0, 1));
+  }
+
+  String _formatDuration(Duration value) {
+    final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final hours = value.inHours;
+    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = FlutterFlowTheme.of(context);
+    final progress = _duration <= Duration.zero
+        ? 0.0
+        : (_position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0);
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+        padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              widget.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.titleMedium.override(
-                fontFamily: theme.titleMediumFamily,
-                color: theme.primaryText,
-                fontWeight: FontWeight.w600,
+            Text(widget.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.titleMedium.override(
+                  fontFamily: theme.titleMediumFamily,
+                  color: theme.primaryText,
+                  fontWeight: FontWeight.w700,
+                )),
+            const SizedBox(height: 4),
+            Text(widget.subtitle,
+                style: theme.bodySmall.override(
+                  fontFamily: theme.bodySmallFamily,
+                  color: theme.secondaryText,
+                )),
+            const SizedBox(height: 28),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapUp: (details) {
+                final width = context.size?.width ?? 1;
+                unawaited(_seekFromWaveform(details.localPosition.dx / width));
+              },
+              child: SizedBox(
+                height: 78,
+                width: double.infinity,
+                child: CustomPaint(
+                  painter: _RecordingWaveformPainter(
+                    progress: progress,
+                    activeColor: theme.primary,
+                    inactiveColor: theme.alternate,
+                  ),
+                ),
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              widget.subtitle,
-              style: theme.bodySmall.override(
-                fontFamily: theme.bodySmallFamily,
-                color: theme.secondaryText,
-              ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(_formatDuration(_position), style: theme.bodySmall),
+                Text(_formatDuration(_duration), style: theme.bodySmall),
+              ],
             ),
             const SizedBox(height: 20),
-            IconButton.filled(
-              tooltip: _playing ? 'Pause recording' : 'Play recording',
-              onPressed: _toggle,
-              style: IconButton.styleFrom(
-                backgroundColor: theme.primary,
-                foregroundColor: Colors.white,
-                minimumSize: const Size(56, 56),
-              ),
-              icon: _loading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Icon(_playing
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  tooltip: 'Back 10 seconds',
+                  onPressed: _prepared
+                      ? () => _skipBy(const Duration(seconds: -10))
+                      : null,
+                  icon: const Icon(Icons.replay_10_rounded),
+                ),
+                const SizedBox(width: 18),
+                IconButton.filled(
+                  tooltip: _playing ? 'Pause recording' : 'Play recording',
+                  onPressed: _toggle,
+                  style: IconButton.styleFrom(
+                    backgroundColor: theme.primary,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(64, 64),
+                  ),
+                  icon: _loading
+                      ? const SizedBox(
+                          height: 22,
+                          width: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Icon(_playing
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded),
+                ),
+                const SizedBox(width: 18),
+                IconButton(
+                  tooltip: 'Forward 10 seconds',
+                  onPressed: _prepared
+                      ? () => _skipBy(const Duration(seconds: 10))
+                      : null,
+                  icon: const Icon(Icons.forward_10_rounded),
+                ),
+              ],
             ),
             if (_error != null) ...[
               const SizedBox(height: 12),
-              Text(
-                _error!,
-                textAlign: TextAlign.center,
-                style: theme.bodySmall.override(
-                  fontFamily: theme.bodySmallFamily,
-                  color: theme.error,
-                ),
-              ),
+              Text(_error!,
+                  textAlign: TextAlign.center,
+                  style: theme.bodySmall.override(
+                    fontFamily: theme.bodySmallFamily,
+                    color: theme.error,
+                  )),
             ],
           ],
         ),
       ),
     );
   }
+}
+
+class _RecordingWaveformPainter extends CustomPainter {
+  _RecordingWaveformPainter({
+    required this.progress,
+    required this.activeColor,
+    required this.inactiveColor,
+  });
+
+  final double progress;
+  final Color activeColor;
+  final Color inactiveColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const bars = 64;
+    final barWidth = size.width / (bars * 1.65);
+    final gap = barWidth * .65;
+    final heights = List<double>.generate(bars, (index) {
+      final envelope = math.sin((index + 1) / (bars + 1) * math.pi) * .32 + .68;
+      final variation = .35 + ((index * 37) % 61) / 100;
+      return size.height * .86 * envelope * variation;
+    });
+    final activeBars = (bars * progress).floor();
+    for (var index = 0; index < bars; index++) {
+      final height = heights[index].clamp(8.0, size.height);
+      final left = index * (barWidth + gap);
+      final top = (size.height - height) / 2;
+      final paint = Paint()
+        ..color = index <= activeBars ? activeColor : inactiveColor
+        ..strokeCap = StrokeCap.round
+        ..strokeWidth = barWidth;
+      canvas.drawLine(Offset(left + barWidth / 2, top),
+          Offset(left + barWidth / 2, top + height), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RecordingWaveformPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.activeColor != activeColor ||
+      oldDelegate.inactiveColor != inactiveColor;
 }
 
 class _ContactRow extends StatelessWidget {
@@ -1060,10 +1207,9 @@ class _PhoneSwipeRow extends StatefulWidget {
     required this.semanticsLabel,
     this.onTap,
     this.onEdit,
-    this.onCall,
     this.onPlay,
-    this.showCallAction = false,
     this.showPlayAction = false,
+    this.recordingOnlySwipe = false,
   });
 
   final FlutterFlowTheme theme;
@@ -1072,10 +1218,12 @@ class _PhoneSwipeRow extends StatefulWidget {
   final String semanticsLabel;
   final VoidCallback? onTap;
   final VoidCallback? onEdit;
-  final VoidCallback? onCall;
   final VoidCallback? onPlay;
-  final bool showCallAction;
   final bool showPlayAction;
+
+  /// Recents do not expose fixture-like message/call swipe actions. A swipe
+  /// is reserved exclusively for a recording when the server supplied one.
+  final bool recordingOnlySwipe;
 
   @override
   State<_PhoneSwipeRow> createState() => _PhoneSwipeRowState();
@@ -1095,99 +1243,48 @@ class _PhoneSwipeRowState extends State<_PhoneSwipeRow> {
     return Semantics(
       label: widget.semanticsLabel,
       child: GestureDetector(
-        onHorizontalDragUpdate: (details) => setState(() {
-          _offset = (_offset + details.delta.dx).clamp(-_maxOffset, _maxOffset);
-        }),
-        onHorizontalDragEnd: (_) => setState(() {
-          _offset =
-              _offset.abs() > _maxOffset * .45 ? _offset.sign * _maxOffset : 0;
-        }),
+        onHorizontalDragUpdate:
+            widget.recordingOnlySwipe && !widget.showPlayAction
+                ? null
+                : (details) => setState(() {
+                      _offset = (_offset + details.delta.dx)
+                          .clamp(-_maxOffset, _maxOffset);
+                    }),
+        onHorizontalDragEnd: widget.recordingOnlySwipe && !widget.showPlayAction
+            ? null
+            : (_) => setState(() {
+                  _offset = _offset.abs() > _maxOffset * .45
+                      ? _offset.sign * _maxOffset
+                      : 0;
+                }),
         child: Stack(
           children: [
             Positioned.fill(
-              child: Row(
-                children: [
-                  _SwipeAction(
-                    label: widget.showCallAction
-                        ? 'Call'
-                        : widget.onEdit == null
-                            ? 'Message'
-                            : 'Edit',
-                    icon: widget.showCallAction
-                        ? IconsaxPlusBroken.call
-                        : widget.onEdit == null
-                            ? IconsaxPlusBroken.messages
-                            : IconsaxPlusBroken.edit,
-                    color: widget.showCallAction
-                        ? widget.theme.primary
-                        : widget.onEdit == null
-                            ? widget.theme.secondary
-                            : widget.theme.primary,
-                    onTap: () {
-                      _reset();
-                      if (widget.showCallAction) {
-                        (widget.onCall ?? widget.onAction)();
-                      } else {
-                        widget.onEdit?.call();
-                        if (widget.onEdit == null) widget.onAction();
-                      }
-                    },
-                  ),
-                  _SwipeAction(
-                    label: widget.showPlayAction ? 'Play' : 'Message',
-                    icon: widget.showPlayAction
-                        ? IconsaxPlusBroken.play
-                        : IconsaxPlusBroken.messages,
-                    color: widget.theme.secondary,
-                    onTap: () {
-                      _reset();
-                      (widget.showPlayAction
-                          ? widget.onPlay ?? widget.onAction
-                          : widget.onAction)();
-                    },
-                  ),
-                  const Spacer(),
-                  _SwipeAction(
-                    label: widget.showPlayAction ? 'Play' : 'Message',
-                    icon: widget.showPlayAction
-                        ? IconsaxPlusBroken.play
-                        : IconsaxPlusBroken.messages,
-                    color: widget.theme.secondary,
-                    onTap: () {
-                      _reset();
-                      (widget.showPlayAction
-                          ? widget.onPlay ?? widget.onAction
-                          : widget.onAction)();
-                    },
-                  ),
-                  _SwipeAction(
-                    label: widget.showCallAction
-                        ? 'Call'
-                        : widget.onEdit == null
-                            ? 'Message'
-                            : 'Edit',
-                    icon: widget.showCallAction
-                        ? IconsaxPlusBroken.call
-                        : widget.onEdit == null
-                            ? IconsaxPlusBroken.messages
-                            : IconsaxPlusBroken.edit,
-                    color: widget.showCallAction
-                        ? widget.theme.primary
-                        : widget.onEdit == null
-                            ? widget.theme.secondary
-                            : widget.theme.primary,
-                    onTap: () {
-                      _reset();
-                      if (widget.showCallAction) {
-                        (widget.onCall ?? widget.onAction)();
-                      } else {
-                        widget.onEdit?.call();
-                        if (widget.onEdit == null) widget.onAction();
-                      }
-                    },
-                  ),
-                ],
-              ),
+              child: widget.recordingOnlySwipe
+                  ? Row(
+                      children: [
+                        _SwipeAction(
+                          label: 'Play',
+                          icon: IconsaxPlusBroken.play,
+                          color: widget.theme.secondary,
+                          onTap: () {
+                            _reset();
+                            (widget.onPlay ?? widget.onAction)();
+                          },
+                        ),
+                        const Spacer(),
+                        _SwipeAction(
+                          label: 'Play',
+                          icon: IconsaxPlusBroken.play,
+                          color: widget.theme.secondary,
+                          onTap: () {
+                            _reset();
+                            (widget.onPlay ?? widget.onAction)();
+                          },
+                        ),
+                      ],
+                    )
+                  : _standardSwipeActions(),
             ),
             AnimatedContainer(
               duration: duration,
@@ -1208,6 +1305,66 @@ class _PhoneSwipeRowState extends State<_PhoneSwipeRow> {
       ),
     );
   }
+
+  Widget _standardSwipeActions() => Row(
+        children: [
+          _SwipeAction(
+            label: widget.onEdit == null ? 'Message' : 'Edit',
+            icon: widget.onEdit == null
+                ? IconsaxPlusBroken.messages
+                : IconsaxPlusBroken.edit,
+            color: widget.onEdit == null
+                ? widget.theme.secondary
+                : widget.theme.primary,
+            onTap: () {
+              _reset();
+              widget.onEdit?.call();
+              if (widget.onEdit == null) widget.onAction();
+            },
+          ),
+          _SwipeAction(
+            label: widget.showPlayAction ? 'Play' : 'Message',
+            icon: widget.showPlayAction
+                ? IconsaxPlusBroken.play
+                : IconsaxPlusBroken.messages,
+            color: widget.theme.secondary,
+            onTap: () {
+              _reset();
+              (widget.showPlayAction
+                  ? widget.onPlay ?? widget.onAction
+                  : widget.onAction)();
+            },
+          ),
+          const Spacer(),
+          _SwipeAction(
+            label: widget.showPlayAction ? 'Play' : 'Message',
+            icon: widget.showPlayAction
+                ? IconsaxPlusBroken.play
+                : IconsaxPlusBroken.messages,
+            color: widget.theme.secondary,
+            onTap: () {
+              _reset();
+              (widget.showPlayAction
+                  ? widget.onPlay ?? widget.onAction
+                  : widget.onAction)();
+            },
+          ),
+          _SwipeAction(
+            label: widget.onEdit == null ? 'Message' : 'Edit',
+            icon: widget.onEdit == null
+                ? IconsaxPlusBroken.messages
+                : IconsaxPlusBroken.edit,
+            color: widget.onEdit == null
+                ? widget.theme.secondary
+                : widget.theme.primary,
+            onTap: () {
+              _reset();
+              widget.onEdit?.call();
+              if (widget.onEdit == null) widget.onAction();
+            },
+          ),
+        ],
+      );
 }
 
 class _SwipeAction extends StatelessWidget {
