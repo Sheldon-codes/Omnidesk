@@ -5,6 +5,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.util.Log
 import android.media.AudioAttributes
 import android.net.Uri
 import androidx.core.app.Person
@@ -45,24 +47,28 @@ object OmniDeskCallNotification {
         )
         val answer = action(context, callId, OmniDeskCallActionReceiver.answerAction)
         val decline = action(context, callId, OmniDeskCallActionReceiver.declineAction)
-        val notification = NotificationCompat.Builder(context, incomingChannel)
+        val builder = NotificationCompat.Builder(context, incomingChannel)
             .setSmallIcon(android.R.drawable.sym_action_call)
             .setContentTitle(name)
             .setContentText("Incoming OmniDesk call")
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setOngoing(true)
-            // Android 14+ rejects CallStyle notifications without either a
-            // foreground-service association or a full-screen intent. The
-            // full-screen target is the existing Flutter activity, never a
-            // separate native ringing activity. Tapping it still only opens
-            // Flutter; it does not answer or dismiss the Telecom call.
-            .setFullScreenIntent(contentIntent, true)
             .setContentIntent(contentIntent)
             .setStyle(NotificationCompat.CallStyle.forIncomingCall(
                 Person.Builder().setName(name).build(), decline, answer
             ))
-            .build()
+        // Android 14 can revoke full-screen access per app. CallStyle remains
+        // a valid heads-up/lock-screen fallback, so do not fail presentation
+        // or silently pretend a full-screen launch was granted.
+        val fullScreenAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
+            context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
+        if (fullScreenAllowed) {
+            builder.setFullScreenIntent(contentIntent, true)
+        } else {
+            Log.w("OmniDeskTelecom", "Full-screen incoming-call access is disabled; using CallStyle fallback")
+        }
+        val notification = builder.build()
         NotificationManagerCompat.from(context).notify(notificationId(callId), notification)
     }
 

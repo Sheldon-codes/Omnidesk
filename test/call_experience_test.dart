@@ -384,7 +384,16 @@ class _FakeNativeCallService implements NativeCallService {
   Future<String?> readNativePushToken() async => null;
 
   @override
+  Future<CallOffer?> peekPendingOffer() async => null;
+
+  @override
   Future<CallOffer?> takePendingOffer() async => null;
+
+  @override
+  Future<NativeIncomingCallLaunch?> peekInitialIncomingLaunch() async => null;
+
+  @override
+  Future<NativeIncomingCallLaunch?> takeInitialIncomingLaunch() async => null;
 
   @override
   Future<NativeCallEvent?> takePendingAction() async => null;

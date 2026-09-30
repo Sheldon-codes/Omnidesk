@@ -342,6 +342,7 @@ object OmniDeskTelecomManager {
             connection.destroy()
         }
         IncomingCallStateStore.clearPresentation(context, callId, offerId)
+        MainActivity.clearIncomingCallLaunchPresentation(callId)
         clearPendingOutgoing(callId)
         releaseCommunicationRoute(context)
         OmniDeskCallForegroundService.stop(context)

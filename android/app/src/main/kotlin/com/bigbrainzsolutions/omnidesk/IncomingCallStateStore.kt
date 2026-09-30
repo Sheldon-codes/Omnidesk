@@ -18,6 +18,7 @@ object IncomingCallStateStore {
     private const val eventIdsKey = "processed_event_ids"
     private const val activePresentationKey = "active_presentation_key"
     private const val presentationReceiptKey = "presentation_receipt_json"
+    private const val incomingLaunchKey = "incoming_launch_json"
     private const val maxEventIds = 96
     private val lock = Any()
 
@@ -46,6 +47,49 @@ object IncomingCallStateStore {
         val raw = prefs.getString(offerKey, null) ?: return null
         prefs.edit().remove(offerKey).commit()
         jsonMap(raw)
+    }
+
+    /**
+     * Reads the persisted offer without consuming it.  Flutter uses this on a
+     * cold notification launch so it can decide whether call UI must win over
+     * ordinary navigation before the lifecycle coordinator takes ownership.
+     */
+    fun peekOffer(context: Context): Map<String, Any?>? = synchronized(lock) {
+        preferences(context).getString(offerKey, null)?.let(::jsonMap)
+    }
+
+    /**
+     * A notification tap is a durable launch intent, not an answer action.
+     * Persist it only while the matching Telecom presentation and offer still
+     * exist; this prevents a stale PendingIntent from resurrecting a finished
+     * call after cancellation or expiry.
+     */
+    fun saveIncomingLaunch(context: Context, callId: String, offerId: String): Boolean = synchronized(lock) {
+        if (callId.isBlank() || offerId.isBlank()) return false
+        if (!isPresentationActive(context, callId, offerId)) return false
+        val offer = peekOffer(context) ?: return false
+        if (offer["call_id"] != callId || offer["offer_id"] != offerId) return false
+        preferences(context).edit().putString(
+            incomingLaunchKey,
+            JSONObject()
+                .put("callId", callId)
+                .put("offerId", offerId)
+                .put("reason", "incoming_call")
+                .put("openedAt", System.currentTimeMillis())
+                .toString(),
+        ).commit()
+        true
+    }
+
+    fun takeIncomingLaunch(context: Context): Map<String, Any?>? = synchronized(lock) {
+        val prefs = preferences(context)
+        val raw = prefs.getString(incomingLaunchKey, null) ?: return null
+        prefs.edit().remove(incomingLaunchKey).commit()
+        jsonMap(raw)
+    }
+
+    fun peekIncomingLaunch(context: Context): Map<String, Any?>? = synchronized(lock) {
+        preferences(context).getString(incomingLaunchKey, null)?.let(::jsonMap)
     }
 
     /**
@@ -100,7 +144,12 @@ object IncomingCallStateStore {
             else -> current == presentationKey(callId, offerId)
         }
         if (shouldClear) {
-            prefs.edit().remove(activePresentationKey).remove(presentationReceiptKey).remove(offerKey).commit()
+            prefs.edit()
+                .remove(activePresentationKey)
+                .remove(presentationReceiptKey)
+                .remove(offerKey)
+                .remove(incomingLaunchKey)
+                .commit()
         }
     }
 

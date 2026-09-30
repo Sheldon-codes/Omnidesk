@@ -67,6 +67,34 @@ class NativeIncomingPresentationReceipt {
   }
 }
 
+/// Durable context recorded when the user opens a live native incoming-call
+/// notification. It is intentionally separate from [CallOffer]: opening the
+/// notification does not answer, consume, or otherwise mutate the offer.
+class NativeIncomingCallLaunch {
+  const NativeIncomingCallLaunch({
+    required this.callId,
+    required this.offerId,
+    required this.openedAt,
+  });
+
+  final CallId callId;
+  final String offerId;
+  final DateTime openedAt;
+
+  factory NativeIncomingCallLaunch.fromMap(Map<String, dynamic> map) {
+    return NativeIncomingCallLaunch(
+      callId: map['callId']?.toString() ?? '',
+      offerId: map['offerId']?.toString() ?? '',
+      openedAt: DateTime.tryParse(map['openedAt']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(
+            int.tryParse(map['openedAt']?.toString() ?? '') ?? 0,
+          ),
+    );
+  }
+
+  bool get isValid => callId.isNotEmpty && offerId.isNotEmpty;
+}
+
 /// Platform-neutral boundary for the operating system's call surface.
 ///
 /// Android implements this with self-managed Telecom; iOS can implement the
@@ -77,7 +105,10 @@ class NativeIncomingPresentationReceipt {
 abstract class NativeCallService {
   Stream<NativeCallEvent> get events;
   Future<String?> readNativePushToken();
+  Future<CallOffer?> peekPendingOffer();
   Future<CallOffer?> takePendingOffer();
+  Future<NativeIncomingCallLaunch?> peekInitialIncomingLaunch();
+  Future<NativeIncomingCallLaunch?> takeInitialIncomingLaunch();
   Future<NativeCallEvent?> takePendingAction();
   Future<NativeIncomingPresentationReceipt> presentIncoming(CallOffer offer);
   Future<void> beginOutgoing(NativeCallIdentity identity);
@@ -128,8 +159,15 @@ class MethodChannelNativeCallService implements NativeCallService {
       _readString('readNativePushToken', allowMissingPlugin: true);
 
   @override
+  Future<CallOffer?> peekPendingOffer() => _readOffer('peekPendingOffer');
+
+  @override
   Future<CallOffer?> takePendingOffer() async {
-    final value = await _readMap('takePendingOffer', allowMissingPlugin: true);
+    return _readOffer('takePendingOffer');
+  }
+
+  Future<CallOffer?> _readOffer(String method) async {
+    final value = await _readMap(method, allowMissingPlugin: true);
     if (value == null) return null;
     try {
       final offer = CallOffer.fromJson(value);
@@ -137,6 +175,26 @@ class MethodChannelNativeCallService implements NativeCallService {
     } catch (_) {
       return null;
     }
+  }
+
+  @override
+  Future<NativeIncomingCallLaunch?> takeInitialIncomingLaunch() async {
+    return _readIncomingLaunch('takeInitialIncomingLaunch');
+  }
+
+  @override
+  Future<NativeIncomingCallLaunch?> peekInitialIncomingLaunch() async {
+    return _readIncomingLaunch('peekInitialIncomingLaunch');
+  }
+
+  Future<NativeIncomingCallLaunch?> _readIncomingLaunch(String method) async {
+    final value = await _readMap(
+      method,
+      allowMissingPlugin: true,
+    );
+    if (value == null) return null;
+    final launch = NativeIncomingCallLaunch.fromMap(value);
+    return launch.isValid ? launch : null;
   }
 
   @override

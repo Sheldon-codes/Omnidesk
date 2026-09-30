@@ -222,6 +222,11 @@ class CallSessionController extends _$CallSessionController {
   /// WebRTC is the only supported production media implementation.
   CallMediaService get _media => _activeMedia ?? _webView;
 
+  /// Read-only lifecycle projection for non-widget coordinators. Keeping this
+  /// behind the controller avoids exposing Riverpod notifier state outside
+  /// its supported API surface.
+  bool get hasActiveSession => state.hasCall;
+
   String _authScopeKey() {
     final session = ref.read(authSessionControllerProvider).session;
     final workspace = session?.user.activeWorkspace?.id ?? '';
@@ -503,6 +508,22 @@ class CallSessionController extends _$CallSessionController {
       _fail(_messageFor(error));
       return false;
     }
+  }
+
+  /// The system notification has opened Flutter while the native Telecom call
+  /// remains ringing.  Reveal the existing Flutter incoming UI as a mirror;
+  /// this must never answer, dismiss, or otherwise mutate the native call.
+  void revealIncomingCallSurface(CallId callId, CallOfferId offerId) {
+    if (state.lifecycle != CallLifecycle.incomingRinging ||
+        state.callId != callId ||
+        state.offerId != offerId) {
+      return;
+    }
+    state = state.copyWith(nativeIncomingSurfaceActive: false);
+    developer.log(
+      'Flutter incoming surface revealed for notification launch callId=$callId.',
+      name: 'CallSession',
+    );
   }
 
   /// Starts the documented outbound signal, registration, then SIP INVITE

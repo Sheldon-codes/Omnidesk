@@ -28,35 +28,57 @@ import 'pages/tickets_page/tickets_page_widget.dart';
 import 'services/auth_session_controller.dart';
 import 'services/agent_counters.dart';
 import 'services/calls/call_lifecycle_coordinator.dart';
+import 'services/calls/native_call_service.dart';
 import 'services/fcm_service.dart';
 import 'services/onboarding_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  // Install the native channel handler before any asynchronous framework
+  // startup. Android may have launched us from a live CallStyle notification;
+  // that intent must be resolved before the router is allowed to paint Home.
+  final nativeCalls = MethodChannelNativeCallService();
+  final initialIncomingLaunch = nativeCalls.peekInitialIncomingLaunch();
   await FlutterFlowTheme.initialize();
   await dotenv.load(fileName: '.env');
-  var fcmEnabled = false;
+  final fcmInitialization = _initializeFirebase();
+  final launch = await initialIncomingLaunch;
+  runApp(ProviderScope(
+    overrides: [nativeCallServiceProvider.overrideWithValue(nativeCalls)],
+    child: OmnideskAgentApp(
+      fcmInitialization: fcmInitialization,
+      initialIncomingLaunch: launch,
+    ),
+  ));
+}
+
+Future<bool> _initializeFirebase() async {
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-    fcmEnabled = true;
+    return true;
   } catch (error) {
     developer.log(
       'FCM initialization failed; push features are unavailable: '
       '${error.runtimeType}.',
       name: 'MainApp',
     );
+    return false;
   }
-  runApp(ProviderScope(child: OmnideskAgentApp(fcmEnabled: fcmEnabled)));
 }
 
 class OmnideskAgentApp extends ConsumerStatefulWidget {
-  const OmnideskAgentApp({super.key, required this.fcmEnabled});
+  const OmnideskAgentApp({
+    super.key,
+    required this.fcmInitialization,
+    this.initialIncomingLaunch,
+  });
 
-  final bool fcmEnabled;
+  final Future<bool> fcmInitialization;
+  final NativeIncomingCallLaunch? initialIncomingLaunch;
   @override
   ConsumerState<OmnideskAgentApp> createState() => _OmnideskAgentAppState();
 }
@@ -68,10 +90,18 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
   ProviderSubscription<CallSessionState>? _callSubscription;
   StreamSubscription<AppNotification>? _notificationTapSubscription;
   StreamSubscription<void>? _counterRefreshSubscription;
+  late bool _deferNormalStartup;
+  bool _startupCallObserved = false;
+
+  void _startAuthenticatedBackgroundServices() {
+    ref.read(homeDashboardProvider.notifier).startHeartbeat();
+    ref.read(agentCountersProvider.notifier).setAppActive(true);
+  }
 
   @override
   void initState() {
     super.initState();
+    _deferNormalStartup = widget.initialIncomingLaunch != null;
     WidgetsBinding.instance.addObserver(this);
     _authSubscription = ref.listenManual<AuthState>(
       authSessionControllerProvider,
@@ -83,16 +113,18 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
           name: 'MainApp',
         );
         if (next.isAuthenticated) {
-          ref.read(homeDashboardProvider.notifier).startHeartbeat();
-          ref.read(agentCountersProvider.notifier).setAppActive(true);
+          // Call ownership is deliberately established first. A cold launch
+          // from a live native ringing surface must not spend its first
+          // network/CPU budget on dashboard and counter work.
+          unawaited(
+            ref.read(callLifecycleCoordinatorProvider).updateAuth(next),
+          );
+          if (!_deferNormalStartup) _startAuthenticatedBackgroundServices();
           // Revalidate/rebuild an idle WebRTC standby client after auth or
           // workspace changes. The controller is single-flight and will not
           // touch an active call.
           unawaited(
             ref.read(callSessionControllerProvider.notifier).prewarmMedia(),
-          );
-          unawaited(
-            ref.read(callLifecycleCoordinatorProvider).updateAuth(next),
           );
         } else if (ref.exists(homeDashboardProvider)) {
           ref.read(homeDashboardProvider.notifier).stopHeartbeat();
@@ -120,10 +152,24 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
             next.lifecycle != CallLifecycle.terminalNotice &&
             next.lifecycle != CallLifecycle.failed;
         ref.read(agentCountersProvider.notifier).setCallCritical(critical);
+        if (_deferNormalStartup && next.hasCall) _startupCallObserved = true;
+        if (_deferNormalStartup &&
+            _startupCallObserved &&
+            !next.hasCall &&
+            ref.read(authSessionControllerProvider).isAuthenticated) {
+          _deferNormalStartup = false;
+          _startAuthenticatedBackgroundServices();
+        }
       },
       fireImmediately: true,
     );
-    if (widget.fcmEnabled) {
+    unawaited(_initializeFcmWhenReady());
+  }
+
+  Future<void> _initializeFcmWhenReady() async {
+    final initialized = await widget.fcmInitialization;
+    if (!mounted) return;
+    if (initialized) {
       _notificationTapSubscription =
           ref.read(fcmServiceProvider).notificationTaps.listen((notification) {
         if (!mounted) return;
@@ -143,7 +189,7 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
           .listen((_) => unawaited(ref
               .read(agentCountersProvider.notifier)
               .refresh(reason: 'notification')));
-      Future.microtask(() => ref.read(fcmServiceProvider).initialize());
+      await ref.read(fcmServiceProvider).initialize();
     } else {
       developer.log(
         'Skipping Flutter FCM initialization because Firebase failed to '
@@ -167,7 +213,9 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      ref.read(agentCountersProvider.notifier).setAppActive(true);
+      if (!_deferNormalStartup) {
+        ref.read(agentCountersProvider.notifier).setAppActive(true);
+      }
       final hasLocalCall = ref.read(callSessionControllerProvider).hasCall;
       if (!hasLocalCall) {
         unawaited(
@@ -175,7 +223,9 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
         );
       }
       if (ref.read(authSessionControllerProvider).isAuthenticated) {
-        ref.read(homeDashboardProvider.notifier).startHeartbeat();
+        if (!_deferNormalStartup) {
+          ref.read(homeDashboardProvider.notifier).startHeartbeat();
+        }
         unawaited(
           ref.read(callSessionControllerProvider.notifier).prewarmMedia(),
         );
@@ -202,8 +252,17 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
       darkTheme: _themeData(DarkModeTheme(), Brightness.dark),
       themeMode: themeMode,
       routerConfig: ref.watch(goRouterProvider),
-      builder: (context, child) =>
-          _AppCallOverlay(child: child ?? const SizedBox.shrink()),
+      builder: (context, child) => _CallStartupGate(
+        initialLaunch: widget.initialIncomingLaunch,
+        onNoLiveOffer: () {
+          if (!_deferNormalStartup || !mounted) return;
+          setState(() => _deferNormalStartup = false);
+          if (ref.read(authSessionControllerProvider).isAuthenticated) {
+            _startAuthenticatedBackgroundServices();
+          }
+        },
+        child: _AppCallOverlay(child: child ?? const SizedBox.shrink()),
+      ),
     );
   }
 
@@ -242,6 +301,125 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
           bodySmall: flowTheme.bodySmall,
           labelLarge: flowTheme.labelLarge,
         ),
+      );
+}
+
+/// Blocks normal router content only for a valid native notification launch.
+/// The native CallStyle/Telecom surface keeps ringing throughout this gate;
+/// this widget merely guarantees Flutter's first meaningful frame is its
+/// existing incoming-call experience instead of Home.
+class _CallStartupGate extends ConsumerStatefulWidget {
+  const _CallStartupGate({
+    required this.initialLaunch,
+    required this.onNoLiveOffer,
+    required this.child,
+  });
+
+  final NativeIncomingCallLaunch? initialLaunch;
+  final VoidCallback onNoLiveOffer;
+  final Widget child;
+
+  @override
+  ConsumerState<_CallStartupGate> createState() => _CallStartupGateState();
+}
+
+class _CallStartupGateState extends ConsumerState<_CallStartupGate> {
+  bool? _hasLiveOffer;
+  bool _revealScheduled = false;
+  bool _flutterSurfaceRevealed = false;
+  bool _normalStartupReported = false;
+
+  void _allowNormalStartup() {
+    if (_normalStartupReported) return;
+    _normalStartupReported = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onNoLiveOffer();
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_verifyLaunch());
+  }
+
+  Future<void> _verifyLaunch() async {
+    final launch = widget.initialLaunch;
+    if (launch == null) {
+      if (mounted) {
+        setState(() => _hasLiveOffer = false);
+        _allowNormalStartup();
+      }
+      return;
+    }
+    final offer = await ref.read(nativeCallServiceProvider).peekPendingOffer();
+    final valid = offer != null &&
+        !offer.isExpired &&
+        offer.callId == launch.callId &&
+        offer.offerId == launch.offerId;
+    developer.log(
+      'Initial incoming launch ${valid ? "accepted" : "ignored"} '
+      'callId=${launch.callId}.',
+      name: 'CallStartup',
+    );
+    if (mounted) {
+      setState(() => _hasLiveOffer = valid);
+      if (!valid) _allowNormalStartup();
+    }
+  }
+
+  void _revealFlutterIncomingSurface(CallSessionState call) {
+    if (_revealScheduled || !call.nativeIncomingSurfaceActive) return;
+    _revealScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _revealScheduled = false;
+      if (!mounted) return;
+      ref
+          .read(callSessionControllerProvider.notifier)
+          .revealIncomingCallSurface(
+            call.callId!,
+            call.offerId!,
+          );
+      setState(() => _flutterSurfaceRevealed = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final liveOffer = _hasLiveOffer;
+    if (liveOffer == null) return const _CallStartupPlaceholder();
+    if (!liveOffer) return widget.child;
+
+    final call = ref.watch(callSessionControllerProvider);
+    final launch = widget.initialLaunch!;
+    final matchesLaunch = call.lifecycle == CallLifecycle.incomingRinging &&
+        call.callId == launch.callId &&
+        call.offerId == launch.offerId;
+    if (matchesLaunch) {
+      _revealFlutterIncomingSurface(call);
+      return _flutterSurfaceRevealed
+          ? widget.child
+          : const _CallStartupPlaceholder();
+    }
+
+    // A cached session is allowed to fail local validation/logout normally;
+    // never hold the application behind a stale notification intent.
+    final auth = ref.watch(authSessionControllerProvider);
+    if (auth.bootstrapComplete && !auth.isAuthenticated) {
+      _allowNormalStartup();
+      return widget.child;
+    }
+    return const _CallStartupPlaceholder();
+  }
+}
+
+class _CallStartupPlaceholder extends StatelessWidget {
+  const _CallStartupPlaceholder();
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+        color: FlutterFlowTheme.of(context).primaryBackground,
+        child: const SizedBox.expand(),
       );
 }
 

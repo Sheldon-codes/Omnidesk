@@ -52,7 +52,9 @@ class CallLifecycleCoordinator {
     _tokenChanges = _fcm.tokenChanges.listen((_) {
       unawaited(_register());
     });
-    await _register();
+    // The native offer is durable and must win over normal startup work. In
+    // particular, do not put device registration or /calls/active ahead of a
+    // cold notification launch: either can delay the first incoming UI frame.
     await _drainNativeOffer();
     final action = await _native.takePendingAction();
     if (action?.type == NativeCallEventType.answer) {
@@ -60,7 +62,14 @@ class CallLifecycleCoordinator {
     } else if (action?.type == NativeCallEventType.decline) {
       await _controller().decline();
     }
-    await recover();
+    if (!_controller().hasActiveSession) {
+      await _register();
+      await recover();
+    } else {
+      // Registration remains best-effort and must not compete with accepting
+      // the live offer. It will retry from token/lifecycle refreshes.
+      unawaited(_register());
+    }
   }
 
   Future<void> updateAuth(AuthState auth) async {
@@ -168,12 +177,20 @@ class CallLifecycleCoordinator {
   Future<void> _drainNativeOffer() async {
     developer.log('Draining pending native incoming offer.',
         name: 'CallLifecycle');
+    final launch = await _native.takeInitialIncomingLaunch();
     final offer = await _native.takePendingOffer();
     developer.log(
       'Pending native offer ${offer == null ? "not found" : "found callId=${offer.callId}"}.',
       name: 'CallLifecycle',
     );
-    if (offer != null) await _onOffer(offer);
+    if (offer != null) {
+      await _onOffer(offer);
+      if (launch != null &&
+          launch.callId == offer.callId &&
+          launch.offerId == offer.offerId) {
+        _controller().revealIncomingCallSurface(offer.callId, offer.offerId);
+      }
+    }
   }
 
   Future<void> stop() async {
