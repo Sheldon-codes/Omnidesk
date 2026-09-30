@@ -402,6 +402,9 @@
         atLib: typeof window.Africastalking,
         hasClient: !!client,
         clientReady: clientReady,
+        // Boolean only: native code can distinguish an idle leaked lease from
+        // a bridge-owned call without receiving provider identifiers.
+        callAttached: pendingIncoming !== null || activeCallSid !== null,
         lastEvent: lastEvent,
         eventCount: eventCount,
         providerEventCount: providerEventCount,

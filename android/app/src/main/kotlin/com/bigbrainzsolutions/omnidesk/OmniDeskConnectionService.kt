@@ -29,13 +29,17 @@ class OmniDeskConnectionService : ConnectionService() {
         connectionManagerPhoneAccount: android.telecom.PhoneAccountHandle?,
         request: ConnectionRequest,
     ) {
-        OmniDeskTelecomManager.markFailed(this, request.extras?.getString(OmniDeskTelecomManager.extraCallId).orEmpty(), "telecom_outgoing_rejected")
+        OmniDeskTelecomManager.handleOutgoingConnectionFailed(
+            this,
+            request.extras ?: Bundle(),
+            "telecom_outgoing_rejected",
+        )
     }
 }
 
 class OmniDeskConnection(
     private val context: Context,
-    private val callId: String,
+    val identity: SystemCallIdentity,
     val incoming: Boolean,
 ) : Connection() {
     init {
@@ -43,15 +47,15 @@ class OmniDeskConnection(
     }
 
     override fun onAnswer() {
-        if (incoming) OmniDeskTelecomManager.answer(context, callId)
+        if (incoming) OmniDeskTelecomManager.answer(context, identity.systemCallId)
     }
 
     override fun onReject() {
-        if (incoming) OmniDeskTelecomManager.decline(context, callId)
+        if (incoming) OmniDeskTelecomManager.decline(context, identity.systemCallId)
     }
 
     override fun onDisconnect() {
-        OmniDeskTelecomManager.disconnect(context, callId)
+        OmniDeskTelecomManager.disconnect(context, identity.systemCallId)
     }
 
     override fun onHold() {

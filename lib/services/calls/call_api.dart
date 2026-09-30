@@ -14,6 +14,22 @@ enum CallApiErrorKind {
   server,
 }
 
+/// Non-blocking client-side milestones accepted by the mobile call handoff.
+/// These are telemetry only; they must never gate media setup or teardown.
+enum CallClientEvent {
+  standbyReused('standby_reused'),
+  freshConnection('fresh_connection'),
+  freshFallback('fresh_fallback'),
+  incoming('incoming'),
+  microphoneCaptureStarted('microphone_capture_started'),
+  microphoneCaptureReady('microphone_capture_ready'),
+  connected('connected'),
+  bridgeError('bridge_error');
+
+  const CallClientEvent(this.value);
+  final String value;
+}
+
 class CallApiException implements Exception {
   const CallApiException(this.kind, this.message, {this.statusCode});
   final CallApiErrorKind kind;
@@ -114,6 +130,12 @@ abstract class CallApi {
     required CallOfferId offerId,
     required String installationId,
   });
+  Future<void> reportClientEvent({
+    required CallId callId,
+    required CallOfferId offerId,
+    required String installationId,
+    required CallClientEvent event,
+  });
   Future<void> decline({
     required CallId callId,
     required CallOfferId offerId,
@@ -190,6 +212,19 @@ class RemoteCallApi implements CallApi {
         'installation_id': installationId,
         'offer_id': offerId,
         'transport': 'webrtc',
+      });
+
+  @override
+  Future<void> reportClientEvent({
+    required CallId callId,
+    required CallOfferId offerId,
+    required String installationId,
+    required CallClientEvent event,
+  }) =>
+      _post('/calls/$callId/client-event', {
+        'offer_id': offerId,
+        'installation_id': installationId,
+        'event': event.value,
       });
 
   @override

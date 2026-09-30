@@ -80,12 +80,46 @@ const String defaultBridgeRemoteUrl =
 // after a Telecom action. Twenty seconds proved too short on slower devices
 // and congested networks, but this must remain bounded: a permanently stuck
 // navigation must never leave an outgoing call "Connecting" forever.
-const Duration _remoteBridgeLoadTimeout = Duration(seconds: 35);
+// An incoming provider offer has a bounded lifetime. On Android a stalled
+// HTTPS navigation must fall back to the bundled shell before that offer
+// expires. Android WebView reports the bundled page as a secure context and
+// has already been validated with the AT engine. iOS retains its longer HTTPS
+// window because WebKit's local-asset microphone semantics differ.
+Duration get _remoteBridgeLoadTimeout =>
+    defaultTargetPlatform == TargetPlatform.android
+        ? const Duration(seconds: 8)
+        : const Duration(seconds: 35);
 const Duration _assetBridgeLoadTimeout = Duration(seconds: 20);
 const Duration _sdkInjectionTimeout = Duration(seconds: 12);
 const Duration _bridgeHandshakeTimeout = Duration(seconds: 8);
 const String _expectedBridgeVersion = '2.0.0';
 const String _expectedSdkVersion = '1.0.7';
+
+/// Android's bundled Flutter asset is a secure WebView context on supported
+/// Android System WebView builds, as verified by the bridge diagnostics. Keep
+/// the complete Android document/SDK/adapter triplet in the APK so a call is
+/// never coupled to the availability or deployment state of the hosted shell.
+/// iOS deliberately retains HTTPS until WebKit local-asset capture has been
+/// validated independently.
+bool get _usesBundledBridgeShell =>
+    defaultTargetPlatform == TargetPlatform.android;
+
+/// Sanitized bridge lifecycle information. This is intentionally separate
+/// from [CallMediaEvent]: diagnostics must not drive call state or rebuild the
+/// call UI, but they are useful for timing and provider failure analysis.
+class CallBridgeDiagnostic {
+  const CallBridgeDiagnostic({
+    required this.phase,
+    required this.level,
+    required this.timestamp,
+    this.details = const <String, Object?>{},
+  });
+
+  final String phase;
+  final String level;
+  final DateTime timestamp;
+  final Map<String, Object?> details;
+}
 
 /// Parses one bridge-protocol JSON message into a [CallMediaEvent].
 /// Unknown shapes and versions return null (treated as noise, never crash).
@@ -150,6 +184,7 @@ class WebViewCallMediaService implements CallMediaService {
 
   WebViewController? _controller;
   final _events = StreamController<CallMediaEvent>.broadcast();
+  final _diagnostics = StreamController<CallBridgeDiagnostic>.broadcast();
   StreamSubscription<DateTime>? _watchdog;
   DateTime? _lastHeartbeat;
   Completer<void>? _ready;
@@ -165,7 +200,12 @@ class WebViewCallMediaService implements CallMediaService {
   int _clientReservation = 0;
   String? _readyConfigKey;
   DateTime? _standbyCredentialExpiresAt;
+  String? _lastInitializationPath;
   Future<String>? _initialization;
+  // Auth/workspace refreshes may invalidate standby while the provider is
+  // still emitting its first `ready`. Clearing _sessionId mid-initialization
+  // falsely reports that a healthy engine was replaced.
+  bool _invalidateAfterInitialization = false;
   // Last-known bridge state for failure messages. Updated at every step so
   // a timeout names the actual stall point instead of a generic string.
   String _bridgeNote = 'engine never started';
@@ -196,6 +236,124 @@ class WebViewCallMediaService implements CallMediaService {
   bool get hasController => _controller != null;
 
   bool get isStandbyReady => _engineReady && !_clientInUse;
+
+  /// Reads only the bridge's boolean attachment state. An unreadable bridge is
+  /// unknown rather than idle: a new call must not tear down a possible
+  /// background call merely to recover a leaked local reservation.
+  Future<bool?> _bridgeHasAttachedCall() async {
+    final controller = _controller;
+    if (controller == null || !_pageLoaded) return null;
+    try {
+      final raw = await controller
+          .runJavaScriptReturningResult(
+            'window.OmniDesk && window.OmniDesk.call '
+            '? JSON.stringify(window.OmniDesk.call.status()) : ""',
+          )
+          .timeout(const Duration(milliseconds: 750));
+      final decoded = jsonDecode(normalizeJavaScriptStringResult(raw));
+      if (decoded is! Map || decoded['bridge'] != true) return null;
+      if (!decoded.containsKey('callAttached')) return null;
+      return decoded['callAttached'] == true;
+    } catch (error) {
+      _log('outbound admission bridge status unreadable: '
+          '${error.runtimeType}');
+      return null;
+    }
+  }
+
+  Future<void> _releaseMediaLease({required String reason}) async {
+    _stopWatchdog();
+    _cancelDialWatch(null);
+    try {
+      final controller = _controller;
+      if (controller != null) {
+        await controller
+            .runJavaScript('window.OmniDesk.call.hangup()')
+            .timeout(const Duration(milliseconds: 500));
+      }
+    } catch (_) {
+      // A reclaimed/navigated WebView must not poison subsequent calls.
+    }
+    _clientInUse = false;
+    _callSid = null;
+    _sessionId = null;
+    _log('media lease released reason=$reason');
+  }
+
+  @override
+  Future<void> prepareForNewOutboundCall() async {
+    final initialization = _initialization;
+    if (initialization != null) {
+      // An immediate second call commonly arrives while the previous call's
+      // post-terminal standby warmup is still connecting. Join that one
+      // generation rather than creating a second page navigation.
+      _log('outbound admission joining in-flight standby initialization');
+      try {
+        await initialization.timeout(const Duration(seconds: 12));
+      } on TimeoutException {
+        throw const MediaUnavailable(
+          'The call service is still preparing. Please try again in a moment.',
+        );
+      }
+    }
+    if (!_clientInUse) return;
+
+    final attached = await _bridgeHasAttachedCall();
+    if (attached == true) {
+      throw const MediaUnavailable(
+        'Another OmniDesk call is still active. End it before starting a new call.',
+      );
+    }
+    if (attached == null) {
+      throw const MediaUnavailable(
+        'The previous call is still closing. Please try again in a moment.',
+      );
+    }
+
+    // The bridge explicitly reports no attached call. Preserve the healthy
+    // standby client; initialize() will still run its normal health probe.
+    await _releaseMediaLease(reason: 'verified_idle_stale_reservation');
+  }
+
+  @override
+  Future<void> abandonMediaPreparation() =>
+      _releaseMediaLease(reason: 'setup_terminated_before_session_id');
+
+  /// Connection path used by the most recent initialization. It is consumed
+  /// by call telemetry, never by the UI state machine.
+  String? get lastInitializationPath => _lastInitializationPath;
+
+  Stream<CallBridgeDiagnostic> get diagnostics => _diagnostics.stream;
+
+  /// Invalidates an idle client after auth/workspace/network changes. Active
+  /// calls are deliberately untouched; terminal teardown owns those.
+  Future<void> invalidateStandby() async {
+    if (_clientInUse) return;
+    if (_initialization != null) {
+      _invalidateAfterInitialization = true;
+      _log('standby invalidation deferred until initialization is idle');
+      return;
+    }
+    await _clearIdleStandby(reason: 'auth/workspace/network invalidation');
+  }
+
+  Future<void> _clearIdleStandby({required String reason}) async {
+    if (_clientInUse) return;
+    _engineReady = false;
+    _readyConfigKey = null;
+    _standbyCredentialExpiresAt = null;
+    _lastInitializationPath = null;
+    _bridgePrimed = false;
+    _lastHeartbeat = null;
+    _sessionId = null;
+    _callSid = null;
+    try {
+      await _controller?.runJavaScript('window.OmniDesk.call.hangup()');
+    } catch (_) {
+      // The page may already have been reclaimed by the platform.
+    }
+    _log('standby invalidated reason=$reason');
+  }
 
   /// The host widget calls this exactly once with the live controller.
   void attachController(WebViewController controller) {
@@ -240,7 +398,25 @@ class WebViewCallMediaService implements CallMediaService {
     try {
       await waitForController();
       final controller = _requireController();
+      // Page navigation destroys the JavaScript heap. A rebuilt hidden host
+      // must never replace a client which is currently initializing or in a
+      // real call; warmup is optional while that work is authoritative.
+      if (_initialization != null || _clientInUse) {
+        _log(
+            'bridge prewarm deferred: initialization=${_initialization != null} '
+            'clientInUse=$_clientInUse');
+        return;
+      }
       if (_bridgePrimed && _pageLoaded) return;
+      // A document navigation destroys an otherwise reusable registered AT
+      // client. Do not reload merely because a lifecycle callback asked for
+      // prewarm again; the normal initialize path will perform its own health
+      // check before claiming this standby client for a call.
+      if (_engineReady && _pageLoaded && await _isHealthyStandby(controller)) {
+        _log('bridge prewarm skipped; healthy standby owns '
+            'generation=$_bridgeGeneration');
+        return;
+      }
       final generation = _bridgeGeneration + 1;
       await _reloadBridgePage(controller);
       if (!_bridgeIsBeingConsumed && _bridgeGeneration == generation) {
@@ -258,6 +434,11 @@ class WebViewCallMediaService implements CallMediaService {
     WebViewController controller, {
     bool forceAsset = false,
   }) async {
+    if (_usesBundledBridgeShell) {
+      _log('loading bridge from bundled Flutter assets (Android primary)');
+      await controller.loadFlutterAsset('assets/html/at_call_bridge.html');
+      return;
+    }
     final configured = dotenv.env['AT_BRIDGE_URL'] ?? defaultBridgeRemoteUrl;
     final bridgeTarget = resolveBridgeOrigin(configured);
     if (!forceAsset &&
@@ -276,7 +457,7 @@ class WebViewCallMediaService implements CallMediaService {
         _log('remote bridge load failed ($error), falling back to asset');
       }
     }
-    _log('loading bridge from bundled Flutter asset');
+    _log('loading bridge from bundled Flutter asset fallback');
     await controller.loadFlutterAsset('assets/html/at_call_bridge.html');
   }
 
@@ -292,15 +473,29 @@ class WebViewCallMediaService implements CallMediaService {
     final active = _bridgeLoad;
     if (active != null) return active;
     final generation = ++_bridgeGeneration;
+    // A document navigation destroys the JavaScript heap.  Never retain a
+    // ready/configured standby claim across that boundary: doing so makes the
+    // Dart side believe it can reuse a client that only existed in the
+    // previous WebView generation, then silently falls back to a full init
+    // during the next call.
+    if (!_clientInUse) {
+      _engineReady = false;
+      _readyConfigKey = null;
+      _standbyCredentialExpiresAt = null;
+      _lastHeartbeat = null;
+      _sessionId = null;
+      _callSid = null;
+    }
     final ready = Completer<void>();
     _pageLoaded = false;
     _pageReady = ready;
     _log('bridge navigation started generation=$generation');
     final load = () async {
       try {
+        final usesAssetShell = forceAsset || _usesBundledBridgeShell;
         await _loadBridgePage(controller, forceAsset: forceAsset);
         await ready.future.timeout(
-          forceAsset ? _assetBridgeLoadTimeout : _remoteBridgeLoadTimeout,
+          usesAssetShell ? _assetBridgeLoadTimeout : _remoteBridgeLoadTimeout,
           onTimeout: () => throw const MediaUnavailable(
             'The hidden call engine page did not finish loading.',
           ),
@@ -374,6 +569,10 @@ class WebViewCallMediaService implements CallMediaService {
   /// bundled asset replaces that navigation and gives the app a deterministic
   /// local recovery path. We intentionally do not retry forever.
   Future<void> _reloadBridgeForCall(WebViewController controller) async {
+    if (_usesBundledBridgeShell) {
+      await _reloadBridgePage(controller, forceAsset: true);
+      return;
+    }
     try {
       await _reloadBridgePage(controller);
     } on MediaUnavailable catch (error) {
@@ -455,7 +654,14 @@ class WebViewCallMediaService implements CallMediaService {
       if (_clientReservation == reservationAtStart) {
         _clientInUse = false;
         _callSid = null;
-        _log('AT client entered standby-ready state');
+        if (_invalidateAfterInitialization) {
+          _invalidateAfterInitialization = false;
+          await _clearIdleStandby(
+            reason: 'deferred auth/workspace invalidation after prewarm',
+          );
+        } else {
+          _log('AT client entered standby-ready state');
+        }
       } else {
         _log('AT standby prewarm was claimed by an active call');
       }
@@ -506,11 +712,13 @@ class WebViewCallMediaService implements CallMediaService {
       _readyConfigKey = null;
       _standbyCredentialExpiresAt = null;
       _bridgePrimed = false;
-      return _initialize(
+      final session = await _initialize(
         config,
         incomingCallId: incomingCallId,
         forceFresh: true,
       );
+      _lastInitializationPath = 'fresh_fallback';
+      return session;
     }
   }
 
@@ -549,6 +757,7 @@ class WebViewCallMediaService implements CallMediaService {
         'standbyCredentialFresh=$standbyCredentialFresh '
         'sameClientIdentity=$sameClientIdentity');
     if (mayReuseStandby && await _isHealthyStandby(controller)) {
+      _lastInitializationPath = 'standby_reused';
       _sessionId = newSessionId;
       _callSid = null;
       final prepared = normalizeJavaScriptStringResult(
@@ -568,6 +777,7 @@ class WebViewCallMediaService implements CallMediaService {
       _standbyCredentialExpiresAt = null;
     }
     _callSid = null;
+    _lastInitializationPath = 'fresh_connection';
     _ready = Completer<void>();
     _consoleTail.clear();
     _diagnosticTail.clear();
@@ -664,6 +874,14 @@ class WebViewCallMediaService implements CallMediaService {
           );
         },
       );
+      // If this value changed, another owner navigated/recreated the hidden
+      // WebView while this init awaited the provider. Fail into the existing
+      // one-fresh-client fallback instead of returning a null/stale session.
+      if (_sessionId != newSessionId) {
+        throw const MediaUnavailable(
+          'The hidden call engine was replaced while preparing media.',
+        );
+      }
       _engineReady = true;
       _clientInUse = true;
       _readyConfigKey = configKey;
@@ -678,7 +896,13 @@ class WebViewCallMediaService implements CallMediaService {
     } finally {
       _ready = null;
     }
-    return _sessionId!;
+    final completedSessionId = _sessionId;
+    if (completedSessionId == null || completedSessionId != newSessionId) {
+      throw const MediaUnavailable(
+        'The hidden call engine lost its media session during setup.',
+      );
+    }
+    return completedSessionId;
   }
 
   /// The provider can rotate capability tokens on each read of media-config.
@@ -700,21 +924,71 @@ class WebViewCallMediaService implements CallMediaService {
 
   Future<bool> _isHealthyStandby(WebViewController controller) async {
     try {
+      // This status call is intentionally the liveness probe.  The bridge
+      // stops its periodic heartbeat when a call is torn down, so heartbeat
+      // age alone cannot distinguish a healthy idle AT registration from a
+      // reclaimed WebView.  In particular, rejecting a client after 15s of
+      // idle time made every later inbound call rebuild the document and lose
+      // the very standby connection it was meant to reuse.
       final result = await controller
           .runJavaScriptReturningResult(
-            'window.OmniDesk && window.OmniDesk.call && '
-            'window.OmniDesk.call.status().clientReady ? "ready" : "notready"',
+            'window.OmniDesk && window.OmniDesk.call '
+            '? JSON.stringify(window.OmniDesk.call.status()) : "{}"',
           )
           .timeout(const Duration(seconds: 3));
-      return normalizeJavaScriptStringResult(result) == 'ready';
-    } catch (_) {
+      final decoded = jsonDecode(normalizeJavaScriptStringResult(result));
+      if (decoded is! Map || decoded['clientReady'] != true) {
+        _log(
+            'standby health check failed: clientReady=${decoded is Map ? decoded['clientReady'] : 'unavailable'}');
+        return false;
+      }
+      final lastEvent = '${decoded['lastEvent'] ?? ''}'.toLowerCase();
+      if (const {'offline', 'error', 'notready', 'closed'}
+          .contains(lastEvent)) {
+        _log('standby health check failed: lastEvent=$lastEvent');
+        return false;
+      }
+      final heartbeat = _lastHeartbeat;
+      if (heartbeat != null) {
+        final heartbeatAge = DateTime.now().difference(heartbeat);
+        if (heartbeatAge >= const Duration(seconds: 15)) {
+          // Soft signal only. A successful status probe above proves the
+          // current WebView generation is still responsive. Keep the warm AT
+          // client and make the age observable for later performance work.
+          _log('standby heartbeat stale but status probe passed '
+              'heartbeatAgeMs=${heartbeatAge.inMilliseconds}');
+        }
+      }
+      return true;
+    } catch (error) {
+      _log('standby health check failed: ${error.runtimeType}');
       return false;
     }
   }
 
-  Future<void> _ensureMicrophonePermission() async {
+  /// Requests the OS permission without opening a WebRTC capture stream.
+  /// Call this from an explicit calling-availability action, not idle
+  /// prewarming. The bridge still receives a platform permission grant during
+  /// the real capture request.
+  Future<bool> requestMicrophonePermission() async {
     final microphone = await Permission.microphone.request();
-    if (!microphone.isGranted) {
+    return microphone.isGranted;
+  }
+
+  /// Bluetooth route discovery on Android 12+ is guarded by a runtime
+  /// permission even though the app can still call through earpiece/speaker.
+  /// This remains best-effort: declining it must never block call setup.
+  Future<void> requestBluetoothRoutePermission() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final permission = Permission.bluetoothConnect;
+    final status = await permission.status;
+    if (!status.isGranted && !status.isPermanentlyDenied) {
+      await permission.request();
+    }
+  }
+
+  Future<void> _ensureMicrophonePermission() async {
+    if (!await requestMicrophonePermission()) {
       throw const MediaUnavailable(
         'Microphone access is required to place calls.',
       );
@@ -805,15 +1079,7 @@ class WebViewCallMediaService implements CallMediaService {
 
   @override
   Future<void> endMedia(String mediaSessionId) async {
-    _stopWatchdog();
-    _cancelDialWatch(null);
-    try {
-      await _controller?.runJavaScript('window.OmniDesk.call.hangup()');
-    } catch (_) {
-      // Hangup is best-effort; the page may already be gone.
-    }
-    _clientInUse = false;
-    _callSid = null;
+    await _releaseMediaLease(reason: 'terminal_media_end');
   }
 
   @override
@@ -894,6 +1160,43 @@ class WebViewCallMediaService implements CallMediaService {
       }
       _bridgeNote = 'bridge phase: $phase';
       _log('bridge diagnostic $line');
+      final safeDetails = <String, Object?>{};
+      if (details is Map) {
+        for (final entry in details.entries) {
+          final key = entry.key.toString();
+          if (const {
+            'eventName',
+            'providerEventCount',
+            'secureContext',
+            'visibility',
+            'hidden',
+            'focused',
+            'hasMediaDevices',
+            'hasGetUserMedia',
+            'hasPeerConnection',
+            'audioTrackCount',
+            'trackState',
+            'trackEnabled',
+            'trackMuted',
+            'errorName',
+            'required',
+          }.contains(key)) {
+            final value = entry.value;
+            if (value is String ||
+                value is num ||
+                value is bool ||
+                value == null) {
+              safeDetails[key] = value;
+            }
+          }
+        }
+      }
+      _diagnostics.add(CallBridgeDiagnostic(
+        phase: phase,
+        level: level,
+        timestamp: DateTime.now().toUtc(),
+        details: safeDetails,
+      ));
       return;
     }
     final event = parseBridgeEvent(decoded, callSid: _callSid);
@@ -976,6 +1279,7 @@ class WebViewCallMediaService implements CallMediaService {
     _stopWatchdog();
     _cancelDialWatch(null);
     await _events.close();
+    await _diagnostics.close();
   }
 }
 

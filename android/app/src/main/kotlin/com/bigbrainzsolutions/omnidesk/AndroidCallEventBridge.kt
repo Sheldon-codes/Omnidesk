@@ -30,23 +30,21 @@ object AndroidCallEventBridge {
     fun emitIncomingPresented(callId: String) = emit("incomingPresented", mapOf("callId" to callId))
     fun emitIncomingOpened(callId: String) = emit("incomingOpened", mapOf("callId" to callId))
     /**
-     * Outbound calls have no canonical backend call_id.  Their durable
-     * identity is the provider call_sid, so keep that distinction across the
-     * Flutter boundary instead of labelling it as a callId.
+     * A backend call ID and the provider call SID are distinct identifiers.
+     * Outbound calls receive both from /calls/initiate, and both must survive
+     * the native boundary: Telecom tracks the former while backend completion
+     * is keyed by the latter.
      */
-    fun emitOutgoingDialing(callSid: String) = emit("outgoingDialing", mapOf("callSid" to callSid))
-    fun emitActive(identity: String, outbound: Boolean = false) = emit(
-        "active",
-        if (outbound) mapOf("callSid" to identity) else mapOf("callId" to identity),
+    fun emitOutgoingDialing(identity: SystemCallIdentity) = emit(
+        "outgoingDialing",
+        identity.toFlutterMap(),
     )
+
+    fun emitActive(identity: SystemCallIdentity) = emit("active", identity.toFlutterMap())
     fun emitDisconnected(callId: String, reason: String) = emit("disconnected", mapOf("callId" to callId, "reason" to reason))
-    fun emitFailed(identity: String, reason: String?, outbound: Boolean = false) = emit(
+    fun emitFailed(identity: SystemCallIdentity, reason: String?) = emit(
         "failed",
-        if (outbound) {
-            mapOf("callSid" to identity, "reason" to reason)
-        } else {
-            mapOf("callId" to identity, "reason" to reason)
-        },
+        identity.toFlutterMap() + mapOf("reason" to reason),
     )
     fun emitAction(action: String, callId: String, reason: String? = null) =
         emit(action, mapOf("callId" to callId, "reason" to reason))

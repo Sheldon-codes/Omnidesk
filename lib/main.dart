@@ -85,6 +85,12 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
         if (next.isAuthenticated) {
           ref.read(homeDashboardProvider.notifier).startHeartbeat();
           ref.read(agentCountersProvider.notifier).setAppActive(true);
+          // Revalidate/rebuild an idle WebRTC standby client after auth or
+          // workspace changes. The controller is single-flight and will not
+          // touch an active call.
+          unawaited(
+            ref.read(callSessionControllerProvider.notifier).prewarmMedia(),
+          );
           unawaited(
             ref.read(callLifecycleCoordinatorProvider).updateAuth(next),
           );
@@ -170,6 +176,9 @@ class _OmnideskAgentAppState extends ConsumerState<OmnideskAgentApp>
       }
       if (ref.read(authSessionControllerProvider).isAuthenticated) {
         ref.read(homeDashboardProvider.notifier).startHeartbeat();
+        unawaited(
+          ref.read(callSessionControllerProvider.notifier).prewarmMedia(),
+        );
         if (!hasLocalCall) {
           unawaited(ref.read(callLifecycleCoordinatorProvider).recover());
         }

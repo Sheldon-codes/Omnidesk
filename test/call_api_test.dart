@@ -147,6 +147,12 @@ void main() {
         callId: 'call-1', offerId: 'offer-1', installationId: 'install-1');
     await calls.mediaReady(
         callId: 'call-1', offerId: 'offer-1', installationId: 'install-1');
+    await calls.reportClientEvent(
+      callId: 'call-1',
+      offerId: 'offer-1',
+      installationId: 'install-1',
+      event: CallClientEvent.microphoneCaptureReady,
+    );
     await calls.decline(
       callId: 'call-1',
       offerId: 'offer-1',
@@ -169,6 +175,7 @@ void main() {
           '/calls/call-1/delivery-ack',
           '/calls/call-1/accept',
           '/calls/call-1/media-ready',
+          '/calls/call-1/client-event',
           '/calls/call-1/decline',
           '/calls/call-1/end',
           '/calls/complete',
@@ -176,10 +183,15 @@ void main() {
         ]));
     expect(adapter.requests[2].data,
         {'installation_id': 'install-1', 'offer_id': 'offer-1'});
+    expect(adapter.requests[4].data, {
+      'offer_id': 'offer-1',
+      'installation_id': 'install-1',
+      'event': 'microphone_capture_ready',
+    });
     expect(outbound.callSid, 'AT-call-sess-initiated');
     expect(adapter.requests.last.data,
         {'to_number': '+254712345678', 'ticket_id': 14});
-    expect(adapter.requests[6].data,
+    expect(adapter.requests[7].data,
         {'call_sid': 'AT-call-sess-initiated', 'duration': 18});
   });
 

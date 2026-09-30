@@ -8,6 +8,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../models/auth/auth_models.dart';
 import '../../services/auth_session_controller.dart';
+import '../../services/calls/webview_call_media_service.dart';
 import 'profile_page_model.dart';
 
 export 'profile_page_model.dart';
@@ -80,9 +81,8 @@ class ProfilePageWidget extends ConsumerWidget {
                         value: presence.receiveIncomingCalls,
                         enabled: !presence.isSaving,
                         theme: theme,
-                        onChanged: (enabled) => ref
-                            .read(agentPresenceProvider.notifier)
-                            .setReceiveIncomingCalls(enabled),
+                        onChanged: (enabled) =>
+                            _setReceiveIncomingCalls(context, ref, enabled),
                       ),
                     ],
                   ),
@@ -173,6 +173,33 @@ class ProfilePageWidget extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _setReceiveIncomingCalls(
+    BuildContext context,
+    WidgetRef ref,
+    bool enabled,
+  ) async {
+    if (enabled) {
+      final media = ref.read(webViewCallMediaServiceProvider);
+      final granted = await media.requestMicrophonePermission();
+      if (!granted) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Microphone access is required to receive calls.'),
+            ),
+          );
+        }
+        return;
+      }
+      // Optional and non-blocking. Android requires a separate runtime grant
+      // before Telecom/WebView can enumerate or select Bluetooth call routes.
+      await media.requestBluetoothRoutePermission();
+    }
+    await ref
+        .read(agentPresenceProvider.notifier)
+        .setReceiveIncomingCalls(enabled);
   }
 
   Future<void> _showAvailabilitySheet(BuildContext context) {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'dart:developer' as developer;
 
@@ -115,10 +116,27 @@ class DeviceRegistry {
   final FcmService _fcm;
   final NativeCallService _native;
   String? _registeredFingerprint;
+  Future<void>? _registrationInFlight;
 
   Future<String> installationId() => _installation.getOrCreateInstallationId();
 
-  Future<void> register() async {
+  Future<void> register() {
+    // Both app bootstrap and token/lifecycle listeners may request device
+    // registration during the same frame. Keep one backend write in flight;
+    // the completed fingerprint below still makes future calls a no-op.
+    final inFlight = _registrationInFlight;
+    if (inFlight != null) return inFlight;
+    late final Future<void> request;
+    request = _register().whenComplete(() {
+      if (identical(_registrationInFlight, request)) {
+        _registrationInFlight = null;
+      }
+    });
+    _registrationInFlight = request;
+    return request;
+  }
+
+  Future<void> _register() async {
     final id = await installationId();
     // Android owns `MESSAGING_EVENT` natively so Firebase's Flutter plugin
     // is not guaranteed to receive every token callback. The native service

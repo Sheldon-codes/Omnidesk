@@ -1,13 +1,9 @@
 import 'dart:async';
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import 'call_models.dart';
-import 'deprecated_baresip_media_bridge.dart';
 
-/// Media-engine events. Deliberately transport-agnostic: the session
-/// controller drives the same state machine whether audio flows through
-/// Baresip SIP or a hidden WebView AT client.
+/// Media-engine events. The controller owns the platform-neutral lifecycle;
+/// production audio flows through the hidden Africa's Talking WebView client.
 enum CallMediaEventType {
   /// Engine initialized and ready (SIP registered / WebRTC client connected).
   ready,
@@ -48,11 +44,21 @@ class MediaUnavailable implements Exception {
 
 /// Transport-agnostic voice media boundary.
 ///
-/// The hidden-WebView AT client implements this in production. The deprecated
-/// Baresip compatibility adapter remains temporarily unselected until its
-/// native build artifacts are removed in a dedicated cleanup change.
+/// The hidden-WebView Africa's Talking client is the only production media
+/// implementation. It remains transport-neutral so a future supported engine
+/// can implement this contract without changing the call state machine.
 abstract class CallMediaService {
   Stream<CallMediaEvent> get events;
+
+  /// Performs a bounded, local-only admission check before a new outbound
+  /// backend-call record is created. Stateful engines can release a verified
+  /// idle stale reservation here. They must never tear down an unknown call.
+  Future<void> prepareForNewOutboundCall() async {}
+
+  /// Releases setup state when an attempt ends before [initialize] returns a
+  /// media-session ID. This prevents a leaked engine reservation from
+  /// blocking the next call.
+  Future<void> abandonMediaPreparation() async {}
 
   /// Prepares the engine for a call (SIP REGISTER / WebRTC client connect).
   /// Completes with an opaque media session ID when the engine reports ready.
@@ -80,152 +86,3 @@ abstract class CallMediaService {
   Future<void> sendDtmf(String digit);
   Future<void> dispose();
 }
-
-/// Deprecated SIP compatibility path. It is never selected in production.
-@Deprecated('Baresip is deprecated and unreachable in production.')
-class BaresipCallMediaService implements CallMediaService {
-  BaresipCallMediaService({required DeprecatedBaresipMediaBridge bridge})
-      : _bridge = bridge {
-    _nativeSub = bridge.events.listen(_onNativeEvent);
-  }
-
-  final DeprecatedBaresipMediaBridge _bridge;
-  final _events = StreamController<CallMediaEvent>.broadcast();
-  StreamSubscription<DeprecatedBaresipMediaEvent>? _nativeSub;
-  Completer<void>? _ready;
-  String? _sessionId;
-  CallMediaConfig? _config;
-  bool _disposed = false;
-
-  @override
-  Stream<CallMediaEvent> get events => _events.stream;
-
-  @override
-  Future<String> initialize(CallMediaConfig config,
-      {CallId? incomingCallId}) async {
-    _config = config;
-    _ready = Completer<void>();
-    final sessionId = await _bridge.ensureRegistered(
-      config,
-      incomingCallId: incomingCallId,
-    );
-    _sessionId = sessionId;
-    try {
-      await _ready!.future.timeout(
-        const Duration(seconds: 12),
-        onTimeout: () => throw TimeoutException(
-          'The SIP service did not confirm registration in time.',
-        ),
-      );
-    } finally {
-      _ready = null;
-    }
-    return sessionId;
-  }
-
-  @override
-  Future<String> dial({
-    required String callSid,
-    required String phoneNumber,
-    String? sipTargetUri,
-  }) {
-    final config = _config;
-    final target = sipTargetUri ??
-        (config == null
-            ? null
-            : _outboundTargetUri(phoneNumber, config.sipDomain));
-    if (target == null || target.isEmpty) {
-      throw const MediaUnavailable('A valid SIP call target is required.');
-    }
-    return _bridge
-        .startOutgoingMedia(callSid: callSid, targetSipUri: target)
-        .then((sessionId) {
-      // The controller correlates by callSid; Baresip reports the same
-      // session the registration produced, so keep the original ID.
-      return _sessionId ?? sessionId;
-    });
-  }
-
-  @override
-  Future<void> answerIncoming({required String callSid}) async {
-    // The provider bridges audio to the registered SIP contact after
-    // /media-ready; no explicit SIP answer step exists on this path.
-  }
-
-  @override
-  Future<void> endMedia(String mediaSessionId) =>
-      _bridge.endMedia(mediaSessionId);
-
-  @override
-  Future<void> setMuted(bool enabled) => _bridge.setMuted(enabled);
-
-  @override
-  Future<void> setHeld(bool enabled) => _bridge.setHeld(enabled);
-
-  @override
-  Future<void> sendDtmf(String digit) => _bridge.sendDtmf(digit);
-
-  void _completeReady() {
-    final ready = _ready;
-    if (ready != null && !ready.isCompleted) ready.complete();
-  }
-
-  void _onNativeEvent(DeprecatedBaresipMediaEvent event) {
-    if (_disposed) return;
-    switch (event.type) {
-      case DeprecatedBaresipMediaEventType.registered:
-        _completeReady();
-        _events.add(const CallMediaEvent(type: CallMediaEventType.ready));
-      case DeprecatedBaresipMediaEventType.ringing:
-        _events.add(const CallMediaEvent(type: CallMediaEventType.ringing));
-      case DeprecatedBaresipMediaEventType.connected:
-        // Connected implies a usable engine (media already flowing), so it
-        // also satisfies a pending initialize — the inbound path never emits
-        // a separate `registered` event.
-        _completeReady();
-        _events.add(const CallMediaEvent(type: CallMediaEventType.connected));
-      case DeprecatedBaresipMediaEventType.held:
-        _events.add(const CallMediaEvent(type: CallMediaEventType.held));
-      case DeprecatedBaresipMediaEventType.disconnected:
-        _events.add(const CallMediaEvent(type: CallMediaEventType.ended));
-      case DeprecatedBaresipMediaEventType.failed:
-        final ready = _ready;
-        if (ready != null && !ready.isCompleted) {
-          ready.completeError(MediaUnavailable(
-            event.reason ?? 'SIP registration failed.',
-          ));
-        }
-        _events.add(CallMediaEvent(
-          type: CallMediaEventType.error,
-          reason: event.reason,
-        ));
-    }
-  }
-
-  String _outboundTargetUri(String number, String domain) {
-    final normalized = number.trim().replaceAll(RegExp(r'[^0-9+]'), '');
-    if (normalized.isEmpty || domain.trim().isEmpty) {
-      throw const MediaUnavailable(
-        'A valid phone number and SIP domain are required.',
-      );
-    }
-    return 'sip:$normalized@${domain.trim()}';
-  }
-
-  @override
-  Future<void> dispose() async {
-    _disposed = true;
-    await _nativeSub?.cancel();
-    await _events.close();
-  }
-}
-
-final baresipCallMediaServiceProvider = Provider<BaresipCallMediaService>(
-  (ref) {
-    final service = BaresipCallMediaService(
-      bridge: ref.read(deprecatedBaresipMediaBridgeProvider),
-    );
-    ref.onDispose(() => unawaited(service.dispose()));
-    return service;
-  },
-);

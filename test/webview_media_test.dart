@@ -1,11 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omnidesk_agent/services/calls/call_media_provider.dart';
 import 'package:omnidesk_agent/services/calls/call_media_service.dart';
 import 'package:omnidesk_agent/services/calls/call_models.dart';
-import 'package:omnidesk_agent/services/calls/deprecated_baresip_media_bridge.dart';
 import 'package:omnidesk_agent/services/calls/webview_call_media_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -31,41 +28,6 @@ Map<String, dynamic> _dualBlockConfig() => {
       },
       'capabilities': {'hold': true, 'dtmf': true, 'native_incoming': true},
     };
-
-class _FakeBaresipBridge implements DeprecatedBaresipMediaBridge {
-  final _events = StreamController<DeprecatedBaresipMediaEvent>.broadcast();
-  final calls = <String>[];
-  Map<String, Object?>? lastArgs;
-
-  @override
-  Stream<DeprecatedBaresipMediaEvent> get events => _events.stream;
-  @override
-  Future<String> ensureRegistered(CallMediaConfig config,
-      {CallId? incomingCallId}) async {
-    calls.add('ensureRegistered');
-    return 'media-1';
-  }
-
-  @override
-  Future<String> startOutgoingMedia(
-      {required String callSid, required String targetSipUri}) async {
-    calls.add('startOutgoingMedia:$targetSipUri');
-    lastArgs = {'callSid': callSid, 'targetSipUri': targetSipUri};
-    return 'media-1';
-  }
-
-  @override
-  Future<void> endMedia(String mediaSessionId) async {}
-  @override
-  Future<void> setMuted(bool enabled) async {}
-  @override
-  @override
-  Future<void> setHeld(bool enabled) async {}
-  @override
-  Future<void> sendDtmf(String digit) async {}
-
-  void emit(DeprecatedBaresipMediaEvent event) => _events.add(event);
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -148,51 +110,6 @@ void main() {
     ]);
   });
 
-  test('baresip media service preserves register-then-dial flow', () async {
-    final fake = _FakeBaresipBridge();
-    final service = BaresipCallMediaService(bridge: fake);
-    final config = CallMediaConfig.fromJson(_dualBlockConfig());
-
-    final init = service.initialize(config);
-    await Future<void>.delayed(Duration.zero);
-    fake.emit(const DeprecatedBaresipMediaEvent(
-      type: DeprecatedBaresipMediaEventType.registered,
-      mediaSessionId: 'media-1',
-    ));
-    expect(await init, 'media-1');
-
-    final session = await service.dial(
-      callSid: 'CA1',
-      phoneNumber: '+254700000001',
-      sipTargetUri: 'sip:+254700000001@ke.sip.example.test',
-    );
-    expect(session, 'media-1');
-    expect(fake.lastArgs?['callSid'], 'CA1');
-    expect(
-      fake.calls,
-      [
-        'ensureRegistered',
-        'startOutgoingMedia:sip:+254700000001@ke.sip.example.test'
-      ],
-    );
-    await service.dispose();
-  });
-
-  test('baresip media service surfaces registration failure', () async {
-    final fake = _FakeBaresipBridge();
-    final service = BaresipCallMediaService(bridge: fake);
-    final init =
-        service.initialize(CallMediaConfig.fromJson(_dualBlockConfig()));
-    await Future<void>.delayed(Duration.zero);
-    fake.emit(const DeprecatedBaresipMediaEvent(
-      type: DeprecatedBaresipMediaEventType.failed,
-      mediaSessionId: 'media-1',
-      reason: 'nope',
-    ));
-    await expectLater(init, throwsA(isA<MediaUnavailable>()));
-    await service.dispose();
-  });
-
   test('re-init settle delay honors the 5s gateway cooldown', () {
     expect(
       settleDelaySince(null, DateTime(2026, 9, 18, 12)),
@@ -234,7 +151,7 @@ void main() {
 
   test('engine follows the backend-declared transport', () {
     // The Sept 2026 backend returns transport "webrtc" with no sip block:
-    // that must route to the hidden WebView engine, never Baresip.
+    // that must route to the hidden WebView engine.
     final webrtcOnly = CallMediaConfig.fromJson({
       'provider': 'africas_talking',
       'transport': 'webrtc',

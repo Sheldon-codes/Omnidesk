@@ -20,12 +20,15 @@ import java.util.concurrent.ConcurrentHashMap
 /** Android system-call ownership; it deliberately has no WebRTC or API code. */
 object OmniDeskTelecomManager {
     const val extraCallId = "com.bigbrainzsolutions.omnidesk.CALL_ID"
+    const val extraCallSid = "com.bigbrainzsolutions.omnidesk.CALL_SID"
     const val extraOfferId = "com.bigbrainzsolutions.omnidesk.OFFER_ID"
     const val extraCallerName = "com.bigbrainzsolutions.omnidesk.CALLER_NAME"
     const val extraCallerNumber = "com.bigbrainzsolutions.omnidesk.CALLER_NUMBER"
     private const val accountId = "omnidesk_self_managed"
     private const val logTag = "OmniDeskTelecom"
     private val connections = ConcurrentHashMap<String, OmniDeskConnection>()
+    private val pendingOutgoingLock = Any()
+    private var pendingOutgoing: SystemCallIdentity? = null
 
     data class PresentationReceipt(val receivedAt: String, val nativePresentedAt: String) {
         fun toMap() = mapOf("receivedAt" to receivedAt, "nativePresentedAt" to nativePresentedAt)
@@ -109,7 +112,11 @@ object OmniDeskTelecomManager {
     fun createIncomingConnection(context: Context, extras: Bundle): Connection {
         val callId = extras.getString(extraCallId).orEmpty()
         val offerId = extras.getString(extraOfferId).orEmpty()
-        val connection = OmniDeskConnection(context, callId, true)
+        val connection = OmniDeskConnection(
+            context,
+            SystemCallIdentity(callId = callId, callSid = null),
+            true,
+        )
         // A cancellation can race Telecom's asynchronous ConnectionService
         // callback. Never resurrect a cancelled offer into a fresh ringing
         // system connection.
@@ -133,34 +140,66 @@ object OmniDeskTelecomManager {
     }
 
     fun createOutgoingConnection(context: Context, extras: Bundle): Connection {
-        val callId = extras.getString(extraCallId).orEmpty()
-        logTrackedConnections("createOutgoingConnection callId=$callId")
-        val connection = OmniDeskConnection(context, callId, false)
-        connections[callId] = connection
+        // Several OEM Telecom implementations omit app-defined extras from
+        // the outgoing ConnectionRequest. Claim the identity reserved before
+        // placeCall() instead of creating an untrackable empty-key connection.
+        val identity = identityFromExtras(extras).takeIf { it.systemCallId.isNotBlank() }
+            ?: claimPendingOutgoing()
+            ?: SystemCallIdentity(callId = "", callSid = null)
+        logTrackedConnections("createOutgoingConnection callId=${identity.callId}")
+        val connection = OmniDeskConnection(context, identity, false)
+        if (identity.systemCallId.isNotBlank()) {
+            connections[identity.systemCallId] = connection
+            clearPendingOutgoing(identity.systemCallId)
+        } else {
+            Log.e(logTag, "Outgoing Telecom connection arrived without a reserved identity")
+        }
         connection.setConnectionProperties(Connection.PROPERTY_SELF_MANAGED)
+        connection.setAddress(
+            Uri.fromParts("tel", identity.phoneNumber, null),
+            TelecomManager.PRESENTATION_ALLOWED,
+        )
+        connection.setCallerDisplayName(
+            identity.displayName.ifBlank { identity.phoneNumber },
+            TelecomManager.PRESENTATION_ALLOWED,
+        )
         connection.setDialing()
         return connection
     }
 
     fun beginOutgoing(context: Context, values: Map<String, String>) {
-        val callId = values["callId"].orEmpty().ifBlank { values["callSid"].orEmpty() }
-        require(callId.isNotBlank()) { "Missing outbound call identity" }
-        logTrackedConnections("beginOutgoing callId=$callId")
+        val identity = SystemCallIdentity(
+            callId = values["callId"].orEmpty(),
+            callSid = values["callSid"].orEmpty().ifBlank { null },
+            displayName = values["displayName"].orEmpty(),
+            phoneNumber = values["phoneNumber"].orEmpty(),
+        )
+        require(identity.systemCallId.isNotBlank()) { "Missing outbound call identity" }
+        reservePendingOutgoing(identity)
+        logTrackedConnections("beginOutgoing callId=${identity.callId}")
         ensurePhoneAccount(context)
         val extras = Bundle().apply {
-            putString(extraCallId, callId)
-            putString(extraCallerName, values["displayName"])
-            putString(extraCallerNumber, values["phoneNumber"])
+            putString(extraCallId, identity.callId)
+            putString(extraCallSid, identity.callSid)
+            putString(extraCallerName, identity.displayName)
+            putString(extraCallerNumber, identity.phoneNumber)
             putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, phoneAccountHandle(context))
         }
-        context.getSystemService(TelecomManager::class.java).placeCall(
-            Uri.fromParts("tel", values["phoneNumber"].orEmpty(), null), extras
-        )
-        AndroidCallEventBridge.emitOutgoingDialing(callId)
+        try {
+            context.getSystemService(TelecomManager::class.java).placeCall(
+                Uri.fromParts("tel", identity.phoneNumber, null), extras
+            )
+        } catch (error: Throwable) {
+            clearPendingOutgoing(identity.systemCallId)
+            throw error
+        }
+        AndroidCallEventBridge.emitOutgoingDialing(identity)
     }
 
     fun markActive(context: Context, callId: String) {
-        val outbound = connections[callId]?.incoming == false
+        val identity = connections[callId]?.identity
+            ?: pendingIdentity(callId)
+            ?: SystemCallIdentity(callId = callId, callSid = null)
         connections[callId]?.setActive()
         if (androidx.core.content.ContextCompat.checkSelfPermission(
                 context, android.Manifest.permission.RECORD_AUDIO
@@ -170,19 +209,32 @@ object OmniDeskTelecomManager {
         } else {
             Log.w(logTag, "Skipping call foreground service: RECORD_AUDIO is not granted")
         }
-        AndroidCallEventBridge.emitActive(callId, outbound)
+        AndroidCallEventBridge.emitActive(identity)
     }
 
     fun markFailed(context: Context, callId: String, reason: String?) {
-        // Read the direction before cleanup removes the native connection.
-        val outbound = connections[callId]?.incoming == false
+        // Read the complete identity before cleanup removes the native
+        // connection. Never relabel a backend call ID as a provider SID.
+        val identity = connections[callId]?.identity
+            ?: pendingIdentity(callId)
+            ?: SystemCallIdentity(callId = callId, callSid = null)
         cleanup(
             context,
             callId,
             null,
             android.telecom.DisconnectCause(android.telecom.DisconnectCause.ERROR, reason),
         )
-        AndroidCallEventBridge.emitFailed(callId, reason, outbound)
+        AndroidCallEventBridge.emitFailed(identity, reason)
+    }
+
+    fun handleOutgoingConnectionFailed(context: Context, extras: Bundle, reason: String) {
+        val identity = identityFromExtras(extras).takeIf { it.systemCallId.isNotBlank() }
+            ?: claimPendingOutgoing()
+        if (identity == null) {
+            Log.w(logTag, "Outgoing Telecom creation failed without an identity")
+            return
+        }
+        markFailed(context, identity.systemCallId, reason)
     }
 
     fun answer(context: Context, callId: String) {
@@ -290,8 +342,38 @@ object OmniDeskTelecomManager {
             connection.destroy()
         }
         IncomingCallStateStore.clearPresentation(context, callId, offerId)
+        clearPendingOutgoing(callId)
         releaseCommunicationRoute(context)
         OmniDeskCallForegroundService.stop(context)
+    }
+
+    private fun identityFromExtras(extras: Bundle): SystemCallIdentity = SystemCallIdentity(
+        callId = extras.getString(extraCallId).orEmpty(),
+        callSid = extras.getString(extraCallSid)?.takeIf { it.isNotBlank() },
+        displayName = extras.getString(extraCallerName).orEmpty(),
+        phoneNumber = extras.getString(extraCallerNumber).orEmpty(),
+    )
+
+    private fun reservePendingOutgoing(identity: SystemCallIdentity) = synchronized(pendingOutgoingLock) {
+        val existing = pendingOutgoing
+        check(existing == null || existing.systemCallId == identity.systemCallId) {
+            "Another outgoing Telecom call is already pending"
+        }
+        pendingOutgoing = identity
+    }
+
+    private fun claimPendingOutgoing(): SystemCallIdentity? = synchronized(pendingOutgoingLock) {
+        val identity = pendingOutgoing
+        pendingOutgoing = null
+        identity
+    }
+
+    private fun pendingIdentity(systemCallId: String): SystemCallIdentity? = synchronized(pendingOutgoingLock) {
+        pendingOutgoing?.takeIf { it.systemCallId == systemCallId }
+    }
+
+    private fun clearPendingOutgoing(systemCallId: String) = synchronized(pendingOutgoingLock) {
+        if (pendingOutgoing?.systemCallId == systemCallId) pendingOutgoing = null
     }
 
     private fun logTrackedConnections(action: String) {
@@ -342,4 +424,23 @@ object OmniDeskTelecomManager {
     private fun phoneAccountHandle(context: Context) = PhoneAccountHandle(
         ComponentName(context, OmniDeskConnectionService::class.java), accountId
     )
+}
+
+/**
+ * The only native representation of a system call. [systemCallId] is used
+ * for Telecom tracking, while [callSid] remains available for provider-side
+ * completion and Flutter event matching.
+ */
+data class SystemCallIdentity(
+    val callId: String,
+    val callSid: String?,
+    val displayName: String = "",
+    val phoneNumber: String = "",
+) {
+    val systemCallId: String get() = callId.ifBlank { callSid.orEmpty() }
+
+    fun toFlutterMap(): Map<String, String> = buildMap {
+        if (callId.isNotBlank()) put("callId", callId)
+        if (!callSid.isNullOrBlank()) put("callSid", callSid)
+    }
 }

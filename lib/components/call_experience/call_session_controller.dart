@@ -11,6 +11,7 @@ import '../../services/calls/call_models.dart';
 import '../../services/calls/device_installation_service.dart';
 import '../../services/calls/native_call_service.dart';
 import '../../services/calls/webview_call_media_service.dart';
+import '../../services/auth_session_controller.dart';
 
 part 'call_session_controller.g.dart';
 
@@ -193,13 +194,23 @@ class CallSessionController extends _$CallSessionController {
   Timer? _terminalTimer;
   StreamSubscription<NativeCallEvent>? _nativeEvents;
   StreamSubscription<CallMediaEvent>? _webViewEvents;
+  StreamSubscription<CallBridgeDiagnostic>? _bridgeDiagnostics;
   CallMediaService? _activeMedia;
   Completer<void>? _incomingMedia;
   bool _isFinishing = false;
   bool _backendAccepted = false;
   CallMediaConfig? _warmMediaConfig;
   DateTime? _warmMediaConfigAt;
+  String? _warmMediaScope;
   Future<CallMediaConfig>? _mediaConfigRequest;
+  String? _mediaConfigRequestScope;
+  int _mediaConfigGeneration = 0;
+  Future<void>? _prewarmRequest;
+  String? _prewarmRequestScope;
+  String? _acceptedInstallationId;
+  final Set<String> _reportedClientEvents = <String>{};
+  Stopwatch? _attemptClock;
+  final Map<String, int> _attemptMetrics = <String, int>{};
   final Set<CallId> _ownershipDeniedCallIds = <CallId>{};
 
   CallApi get _api => ref.read(callApiProvider);
@@ -211,8 +222,14 @@ class CallSessionController extends _$CallSessionController {
   /// WebRTC is the only supported production media implementation.
   CallMediaService get _media => _activeMedia ?? _webView;
 
-  /// Backend-driven engine choice: a `transport: "webrtc"` media-config
-  /// (no SIP block) must go to the hidden WebView engine, never Baresip.
+  String _authScopeKey() {
+    final session = ref.read(authSessionControllerProvider).session;
+    final workspace = session?.user.activeWorkspace?.id ?? '';
+    return '${session?.user.id ?? ''}:$workspace';
+  }
+
+  /// Backend-driven engine choice: only a supported `transport: "webrtc"`
+  /// configuration is allowed to reach the hidden WebView engine.
   CallMediaService _selectMedia(CallMediaConfig config) {
     if (!usesSupportedWebViewMedia(config)) {
       throw const MediaUnavailable(
@@ -224,54 +241,185 @@ class CallSessionController extends _$CallSessionController {
   }
 
   Future<void> prewarmMedia() async {
+    final scope = _authScopeKey();
+    final existing = _prewarmRequest;
+    if (existing != null && _prewarmRequestScope == scope) return existing;
+    if (existing != null && _prewarmRequestScope != scope) {
+      // Do not let a previous user's/workspace's prewarm claim the new
+      // standby generation. Its network request may finish, but it cannot
+      // publish or reuse its result after the scope check below.
+      final media = _webView;
+      if (media is WebViewCallMediaService) {
+        unawaited(media.invalidateStandby());
+      }
+    }
     if (state.hasCall) return;
+    late final Future<void> request;
+    request = () async {
+      try {
+        final config = await _getMediaConfig();
+        if (!usesSupportedWebViewMedia(config) ||
+            state.hasCall ||
+            _authScopeKey() != scope) {
+          return;
+        }
+        // Keep the controller dependent on the selected media implementation.
+        // Tests and future platform implementations can supply another
+        // CallMediaService without accidentally constructing a real hidden
+        // WebView purely to prewarm it.
+        final media = _webView;
+        if (media is WebViewCallMediaService) {
+          await media.prewarmClient(config);
+        }
+      } catch (error) {
+        developer.log(
+          'Media standby prewarm unavailable: ${error.runtimeType}.',
+          name: 'CallSession',
+        );
+      }
+    }();
+    _prewarmRequest = request;
+    _prewarmRequestScope = scope;
     try {
-      final config = await _getMediaConfig();
-      if (!usesSupportedWebViewMedia(config) || state.hasCall) return;
-      await ref.read(webViewCallMediaServiceProvider).prewarmClient(config);
-    } catch (error) {
-      developer.log(
-        'Media standby prewarm unavailable: ${error.runtimeType}.',
-        name: 'CallSession',
-      );
+      await request;
+    } finally {
+      if (identical(_prewarmRequest, request)) {
+        _prewarmRequest = null;
+        _prewarmRequestScope = null;
+      }
     }
   }
 
   Future<CallMediaConfig> _getMediaConfig() async {
+    final scope = _authScopeKey();
+    if (_warmMediaScope != null && _warmMediaScope != scope) {
+      _mediaConfigGeneration++;
+      _warmMediaConfig = null;
+      _warmMediaConfigAt = null;
+      if (!state.hasCall) {
+        final media = _webView;
+        if (media is WebViewCallMediaService) {
+          unawaited(media.invalidateStandby());
+        }
+      }
+    }
     final cached = _warmMediaConfig;
     final cachedAt = _warmMediaConfigAt;
     if (cached != null &&
         cachedAt != null &&
+        _warmMediaScope == scope &&
+        cached.isWebRtcCredentialFresh &&
         DateTime.now().difference(cachedAt) < const Duration(minutes: 10)) {
       return cached;
     }
     final active = _mediaConfigRequest;
-    if (active != null) return active;
+    if (active != null && _mediaConfigRequestScope == scope) return active;
     late final Future<CallMediaConfig> request;
+    final generation = _mediaConfigGeneration;
     request = _api.getMediaConfig().then((config) {
-      _warmMediaConfig = config;
-      _warmMediaConfigAt = DateTime.now();
+      if (_mediaConfigGeneration == generation && _authScopeKey() == scope) {
+        _warmMediaConfig = config;
+        _warmMediaConfigAt = DateTime.now();
+        _warmMediaScope = scope;
+      }
       return config;
     }).whenComplete(() {
-      if (identical(_mediaConfigRequest, request)) _mediaConfigRequest = null;
+      if (identical(_mediaConfigRequest, request)) {
+        _mediaConfigRequest = null;
+        _mediaConfigRequestScope = null;
+      }
     });
     _mediaConfigRequest = request;
+    _mediaConfigRequestScope = scope;
     return request;
   }
 
   @override
   CallSessionState build() {
     _nativeEvents = _native.events.listen(_onNativeEvent);
-    _webViewEvents = _webView.events.listen(
+    final webView = _webView;
+    _webViewEvents = webView.events.listen(
       (event) => _onMediaEvent(_webView, event),
     );
+    if (webView is WebViewCallMediaService) {
+      _bridgeDiagnostics = webView.diagnostics.listen(_onBridgeDiagnostic);
+    }
     ref.onDispose(() {
       _durationTimer?.cancel();
       _terminalTimer?.cancel();
       unawaited(_nativeEvents?.cancel() ?? Future<void>.value());
       unawaited(_webViewEvents?.cancel() ?? Future<void>.value());
+      unawaited(_bridgeDiagnostics?.cancel() ?? Future<void>.value());
     });
     return const CallSessionState();
+  }
+
+  void _onBridgeDiagnostic(CallBridgeDiagnostic diagnostic) {
+    if (!state.hasCall || !_backendAccepted) return;
+    final event = switch (diagnostic.phase) {
+      'incoming_received' => CallClientEvent.incoming,
+      'get_user_media_started' => CallClientEvent.microphoneCaptureStarted,
+      'get_user_media_resolved' => CallClientEvent.microphoneCaptureReady,
+      'connected' => CallClientEvent.connected,
+      'get_user_media_rejected' ||
+      'at_error' ||
+      'at_offline' ||
+      'at_disconnect' ||
+      'at_closed' ||
+      'at_notready' =>
+        CallClientEvent.bridgeError,
+      _ => null,
+    };
+    if (event != null) unawaited(_reportClientEvent(event));
+  }
+
+  Future<void> _reportClientEvent(CallClientEvent event) async {
+    final callId = state.callId;
+    final offerId = state.offerId;
+    final installationId = _acceptedInstallationId;
+    if (callId == null ||
+        callId.isEmpty ||
+        offerId == null ||
+        offerId.isEmpty ||
+        installationId == null ||
+        installationId.isEmpty) {
+      return;
+    }
+    final key = '$callId|$offerId|${event.value}';
+    if (!_reportedClientEvents.add(key)) return;
+    try {
+      await _api
+          .reportClientEvent(
+            callId: callId,
+            offerId: offerId,
+            installationId: installationId,
+            event: event,
+          )
+          .timeout(const Duration(seconds: 4));
+    } catch (error) {
+      // Telemetry is deliberately non-blocking. The bridge and call state
+      // must continue even when the endpoint is offline or unavailable.
+      developer.log(
+        'Client-event telemetry failed event=${event.value} '
+        'error=${error.runtimeType}.',
+        name: 'CallSession',
+      );
+    }
+  }
+
+  void _startAttemptClock() {
+    _attemptClock?.stop();
+    _attemptClock = Stopwatch()..start();
+    _attemptMetrics.clear();
+  }
+
+  void _markAttemptPhase(String phase) {
+    final clock = _attemptClock;
+    if (clock == null || _attemptMetrics.containsKey(phase)) return;
+    final elapsed = clock.elapsedMilliseconds;
+    _attemptMetrics[phase] = elapsed;
+    developer.log('Call timing phase=$phase elapsedMs=$elapsed',
+        name: 'CallSession');
   }
 
   /// Receives a canonical offer from FCM/PushKit after workspace validation.
@@ -305,6 +453,9 @@ class CallSessionController extends _$CallSessionController {
       ticketNumber: offer.ticketNumber,
       category: offer.category,
     );
+    _reportedClientEvents.clear();
+    _acceptedInstallationId = null;
+    _startAttemptClock();
     try {
       developer.log(
         'Presenting incoming call callId=${offer.callId}.',
@@ -315,6 +466,7 @@ class CallSessionController extends _$CallSessionController {
           state.lifecycle == CallLifecycle.incomingRinging) {
         state = state.copyWith(nativeIncomingSurfaceActive: true);
       }
+      _markAttemptPhase('native_presented');
       developer.log(
         'Incoming call presentation returned callId=${offer.callId}; '
         'sending delivery acknowledgement.',
@@ -364,6 +516,7 @@ class CallSessionController extends _$CallSessionController {
       party: party,
       ticketId: ticketId,
     );
+    _startAttemptClock();
     unawaited(_initiateOutgoing(party, ticketId: ticketId));
     return true;
   }
@@ -374,12 +527,20 @@ class CallSessionController extends _$CallSessionController {
   }) async {
     OutboundCallResult? created;
     try {
+      // Admit the local media engine before creating a backend call. The
+      // WebView implementation can release a verified idle stale reservation
+      // here, but refuses to touch an attached/unknown background call.
+      await _webView.prepareForNewOutboundCall();
+      if (state.party != party || state.phase != CallPhase.outgoingPreparing) {
+        return;
+      }
       final configFuture = _getMediaConfig();
       final initiateFuture = _api.initiateOutbound(
         toNumber: party.phoneNumber,
         ticketId: ticketId,
       );
       created = await initiateFuture;
+      _markAttemptPhase('initiate_completed');
       final result = created;
       // Ignore a late response after the agent has ended the local surface.
       if (state.party != party || state.phase != CallPhase.outgoingPreparing) {
@@ -400,6 +561,7 @@ class CallSessionController extends _$CallSessionController {
       }
       final media = _selectMedia(config);
       final registrationSessionId = await media.initialize(config);
+      _markAttemptPhase('client_ready');
       if (state.party != party || state.lifecycle == CallLifecycle.failed) {
         await media.endMedia(registrationSessionId);
         return;
@@ -415,6 +577,7 @@ class CallSessionController extends _$CallSessionController {
         phoneNumber: result.normalizedToNumber ?? party.phoneNumber,
         sipTargetUri: result.sipUri,
       );
+      _markAttemptPhase('dial_requested');
       if (state.party != party || state.callSid != result.callSid) {
         // The user ended the surface while native registration completed.
         await media.endMedia(mediaSessionId);
@@ -462,6 +625,7 @@ class CallSessionController extends _$CallSessionController {
         failureMessage: null,
       );
       final installationId = await _installationId();
+      _acceptedInstallationId = installationId;
       final configFuture = _getMediaConfig();
       final acceptFuture = _api.accept(
         callId: callId,
@@ -469,6 +633,7 @@ class CallSessionController extends _$CallSessionController {
         installationId: installationId,
       );
       final accepted = await acceptFuture;
+      _markAttemptPhase('accept_completed');
       developer.log('Backend accept confirmed callId=$callId.',
           name: 'CallSession');
       _backendAccepted = true;
@@ -485,6 +650,17 @@ class CallSessionController extends _$CallSessionController {
       }
       final mediaSessionId =
           await _selectMedia(config).initialize(config, incomingCallId: callId);
+      _markAttemptPhase('client_ready');
+      final media = _media;
+      final path = media is WebViewCallMediaService
+          ? media.lastInitializationPath
+          : null;
+      final pathEvent = switch (path) {
+        'standby_reused' => CallClientEvent.standbyReused,
+        'fresh_fallback' => CallClientEvent.freshFallback,
+        _ => CallClientEvent.freshConnection,
+      };
+      unawaited(_reportClientEvent(pathEvent));
       developer.log(
         'Incoming media initialized callId=$callId mediaSession=$mediaSessionId.',
         name: 'CallSession',
@@ -501,6 +677,7 @@ class CallSessionController extends _$CallSessionController {
         offerId: offerId,
         installationId: installationId,
       );
+      _markAttemptPhase('media_ready_completed');
       developer.log('Backend media-ready confirmed callId=$callId.',
           name: 'CallSession');
       state = state.copyWith(
@@ -511,6 +688,7 @@ class CallSessionController extends _$CallSessionController {
       // not answer merely because the backend handshake completed: wait for
       // the bridge's canonical incoming event, then accept that pending leg.
       await _waitForIncomingMedia(callId);
+      _markAttemptPhase('incoming_received');
       developer.log(
         'Incoming WebRTC event received; answering media callId=$callId.',
         name: 'CallSession',
@@ -560,6 +738,8 @@ class CallSessionController extends _$CallSessionController {
       // leg after its UI is gone even if the completion request is offline.
       if (mediaSessionId != null && mediaSessionId.isNotEmpty) {
         await (finishingMedia ?? _webView).endMedia(mediaSessionId);
+      } else if (finishingMedia != null) {
+        await finishingMedia.abandonMediaPreparation();
       }
       if (hasNativeCall) {
         try {
@@ -598,6 +778,10 @@ class CallSessionController extends _$CallSessionController {
       if (state.hasCall) state = const CallSessionState();
     } finally {
       _isFinishing = false;
+      // Keep the next user-initiated call off the cold path. The media
+      // service validates bridge/client health before reusing anything, so a
+      // failed or reclaimed WebView still takes the one-fresh-client path.
+      if (!state.hasCall) unawaited(prewarmMedia());
     }
   }
 
@@ -768,7 +952,7 @@ class CallSessionController extends _$CallSessionController {
     }
   }
 
-  /// Media-engine events, engine-agnostic (Baresip SIP or hidden WebView).
+  /// Media-engine events from the hidden WebView client.
   void _onMediaEvent(CallMediaService source, CallMediaEvent event) {
     if (!state.hasCall || !identical(source, _activeMedia)) return;
     developer.log(
@@ -792,18 +976,28 @@ class CallSessionController extends _$CallSessionController {
     switch (event.type) {
       case CallMediaEventType.ready:
       case CallMediaEventType.ringing:
+        break;
       case CallMediaEventType.micStatus:
+        if ((event.reason ?? '').toLowerCase().contains('granted')) {
+          unawaited(
+            _reportClientEvent(CallClientEvent.microphoneCaptureReady),
+          );
+        }
         break;
       case CallMediaEventType.incoming:
+        unawaited(_reportClientEvent(CallClientEvent.incoming));
         final incoming = _incomingMedia;
         if (incoming != null && !incoming.isCompleted) incoming.complete();
       case CallMediaEventType.connected:
+        _markAttemptPhase('connected');
+        unawaited(_reportClientEvent(CallClientEvent.connected));
         if (!state.isActive) _activate(DateTime.now().toUtc());
       case CallMediaEventType.held:
         state = state.copyWith(onHold: true, phase: CallPhase.held);
       case CallMediaEventType.ended:
         _handleRemoteMediaEnded(event.reason);
       case CallMediaEventType.error:
+        unawaited(_reportClientEvent(CallClientEvent.bridgeError));
         _fail(event.reason ?? 'The call connection failed.');
       case CallMediaEventType.processTerminated:
         _fail(event.reason ??
@@ -875,6 +1069,10 @@ class CallSessionController extends _$CallSessionController {
     final mediaSessionId = terminal.mediaSessionId;
     _activeMedia = null;
     _backendAccepted = false;
+    _acceptedInstallationId = null;
+    _reportedClientEvents.clear();
+    _attemptClock?.stop();
+    _attemptClock = null;
     state = terminal.copyWith(
       lifecycle: CallLifecycle.terminalNotice,
       phase: phase,
@@ -884,6 +1082,8 @@ class CallSessionController extends _$CallSessionController {
     );
     if (media != null && mediaSessionId != null && mediaSessionId.isNotEmpty) {
       unawaited(media.endMedia(mediaSessionId).catchError((_) {}));
+    } else if (media != null) {
+      unawaited(media.abandonMediaPreparation().catchError((_) {}));
     }
     if (terminal.callId != null || terminal.callSid != null) {
       unawaited(_native.dismiss(_identityFor(terminal)).catchError((_) {}));
@@ -895,6 +1095,7 @@ class CallSessionController extends _$CallSessionController {
         return;
       }
       state = const CallSessionState();
+      unawaited(prewarmMedia());
     });
   }
 
@@ -936,8 +1137,14 @@ class CallSessionController extends _$CallSessionController {
     _activeMedia = null;
     final acceptedCallId = _backendAccepted ? state.callId : null;
     _backendAccepted = false;
+    _acceptedInstallationId = null;
+    _reportedClientEvents.clear();
+    _attemptClock?.stop();
+    _attemptClock = null;
     if (media != null && mediaSessionId != null && mediaSessionId.isNotEmpty) {
       unawaited(media.endMedia(mediaSessionId).catchError((_) {}));
+    } else if (media != null) {
+      unawaited(media.abandonMediaPreparation().catchError((_) {}));
     }
     state = state.copyWith(
       lifecycle: CallLifecycle.failed,

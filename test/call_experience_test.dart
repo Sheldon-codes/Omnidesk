@@ -75,6 +75,34 @@ void main() {
     expect(container.read(callSessionControllerProvider).startedAt, isNull);
   });
 
+  test('outgoing admission failure does not create an orphan backend call',
+      () async {
+    final api = _FakeCallApi();
+    final media = _FakeMedia()
+      ..outboundAdmissionError = const MediaUnavailable(
+        'The previous call is still closing. Please try again in a moment.',
+      );
+    final container = _liveContainer(api: api, media: media);
+    addTearDown(container.dispose);
+
+    expect(
+      container.read(callSessionControllerProvider.notifier).startOutgoing(
+            const CallParty(
+              displayName: 'Caller',
+              phoneNumber: '+254700000001',
+            ),
+          ),
+      isTrue,
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(media.outboundAdmissionChecks, 1);
+    expect(api.outboundInitiated, isFalse);
+    expect(container.read(callSessionControllerProvider).lifecycle,
+        CallLifecycle.failed);
+  });
+
   test('live incoming offer follows accept, media-ready, then native connect',
       () async {
     final api = _FakeCallApi();
@@ -278,6 +306,14 @@ class _FakeCallApi implements CallApi {
   }) async {}
 
   @override
+  Future<void> reportClientEvent({
+    required String callId,
+    required String offerId,
+    required String installationId,
+    required CallClientEvent event,
+  }) async {}
+
+  @override
   Future<void> end({required String callId, required String reason}) async {}
 
   @override
@@ -380,9 +416,21 @@ class _FakeNativeCallService implements NativeCallService {
 
 class _FakeMedia implements CallMediaService {
   final _events = StreamController<CallMediaEvent>.broadcast();
+  Object? outboundAdmissionError;
+  int outboundAdmissionChecks = 0;
 
   @override
   Stream<CallMediaEvent> get events => _events.stream;
+
+  @override
+  Future<void> prepareForNewOutboundCall() async {
+    outboundAdmissionChecks++;
+    final error = outboundAdmissionError;
+    if (error != null) throw error;
+  }
+
+  @override
+  Future<void> abandonMediaPreparation() async {}
 
   @override
   Future<String> initialize(CallMediaConfig config,
