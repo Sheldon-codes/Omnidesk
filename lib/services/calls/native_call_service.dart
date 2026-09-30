@@ -112,6 +112,12 @@ abstract class NativeCallService {
   Future<NativeCallEvent?> takePendingAction();
   Future<NativeIncomingPresentationReceipt> presentIncoming(CallOffer offer);
   Future<void> beginOutgoing(NativeCallIdentity identity);
+
+  /// Ends the operating system's incoming-ringing state without claiming the
+  /// backend call or marking media active.  This is deliberately distinct
+  /// from [markActive]: a user can answer in Flutter while WebRTC is still
+  /// preparing, and the device ringtone must stop immediately.
+  Future<void> markAnswering(NativeCallIdentity identity);
   Future<void> markActive(NativeCallIdentity identity);
   Future<void> markFailed(NativeCallIdentity identity, {String? reason});
   Future<void> dismiss(NativeCallIdentity identity);
@@ -240,6 +246,11 @@ class MethodChannelNativeCallService implements NativeCallService {
   @override
   Future<void> beginOutgoing(NativeCallIdentity identity) =>
       _invoke('beginOutgoingSystemCall', identity.toMap());
+
+  @override
+  Future<void> markAnswering(NativeCallIdentity identity) =>
+      _invoke('markSystemCallAnswering', identity.toMap(),
+          allowMissingPlugin: true);
 
   @override
   Future<void> markActive(NativeCallIdentity identity) =>

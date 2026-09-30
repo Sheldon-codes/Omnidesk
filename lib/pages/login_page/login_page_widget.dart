@@ -134,9 +134,14 @@ class _LoginPageWidgetState extends ConsumerState<LoginPageWidget>
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Align(
+                              Align(
                                 alignment: Alignment.center,
-                                child: FlutterLogo(size: 100),
+                                child: Image.asset(
+                                  'assets/images/Omnidesk-logo.png',
+                                  width: 100,
+                                  height: 100,
+                                  fit: BoxFit.contain,
+                                ),
                               ),
                               const SizedBox(height: 16),
                               Text(

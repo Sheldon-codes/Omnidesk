@@ -58,16 +58,19 @@ object OmniDeskCallNotification {
             .setStyle(NotificationCompat.CallStyle.forIncomingCall(
                 Person.Builder().setName(name).build(), decline, answer
             ))
-        // Android 14 can revoke full-screen access per app. CallStyle remains
-        // a valid heads-up/lock-screen fallback, so do not fail presentation
-        // or silently pretend a full-screen launch was granted.
+        // Android 14 can revoke the ability to *launch* a full-screen
+        // activity, but CallStyle still requires a non-null full-screen
+        // intent unless its notification belongs to a foreground service.
+        // Keep the intent attached in both cases: the OS will choose the
+        // heads-up/lock-screen fallback when permission is denied.
         val fullScreenAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
             context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
-        if (fullScreenAllowed) {
-            builder.setFullScreenIntent(contentIntent, true)
-        } else {
-            Log.w("OmniDeskTelecom", "Full-screen incoming-call access is disabled; using CallStyle fallback")
-        }
+        builder.setFullScreenIntent(contentIntent, true)
+        Log.i(
+            "OmniDeskTelecom",
+            "Posting CallStyle notification callId=$callId " +
+                "fullScreenIntentAttached=true fullScreenAllowed=$fullScreenAllowed",
+        )
         val notification = builder.build()
         NotificationManagerCompat.from(context).notify(notificationId(callId), notification)
     }

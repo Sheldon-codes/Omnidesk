@@ -200,6 +200,11 @@ object OmniDeskTelecomManager {
         val identity = connections[callId]?.identity
             ?: pendingIdentity(callId)
             ?: SystemCallIdentity(callId = callId, callSid = null)
+        // The incoming CallStyle notification owns ringtone/vibration until
+        // it is explicitly cancelled.  Do this defensively here too in case
+        // a platform callback reaches ACTIVE without first reaching
+        // markAnswering.
+        OmniDeskCallNotification.dismissIncoming(context, callId)
         connections[callId]?.setActive()
         if (androidx.core.content.ContextCompat.checkSelfPermission(
                 context, android.Manifest.permission.RECORD_AUDIO
@@ -238,18 +243,29 @@ object OmniDeskTelecomManager {
     }
 
     fun answer(context: Context, callId: String) {
-        OmniDeskCallNotification.dismissIncoming(context, callId)
+        markAnswering(context, callId)
         IncomingCallStateStore.saveAction(context, callId, "answer")
-        connections[callId]?.setInitializing()
-        // The bridge/WebView has to survive the entire preparation phase,
-        // not only the already-connected phase. Starting here also covers a
-        // cold Flutter engine after an Answer action from the system surface.
-        startForegroundServiceSafely(context, callId)
         AndroidCallEventBridge.emitAction("answer", callId)
         // Re-launching an already visible Flutter Activity triggers lifecycle
         // refresh/recovery races during /accept. Only bring the task forward
         // when it is genuinely backgrounded or absent.
         if (!MainActivity.isForeground) launchFlutter(context)
+    }
+
+    /**
+     * Stop the native ringing surface once the user has answered, while the
+     * Flutter/API/WebRTC work is still in progress.  It intentionally does
+     * not persist an action or emit an event: callers using the Flutter UI
+     * already own that authoritative answer flow.
+     */
+    fun markAnswering(context: Context, callId: String) {
+        OmniDeskCallNotification.dismissIncoming(context, callId)
+        connections[callId]?.setInitializing()
+        // The bridge/WebView has to survive the entire preparation phase,
+        // not only the already-connected phase. Starting here also covers a
+        // cold Flutter engine after an Answer action from the system surface.
+        startForegroundServiceSafely(context, callId)
+        Log.i(logTag, "Incoming Telecom ringing stopped; preparing callId=$callId")
     }
 
     fun decline(context: Context, callId: String, reason: String = "user_declined") {
@@ -328,6 +344,11 @@ object OmniDeskTelecomManager {
         offerId: String?,
         disconnectCause: android.telecom.DisconnectCause? = null,
     ) {
+        // Cancellation, Flutter hang-up, provider hang-up, and backend
+        // failure can all reach cleanup without going through native Answer
+        // or Decline. Always cancel the CallStyle notification here so its
+        // ringtone/vibration cannot outlive the underlying Telecom call.
+        OmniDeskCallNotification.dismissIncoming(context, callId)
         val connection = connections.remove(callId)
         Log.i(
             logTag,
@@ -399,8 +420,12 @@ object OmniDeskTelecomManager {
 
     /** Keep the native Answer path usable if an OEM rejects an FGS start. */
     private fun startForegroundServiceSafely(context: Context, callId: String) {
+        val microphoneGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         try {
-            OmniDeskCallForegroundService.start(context, callId)
+            OmniDeskCallForegroundService.start(context, callId, microphoneGranted)
+            Log.i(logTag, "Starting call FGS callId=$callId microphone=$microphoneGranted")
         } catch (error: Throwable) {
             Log.w(logTag, "Unable to start call foreground service callId=$callId", error)
         }

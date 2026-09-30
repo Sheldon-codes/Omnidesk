@@ -99,6 +99,7 @@ class MainActivity : FlutterActivity() {
                 try { OmniDeskTelecomManager.beginOutgoing(applicationContext, args.mapNotNull { (key, value) -> value?.toString()?.let { key.toString() to it } }.toMap()); result.success(null) }
                 catch (error: Throwable) { result.error("telecom_outgoing_failed", error.message, null) }
             }
+            "markSystemCallAnswering" -> { OmniDeskTelecomManager.markAnswering(applicationContext, systemCallId); result.success(null) }
             "markSystemCallActive" -> { OmniDeskTelecomManager.markActive(applicationContext, systemCallId); result.success(null) }
             "markSystemCallFailed" -> { OmniDeskTelecomManager.markFailed(applicationContext, systemCallId, args["reason"]?.toString()); result.success(null) }
             "dismissSystemCall" -> { OmniDeskTelecomManager.dismiss(applicationContext, systemCallId); result.success(null) }

@@ -636,7 +636,8 @@ class CallSessionController extends _$CallSessionController {
     final offerId = state.offerId!;
     try {
       developer.log(
-        'Answer started callId=$callId offerId=$offerId.',
+        'Incoming call flow phase=answer_started callId=$callId '
+        'offerId=$offerId.',
         name: 'CallSession',
       );
       state = state.copyWith(
@@ -645,9 +646,33 @@ class CallSessionController extends _$CallSessionController {
         nativeIncomingSurfaceActive: false,
         failureMessage: null,
       );
+      // The Flutter incoming page is only a mirror of the native Telecom
+      // ringing call.  Unlike a native CallStyle Answer action, tapping
+      // Answer here did not previously leave Telecom's RINGING state until
+      // WebRTC connected.  That kept the notification ringtone alive through
+      // the whole backend/media handshake.  Move the system call to its
+      // non-ringing preparation state now; this does not claim the backend
+      // offer or mark the media call active.
+      try {
+        await _native.markAnswering(_identityFor(state));
+      } catch (error) {
+        // System UI cleanup must be best-effort. A transient MethodChannel or
+        // OEM Telecom failure must not prevent this already-visible incoming
+        // call from attempting the authoritative backend accept.
+        developer.log(
+          'Unable to stop native ringing before answer callId=$callId '
+          'error=${error.runtimeType}.',
+          name: 'CallSession',
+        );
+      }
       final installationId = await _installationId();
       _acceptedInstallationId = installationId;
       final configFuture = _getMediaConfig();
+      developer.log(
+        'Incoming call flow phase=accept_requested callId=$callId '
+        'offerId=$offerId.',
+        name: 'CallSession',
+      );
       final acceptFuture = _api.accept(
         callId: callId,
         offerId: offerId,
@@ -655,7 +680,7 @@ class CallSessionController extends _$CallSessionController {
       );
       final accepted = await acceptFuture;
       _markAttemptPhase('accept_completed');
-      developer.log('Backend accept confirmed callId=$callId.',
+      developer.log('Incoming call flow phase=accept_confirmed callId=$callId.',
           name: 'CallSession');
       _backendAccepted = true;
       state = state.copyWith(
@@ -672,6 +697,11 @@ class CallSessionController extends _$CallSessionController {
       final mediaSessionId =
           await _selectMedia(config).initialize(config, incomingCallId: callId);
       _markAttemptPhase('client_ready');
+      developer.log(
+        'Incoming call flow phase=media_client_ready callId=$callId '
+        'mediaSession=$mediaSessionId.',
+        name: 'CallSession',
+      );
       final media = _media;
       final path = media is WebViewCallMediaService
           ? media.lastInitializationPath
@@ -693,13 +723,20 @@ class CallSessionController extends _$CallSessionController {
       // Install the waiter before notifying the backend. The provider can
       // create the WebRTC leg immediately after media-ready returns.
       _incomingMedia = Completer<void>();
+      developer.log(
+        'Incoming call flow phase=media_ready_requested callId=$callId '
+        'mediaSession=$mediaSessionId.',
+        name: 'CallSession',
+      );
       await _api.mediaReady(
         callId: callId,
         offerId: offerId,
         installationId: installationId,
       );
       _markAttemptPhase('media_ready_completed');
-      developer.log('Backend media-ready confirmed callId=$callId.',
+      developer.log(
+          'Incoming call flow phase=media_ready_confirmed callId=$callId; '
+          'waiting_for_provider_incoming=true.',
           name: 'CallSession');
       state = state.copyWith(
         phase: CallPhase.connecting,
@@ -711,10 +748,16 @@ class CallSessionController extends _$CallSessionController {
       await _waitForIncomingMedia(callId);
       _markAttemptPhase('incoming_received');
       developer.log(
-        'Incoming WebRTC event received; answering media callId=$callId.',
+        'Incoming call flow phase=provider_incoming_received callId=$callId; '
+        'answering_media=true.',
         name: 'CallSession',
       );
       await _media.answerIncoming(callSid: callId);
+      developer.log(
+        'Incoming call flow phase=media_answer_requested callId=$callId; '
+        'waiting_for_connected=true.',
+        name: 'CallSession',
+      );
       // Native media emits `connected`; only that starts the duration clock.
     } catch (error) {
       if (error is CallApiException &&
@@ -817,6 +860,23 @@ class CallSessionController extends _$CallSessionController {
       developer.log(
         'Ignored active-call recovery callId=${snapshot.callId}; '
         'ownership cannot be proven locally.',
+        name: 'CallSession',
+      );
+      return;
+    }
+    // A server-side accepted/active row is not sufficient to resurrect media
+    // on a fresh Flutter process. The prior implementation displayed a
+    // permanent Connecting screen after Android had already rejected or
+    // cancelled the corresponding Telecom call. Until the backend includes
+    // installation ownership and recoverable media-session state, require a
+    // matching durable native offer as local proof.
+    final nativeOffer = await _native.peekPendingOffer();
+    if (nativeOffer == null ||
+        nativeOffer.callId != snapshot.callId ||
+        nativeOffer.offerId != snapshot.offerId) {
+      developer.log(
+        'Ignored active-call recovery callId=${snapshot.callId}; '
+        'no matching local native offer/media ownership.',
         name: 'CallSession',
       );
       return;

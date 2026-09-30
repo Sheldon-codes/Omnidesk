@@ -416,6 +416,9 @@ class _FakeNativeCallService implements NativeCallService {
   Future<void> markActive(NativeCallIdentity identity) async {}
 
   @override
+  Future<void> markAnswering(NativeCallIdentity identity) async {}
+
+  @override
   Future<void> markFailed(NativeCallIdentity identity,
       {String? reason}) async {}
 
