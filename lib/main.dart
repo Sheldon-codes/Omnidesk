@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -483,11 +484,30 @@ class _AppCallOverlayState extends ConsumerState<_AppCallOverlay> {
             (callState.hasCall &&
                 (callState.lifecycle != CallLifecycle.incomingRinging ||
                     !callState.nativeIncomingSurfaceActive));
+    final appAndCallUi = CallExperienceHost(child: widget.child);
+    if (!shouldMountMedia) return appAndCallUi;
+
+    // WKWebView changes document.visibilityState to hidden when an opaque
+    // Flutter call overlay sits above it. AT's iOS WebRTC SDK then accepts
+    // client.call() but never requests the microphone or creates a peer
+    // connection. The bridge document is transparent and non-interactive, so
+    // placing it above the Flutter call UI keeps WebKit capture-eligible
+    // without changing anything the agent sees or can tap.
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          appAndCallUi,
+          const HiddenCallWebView(),
+        ],
+      );
+    }
+
     return CallExperienceHost(
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (shouldMountMedia) const HiddenCallWebView(),
+          const HiddenCallWebView(),
           widget.child,
         ],
       ),

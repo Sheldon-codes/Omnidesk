@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -104,6 +106,11 @@ class NativeIncomingCallLaunch {
 /// platform owns the system UI or which engine supplies the media.
 abstract class NativeCallService {
   Stream<NativeCallEvent> get events;
+
+  /// Identity-free AVAudioSession snapshots for the iOS diagnostic surface.
+  /// Android implementations deliberately use the default empty stream.
+  Stream<NativeAudioSessionDiagnostic> get audioSessionDiagnostics =>
+      const Stream<NativeAudioSessionDiagnostic>.empty();
   Future<String?> readNativePushToken();
   Future<CallOffer?> peekPendingOffer();
   Future<CallOffer?> takePendingOffer();
@@ -112,6 +119,11 @@ abstract class NativeCallService {
   Future<NativeCallEvent?> takePendingAction();
   Future<NativeIncomingPresentationReceipt> presentIncoming(CallOffer offer);
   Future<void> beginOutgoing(NativeCallIdentity identity);
+
+  /// Waits for the system-call framework to activate its audio session before
+  /// WebRTC requests microphone capture. Android has no equivalent CallKit
+  /// activation edge in this implementation, so the default is a no-op.
+  Future<void> waitForSystemAudioReady() async {}
 
   /// Ends the operating system's incoming-ringing state without claiming the
   /// backend call or marking media active.  This is deliberately distinct
@@ -122,6 +134,43 @@ abstract class NativeCallService {
   Future<void> markFailed(NativeCallIdentity identity, {String? reason});
   Future<void> dismiss(NativeCallIdentity identity);
   Future<void> setSystemSpeaker(bool enabled);
+}
+
+class NativeAudioSessionDiagnostic {
+  const NativeAudioSessionDiagnostic({
+    required this.phase,
+    required this.category,
+    required this.mode,
+    required this.route,
+    required this.inputAvailable,
+    required this.speakerRequested,
+  });
+
+  factory NativeAudioSessionDiagnostic.fromMap(Map<String, dynamic> map) =>
+      NativeAudioSessionDiagnostic(
+        phase: map['phase']?.toString() ?? 'unknown',
+        category: map['category']?.toString() ?? 'unknown',
+        mode: map['mode']?.toString() ?? 'unknown',
+        route: map['route']?.toString() ?? 'unknown',
+        inputAvailable: map['inputAvailable'] == true,
+        speakerRequested: map['speakerRequested'] == true,
+      );
+
+  final String phase;
+  final String category;
+  final String mode;
+  final String route;
+  final bool inputAvailable;
+  final bool speakerRequested;
+
+  Map<String, Object?> toSafeMap() => {
+        'phase': phase,
+        'category': category,
+        'mode': mode,
+        'route': route,
+        'inputAvailable': inputAvailable,
+        'speakerRequested': speakerRequested,
+      };
 }
 
 /// Identity used only to correlate a system call with Flutter's backend and
@@ -154,11 +203,20 @@ class MethodChannelNativeCallService implements NativeCallService {
     _channel.setMethodCallHandler(_handleMethodCall);
   }
 
+  bool _systemAudioActive = defaultTargetPlatform != TargetPlatform.iOS;
+  Completer<void>? _systemAudioReady;
+
   final MethodChannel _channel;
   final _events = StreamController<NativeCallEvent>.broadcast();
+  final _audioSessionDiagnostics =
+      StreamController<NativeAudioSessionDiagnostic>.broadcast();
 
   @override
   Stream<NativeCallEvent> get events => _events.stream;
+
+  @override
+  Stream<NativeAudioSessionDiagnostic> get audioSessionDiagnostics =>
+      _audioSessionDiagnostics.stream;
 
   @override
   Future<String?> readNativePushToken() =>
@@ -248,6 +306,45 @@ class MethodChannelNativeCallService implements NativeCallService {
       _invoke('beginOutgoingSystemCall', identity.toMap());
 
   @override
+  Future<void> waitForSystemAudioReady() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS || _systemAudioActive) {
+      return;
+    }
+    // A cold Flutter engine can miss the asynchronous activation callback.
+    // Query native state once before waiting for the next event.
+    try {
+      final active = await _channel.invokeMethod<bool>('isSystemAudioActive');
+      if (active == true) {
+        _markSystemAudioActive();
+        return;
+      }
+    } on MissingPluginException {
+      // Old/native-test hosts retain the previous behavior rather than
+      // failing every call solely because they lack the diagnostic method.
+      return;
+    }
+    final ready = _systemAudioReady ??= Completer<void>();
+    try {
+      await ready.future.timeout(const Duration(seconds: 8));
+    } on TimeoutException {
+      throw const NativeCallUnavailable(
+        'Call audio did not become active in time. Please try again.',
+      );
+    }
+  }
+
+  void _markSystemAudioActive() {
+    _systemAudioActive = true;
+    final ready = _systemAudioReady;
+    if (ready != null && !ready.isCompleted) ready.complete();
+  }
+
+  void _markSystemAudioInactive() {
+    _systemAudioActive = false;
+    _systemAudioReady = null;
+  }
+
+  @override
   Future<void> markAnswering(NativeCallIdentity identity) =>
       _invoke('markSystemCallAnswering', identity.toMap(),
           allowMissingPlugin: true);
@@ -333,10 +430,40 @@ class MethodChannelNativeCallService implements NativeCallService {
             ? call.arguments as Map
             : const <dynamic, dynamic>{})
         .map((key, value) => MapEntry('$key', value));
+    if (call.method == 'audioSessionDiagnostic') {
+      // Native iOS CallKit / AVAudioSession diagnostics are intentionally
+      // identity-free and allowlisted on the Swift side. They explain whether
+      // WebKit's `MediaStreamTrack.muted` means missing capture frames or an
+      // inactive/wrongly-routed system audio session.
+      developer.log(
+        'iOS audio phase=${args['phase'] ?? 'unknown'} '
+        'category=${args['category'] ?? 'unknown'} '
+        'mode=${args['mode'] ?? 'unknown'} '
+        'route=${args['route'] ?? 'unknown'} '
+        'inputAvailable=${args['inputAvailable'] ?? 'unknown'} '
+        'speakerRequested=${args['speakerRequested'] ?? 'unknown'}',
+        name: 'NativeCallAudio',
+      );
+      _audioSessionDiagnostics.add(NativeAudioSessionDiagnostic.fromMap(args));
+      return;
+    }
+    if (call.method == 'systemAudioActive') {
+      _markSystemAudioActive();
+      developer.log('iOS CallKit audio session is active.',
+          name: 'NativeCallAudio');
+      return;
+    }
+    if (call.method == 'systemAudioInactive') {
+      _markSystemAudioInactive();
+      developer.log('iOS CallKit audio session is inactive.',
+          name: 'NativeCallAudio');
+      return;
+    }
     final callId = args['callId']?.toString();
     final callSid = args['callSid']?.toString();
     final mediaSessionId = args['mediaSessionId']?.toString();
     if (call.method != 'nativePushTokenChanged' &&
+        call.method != 'voipPushToken' &&
         (callId == null || callId.isEmpty) &&
         (callSid == null || callSid.isEmpty) &&
         (mediaSessionId == null || mediaSessionId.isEmpty)) {
@@ -345,6 +472,11 @@ class MethodChannelNativeCallService implements NativeCallService {
     final type = switch (call.method) {
       'offerAvailable' => NativeCallEventType.offerAvailable,
       'nativePushTokenChanged' => NativeCallEventType.nativePushTokenChanged,
+      // iOS PushKit posts VoIP token rotations on this method (see
+      // AppDelegate `didUpdate credentials`). It carries no call identity;
+      // treat it as a push-token change so device registration re-reads the
+      // fresh token from UserDefaults and re-registers both tokens.
+      'voipPushToken' => NativeCallEventType.nativePushTokenChanged,
       'answer' => NativeCallEventType.answer,
       'decline' => NativeCallEventType.decline,
       'end' => NativeCallEventType.end,

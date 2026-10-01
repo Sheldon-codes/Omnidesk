@@ -195,6 +195,7 @@ class CallSessionController extends _$CallSessionController {
   StreamSubscription<NativeCallEvent>? _nativeEvents;
   StreamSubscription<CallMediaEvent>? _webViewEvents;
   StreamSubscription<CallBridgeDiagnostic>? _bridgeDiagnostics;
+  StreamSubscription<NativeAudioSessionDiagnostic>? _nativeAudioDiagnostics;
   CallMediaService? _activeMedia;
   Completer<void>? _incomingMedia;
   bool _isFinishing = false;
@@ -226,6 +227,13 @@ class CallSessionController extends _$CallSessionController {
   /// behind the controller avoids exposing Riverpod notifier state outside
   /// its supported API surface.
   bool get hasActiveSession => state.hasCall;
+
+  /// Lets lifecycle orchestration safely correlate a durable native action
+  /// without reaching into Riverpod notifier state from outside this class.
+  /// A delayed CallKit transaction must never act on a newer call surface.
+  bool matchesNativeIdentity({String? callId, String? callSid}) =>
+      (callId != null && callId.isNotEmpty && state.callId == callId) ||
+      (callSid != null && callSid.isNotEmpty && state.callSid == callSid);
 
   String _authScopeKey() {
     final session = ref.read(authSessionControllerProvider).session;
@@ -342,6 +350,9 @@ class CallSessionController extends _$CallSessionController {
   @override
   CallSessionState build() {
     _nativeEvents = _native.events.listen(_onNativeEvent);
+    _nativeAudioDiagnostics = _native.audioSessionDiagnostics.listen(
+      _onNativeAudioDiagnostic,
+    );
     final webView = _webView;
     _webViewEvents = webView.events.listen(
       (event) => _onMediaEvent(_webView, event),
@@ -353,10 +364,18 @@ class CallSessionController extends _$CallSessionController {
       _durationTimer?.cancel();
       _terminalTimer?.cancel();
       unawaited(_nativeEvents?.cancel() ?? Future<void>.value());
+      unawaited(_nativeAudioDiagnostics?.cancel() ?? Future<void>.value());
       unawaited(_webViewEvents?.cancel() ?? Future<void>.value());
       unawaited(_bridgeDiagnostics?.cancel() ?? Future<void>.value());
     });
     return const CallSessionState();
+  }
+
+  void _onNativeAudioDiagnostic(NativeAudioSessionDiagnostic diagnostic) {
+    final media = _webView;
+    if (media is WebViewCallMediaService) {
+      unawaited(media.updateNativeAudioDiagnostic(diagnostic));
+    }
   }
 
   void _onBridgeDiagnostic(CallBridgeDiagnostic diagnostic) {
@@ -573,6 +592,11 @@ class CallSessionController extends _$CallSessionController {
         failureMessage: null,
       );
       await _native.beginOutgoing(_identityFor(state));
+      // On iOS, CallKit—not Flutter or the hidden WKWebView—owns audio
+      // activation. Starting AT capture before `didActivate` can yield a
+      // live-but-muted track with no outgoing RTP frames.
+      await _native.waitForSystemAudioReady();
+      _markAttemptPhase('system_audio_active');
       final config = await configFuture;
       if (!config.canAuthenticate && !config.canUseWebRtc) {
         throw const CallApiException(
@@ -687,6 +711,10 @@ class CallSessionController extends _$CallSessionController {
         phase: CallPhase.mediaPreparing,
         startedAt: accepted.answeredAt,
       );
+      // Backend acceptance remains authoritative and is intentionally not
+      // delayed by this local CallKit readiness gate. Only WebRTC capture is.
+      await _native.waitForSystemAudioReady();
+      _markAttemptPhase('system_audio_active');
       final config = await configFuture;
       if (!config.canAuthenticate && !config.canUseWebRtc) {
         throw const CallApiException(
@@ -1108,6 +1136,15 @@ class CallSessionController extends _$CallSessionController {
 
   /// A backend cancellation reaches Android as a native event. It is not a
   /// local hang-up and must not issue a duplicate /end call to the server.
+  ///
+  /// FCM-delivered cancellations (APNs background pushes on iOS) arrive
+  /// through the lifecycle coordinator instead of the native channel; this
+  /// entry point applies the same identity-strict teardown for them.
+  void handleRemoteCancellation({String? callId, String? reason}) {
+    if (!matchesNativeIdentity(callId: callId)) return;
+    _handleRemoteDisconnect(reason ?? 'call_cancelled');
+  }
+
   void _handleRemoteDisconnect(String? reason) {
     if (!state.hasCall) return;
     if ((reason ?? '').toLowerCase().contains('answered_elsewhere')) {

@@ -50,6 +50,38 @@ void main() {
     expect(container.read(callSessionControllerProvider).hasCall, isFalse);
   });
 
+  test('FCM cancellation tears down ringing without backend end', () async {
+    final api = _FakeCallApi();
+    final container = _liveContainer(api: api);
+    addTearDown(container.dispose);
+    final controller = container.read(callSessionControllerProvider.notifier);
+
+    expect(await controller.handleIncomingOffer(_incomingOffer()), isTrue);
+    expect(container.read(callSessionControllerProvider).lifecycle,
+        CallLifecycle.incomingRinging);
+
+    // Backend cancellation over FCM (APNs background push on iOS).
+    controller.handleRemoteCancellation(
+      callId: _incomingOffer().callId,
+      reason: 'caller_hangup',
+    );
+    expect(container.read(callSessionControllerProvider).lifecycle,
+        CallLifecycle.terminalNotice);
+    expect(api.endCalls, 0);
+
+    // A cancellation for another call must not touch this surface.
+    final container2 = _liveContainer();
+    addTearDown(container2.dispose);
+    final controller2 = container2.read(callSessionControllerProvider.notifier);
+    expect(await controller2.handleIncomingOffer(_incomingOffer()), isTrue);
+    controller2.handleRemoteCancellation(
+      callId: 'some-other-call',
+      reason: 'caller_hangup',
+    );
+    expect(container2.read(callSessionControllerProvider).lifecycle,
+        CallLifecycle.incomingRinging);
+  });
+
   test('outgoing call uses the server originate contract without a demo timer',
       () async {
     final api = _FakeCallApi();
@@ -314,7 +346,11 @@ class _FakeCallApi implements CallApi {
   }) async {}
 
   @override
-  Future<void> end({required String callId, required String reason}) async {}
+  Future<void> end({required String callId, required String reason}) async {
+    endCalls++;
+  }
+
+  int endCalls = 0;
 
   @override
   Future<void> completeOutbound({
@@ -378,6 +414,10 @@ class _FakeNativeCallService implements NativeCallService {
   @override
   Stream<NativeCallEvent> get events => _events.stream;
 
+  @override
+  Stream<NativeAudioSessionDiagnostic> get audioSessionDiagnostics =>
+      const Stream<NativeAudioSessionDiagnostic>.empty();
+
   void emit(NativeCallEvent event) => _events.add(event);
 
   @override
@@ -411,6 +451,9 @@ class _FakeNativeCallService implements NativeCallService {
 
   @override
   Future<void> beginOutgoing(NativeCallIdentity identity) async {}
+
+  @override
+  Future<void> waitForSystemAudioReady() async {}
 
   @override
   Future<void> markActive(NativeCallIdentity identity) async {}

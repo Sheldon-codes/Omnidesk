@@ -84,10 +84,40 @@ void main() {
 
     expect(shell, isNot(contains('unpkg.com')));
     expect(shell, contains('data-omnidesk-shell="2.0.0"'));
+    expect(adapter, contains("var BRIDGE_VERSION = '2.1.0'"));
     expect(adapter, contains("event: 'diagnostic'"));
     expect(adapter, contains("'client_event_binding_completed'"));
     expect(adapter, contains("'get_user_media_rejected'"));
+    // Diagnostics must never substitute browser media APIs. AT's adapter
+    // retains ownership of peer creation, standard capture, and playback.
+    expect(adapter, isNot(contains('InstrumentedPeerConnection')));
+    expect(adapter, isNot(contains('instrumentPeerConnections')));
+    expect(adapter, isNot(contains('element.play();')));
     expect(sdk, contains('Africastalking'));
+  });
+
+  test('visible WebKit inspector is strictly iOS debug-only', () {
+    expect(
+      usesIosDebugInspectorFor(
+        debugMode: true,
+        platform: TargetPlatform.iOS,
+      ),
+      isTrue,
+    );
+    expect(
+      usesIosDebugInspectorFor(
+        debugMode: false,
+        platform: TargetPlatform.iOS,
+      ),
+      isFalse,
+    );
+    expect(
+      usesIosDebugInspectorFor(
+        debugMode: true,
+        platform: TargetPlatform.android,
+      ),
+      isFalse,
+    );
   });
 
   test('normalizes JSON-encoded WebView string results across platforms', () {
@@ -167,5 +197,33 @@ void main() {
       usesSupportedWebViewMedia(CallMediaConfig.fromJson(_dualBlockConfig())),
       isFalse,
     );
+  });
+
+  test('default bridge URL is the known-working HTTPS ngrok shell', () {
+    // The bundled bridge still owns executable code; iOS needs this HTTPS
+    // document origin for WebKit microphone capture.
+    expect(defaultBridgeRemoteUrl.startsWith('https://'), isTrue);
+    expect(defaultBridgeRemoteUrl, contains('at_call_bridge.html'));
+    expect(defaultBridgeRemoteUrl, contains('ngrok-free.dev'));
+  });
+
+  test('bridge origin accepts https remotes, rejects insecure', () {
+    expect(
+      resolveBridgeOrigin('https://api.omnidesk.africa/at_call_bridge.html')
+          .origin,
+      CallBridgeOrigin.remote,
+    );
+    expect(
+      resolveBridgeOrigin(
+              'https://unvisual-nedra.ngrok-free.dev/at_call_bridge.html')
+          .origin,
+      CallBridgeOrigin.remote,
+    );
+    expect(
+        resolveBridgeOrigin('http://api.example.com/at_call_bridge.html')
+            .origin,
+        CallBridgeOrigin.asset);
+    expect(resolveBridgeOrigin(null).origin, CallBridgeOrigin.asset);
+    expect(resolveBridgeOrigin('').origin, CallBridgeOrigin.asset);
   });
 }

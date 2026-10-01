@@ -33,11 +33,19 @@ class CallLifecycleCoordinator {
   final NativeCallService _native;
   final CallSessionController Function() _controller;
   StreamSubscription<CallOffer>? _offers;
+  StreamSubscription<CallCancellation>? _cancels;
   StreamSubscription<String?>? _tokenChanges;
   StreamSubscription<NativeCallEvent>? _nativeEvents;
   String? _workspaceId;
   bool _active = false;
   bool _recovering = false;
+  // PushKit/CallKit can deliver `offerAvailable` and `answer` back-to-back on
+  // the main thread. Method-channel delivery is asynchronous, so processing
+  // them directly in independent stream callbacks permits the answer to race
+  // ahead of the durable-offer drain. Keep native work ordered: an answer
+  // always materializes its matching Flutter session before it attempts the
+  // authoritative backend accept.
+  Future<void> _nativeEventQueue = Future<void>.value();
 
   Future<void> start(AuthState auth) async {
     if (!auth.isAuthenticated || _active) return;
@@ -48,6 +56,7 @@ class CallLifecycleCoordinator {
       name: 'CallLifecycle',
     );
     _offers = _fcm.incomingCallOffers.listen(_onOffer);
+    _cancels = _fcm.incomingCallCancels.listen(_onCancel);
     _nativeEvents = _native.events.listen(_onNativeEvent);
     _tokenChanges = _fcm.tokenChanges.listen((_) {
       unawaited(_register());
@@ -142,6 +151,10 @@ class CallLifecycleCoordinator {
       );
       return;
     }
+    // Warm the WebRTC standby client in parallel with native presentation so
+    // the media engine is already initializing when the agent answers. The
+    // controller is single-flight and never touches an active call.
+    unawaited(_controller().prewarmMedia());
     final handled = await _controller().handleIncomingOffer(offer);
     developer.log(
       'Incoming offer handed to session controller handled=$handled.',
@@ -149,7 +162,38 @@ class CallLifecycleCoordinator {
     );
   }
 
-  Future<void> _onNativeEvent(NativeCallEvent event) async {
+  Future<void> _onCancel(CallCancellation cancel) async {
+    // FCM-delivered cancellation/state update (APNs background push on iOS).
+    // iOS may defer these while backgrounded, but whenever one arrives the
+    // ringing offer is dead backend-side: tear down the matching local
+    // surface without contacting /end (the server already ended it).
+    developer.log(
+      'Incoming call cancel received callId=${cancel.callId} '
+      'reason=${cancel.reason ?? "none"}.',
+      name: 'CallLifecycle',
+    );
+    if (!_active) return;
+    _controller().handleRemoteCancellation(
+      callId: cancel.callId,
+      reason: cancel.reason,
+    );
+  }
+
+  Future<void> _onNativeEvent(NativeCallEvent event) {
+    final work = _nativeEventQueue.then((_) => _handleNativeEvent(event));
+    // A failed MethodChannel read must not poison the queue and prevent every
+    // later PushKit action from being processed.
+    _nativeEventQueue = work.catchError((error) {
+      developer.log(
+        'Native call event processing failed type=${event.type.name} '
+        'error=${error.runtimeType}.',
+        name: 'CallLifecycle',
+      );
+    });
+    return work;
+  }
+
+  Future<void> _handleNativeEvent(NativeCallEvent event) async {
     developer.log(
       'Native call event type=${event.type.name} callId=${event.callId ?? "none"} '
       'callSid=${event.callSid ?? "none"} mediaSession=${event.mediaSessionId ?? "none"} '
@@ -162,8 +206,33 @@ class CallLifecycleCoordinator {
       case NativeCallEventType.nativePushTokenChanged:
         await _register();
       case NativeCallEventType.answer:
+        // On iOS CallKit may be answered while Flutter is backgrounded. The
+        // controller's own native-event listener is intentionally identity
+        // strict and will ignore such an action until the offer exists in
+        // state. Drain first, then replay the durable native action.
+        await _drainNativeOffer();
+        final controller = _controller();
+        if (controller.matchesNativeIdentity(callId: event.callId)) {
+          await controller.answer();
+        }
       case NativeCallEventType.decline:
+        await _drainNativeOffer();
+        final controller = _controller();
+        if (controller.matchesNativeIdentity(callId: event.callId)) {
+          await controller.decline();
+        }
       case NativeCallEventType.end:
+        // Never allow a delayed CallKit transaction for an old UUID to end a
+        // newer Flutter call. The notifier also has this check, but this
+        // coordinator path exists specifically for actions that arrived before
+        // its state was hydrated.
+        final controller = _controller();
+        if (controller.matchesNativeIdentity(
+          callId: event.callId,
+          callSid: event.callSid,
+        )) {
+          await controller.end();
+        }
       case NativeCallEventType.incomingPresented:
       case NativeCallEventType.incomingOpened:
       case NativeCallEventType.outgoingDialing:
@@ -184,6 +253,25 @@ class CallLifecycleCoordinator {
       name: 'CallLifecycle',
     );
     if (offer != null) {
+      if (offer.isExpired) {
+        // A stale durable offer must never surface UI or win a later accept.
+        // Dismiss the native surface so CallKit/Telecom cannot linger past
+        // the backend offer expiry, then drop it without backend contact.
+        developer.log(
+          'Pending native offer expired callId=${offer.callId}; dismissing.',
+          name: 'CallLifecycle',
+        );
+        try {
+          await _native.dismiss(NativeCallIdentity(
+            callId: offer.callId,
+            displayName: '',
+            phoneNumber: '',
+          ));
+        } catch (_) {
+          // Best-effort: the OS may already have ended the system call.
+        }
+        return;
+      }
       await _onOffer(offer);
       if (launch != null &&
           launch.callId == offer.callId &&
@@ -197,9 +285,11 @@ class CallLifecycleCoordinator {
     _active = false;
     _workspaceId = null;
     await _offers?.cancel();
+    await _cancels?.cancel();
     await _tokenChanges?.cancel();
     await _nativeEvents?.cancel();
     _offers = null;
+    _cancels = null;
     _tokenChanges = null;
     _nativeEvents = null;
   }

@@ -1,6 +1,8 @@
-# Native SIP third-party notices
+# Native SIP third-party notices (RETIRED)
 
-The iOS build script pins and builds these source dependencies:
+Baresip is no longer wired into the Runner target. Media is Africa's
+Talking WebRTC in a hidden WebView; iOS native owns PushKit + CallKit
+only. This note and `ios/scripts/build_baresip_ios.sh` remain for history.
 
 - Baresip `v3.24.0` — BSD-3-Clause
 - Libre `v3.24.0` — BSD-3-Clause

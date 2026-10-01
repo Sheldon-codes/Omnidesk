@@ -18,11 +18,33 @@ FcmService fcmService(Ref ref) => FcmService();
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  final type = '${message.data['type'] ?? ''}'.toLowerCase();
+  // A background isolate cannot touch Riverpod. Preserve offers so the
+  // application coordinator can reconcile them on the next foreground frame,
+  // and drop a preserved offer when its cancellation arrives first so a dead
+  // call can never surface after the process resumes.
+  if (type == 'call_cancelled') {
+    final cancel = _incomingCallCancel(message.data);
+    if (cancel != null) await PendingCallOfferStore().dropIfMatches(cancel.callId);
+    return;
+  }
   final offer = _incomingCallOffer(message.data);
   if (offer == null || offer.isExpired) return;
-  // A background isolate cannot touch Riverpod. Preserve the offer so the
-  // application coordinator can reconcile it on the next foreground frame.
   await PendingCallOfferStore().save(offer);
+}
+
+/// Backend-driven cancellation/state update for an offered call. Routed over
+/// FCM (APNs background push on iOS) alongside the PushKit VoIP wake-up path.
+class CallCancellation {
+  const CallCancellation({
+    required this.callId,
+    this.offerId,
+    this.reason,
+  });
+
+  final String callId;
+  final String? offerId;
+  final String? reason;
 }
 
 class FcmService {
@@ -38,6 +60,7 @@ class FcmService {
   String? _voipPushToken;
   bool _initialized = false;
   final _offers = StreamController<CallOffer>.broadcast();
+  final _cancels = StreamController<CallCancellation>.broadcast();
   final _tokenChanges = StreamController<String?>.broadcast();
   final _notificationEvents = StreamController<AppNotification>.broadcast();
   final _notificationTaps = StreamController<AppNotification>.broadcast();
@@ -46,6 +69,7 @@ class FcmService {
   String? get apnsToken => _apnsToken;
   String? get voipPushToken => _voipPushToken;
   Stream<CallOffer> get incomingCallOffers => _offers.stream;
+  Stream<CallCancellation> get incomingCallCancels => _cancels.stream;
   Stream<String?> get tokenChanges => _tokenChanges.stream;
   Stream<AppNotification> get notificationEvents => _notificationEvents.stream;
   Stream<AppNotification> get notificationTaps => _notificationTaps.stream;
@@ -123,9 +147,14 @@ class FcmService {
       _offers.add(offer);
       return;
     }
-    // Native Android/iOS call coordinators own cancellation delivery. It is
-    // latency-sensitive and must not trigger unrelated badge/network work.
-    if (type == 'call_cancelled') return;
+    // Cancellation/state updates arrive over FCM (APNs background pushes on
+    // iOS) next to the PushKit wake-up path. Surface them to the call
+    // coordinator; only non-call payloads fall through to notifications.
+    if (type == 'call_cancelled') {
+      final cancel = _incomingCallCancel(message.data);
+      if (cancel != null) _cancels.add(cancel);
+      return;
+    }
     _notificationRefreshEvents.add(null);
     try {
       final notification = AppNotification.fromJson(message.data);
@@ -161,6 +190,7 @@ class FcmService {
 
   Future<void> dispose() async {
     await _offers.close();
+    await _cancels.close();
     await _tokenChanges.close();
     await _notificationEvents.close();
     await _notificationTaps.close();
@@ -178,6 +208,21 @@ CallOffer? _incomingCallOffer(Map<String, dynamic> payload) {
     return null;
   }
   return offer;
+}
+
+CallCancellation? _incomingCallCancel(Map<String, dynamic> payload) {
+  if ('${payload['type'] ?? ''}'.toLowerCase() != 'call_cancelled') {
+    return null;
+  }
+  final callId = '${payload['call_id'] ?? ''}';
+  if (callId.isEmpty) return null;
+  final offerId = '${payload['offer_id'] ?? ''}';
+  final reason = '${payload['reason'] ?? ''}';
+  return CallCancellation(
+    callId: callId,
+    offerId: offerId.isEmpty ? null : offerId,
+    reason: reason.isEmpty ? null : reason,
+  );
 }
 
 /// Secure hand-off between an FCM background isolate and the UI isolate.
@@ -202,6 +247,24 @@ class PendingCallOfferStore {
       );
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Drops the preserved offer when its backend cancellation arrives before
+  /// the UI isolate drains it. A non-matching preserved offer is re-saved so
+  /// an unrelated cancellation can never discard a live incoming call.
+  Future<void> dropIfMatches(String callId) async {
+    final raw = await _storage.read(key: _key);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final storedId = '${decoded['call_id'] ?? ''}';
+      if (storedId == callId) {
+        await _storage.delete(key: _key);
+      }
+    } catch (_) {
+      // A corrupt entry must not block future offers; leave it for take().
     }
   }
 }

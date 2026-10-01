@@ -14,6 +14,7 @@ import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
 import 'call_media_service.dart';
 import 'call_models.dart';
+import 'native_call_service.dart';
 
 /// Which origin serves the bridge page. Asset pages (`flutter-asset://`)
 /// are not secure contexts, so WebKit may never settle getUserMedia there.
@@ -48,6 +49,15 @@ Duration settleDelaySince(DateTime? lastInitAt, DateTime now) {
   return elapsed >= cooldown ? Duration.zero : cooldown - elapsed;
 }
 
+/// Kept pure so diagnostic UI cannot accidentally leak into a release or
+/// Android build as the call host evolves.
+@visibleForTesting
+bool usesIosDebugInspectorFor({
+  required bool debugMode,
+  required TargetPlatform platform,
+}) =>
+    debugMode && platform == TargetPlatform.iOS;
+
 /// `runJavaScriptReturningResult` returns primitive strings as JSON strings on
 /// Android (for example, `"bridge_ok"`), while some WebView implementations
 /// return the unquoted primitive. Normalize both representations before
@@ -73,6 +83,8 @@ const String atBridgeChannel = 'OmniDeskBridge';
 /// Default remote bridge URL hosted on HTTPS.
 /// Loading over HTTPS provides a secure context (`window.isSecureContext === true`)
 /// required by WebKit for `navigator.mediaDevices.getUserMedia()`.
+/// The current default is the known-working HTTPS ngrok shell. Deployments can
+/// override it with `AT_BRIDGE_URL` without changing call-engine code.
 const String defaultBridgeRemoteUrl =
     'https://unvisual-nedra-depressively.ngrok-free.dev/at_call_bridge.html';
 
@@ -92,7 +104,10 @@ Duration get _remoteBridgeLoadTimeout =>
 const Duration _assetBridgeLoadTimeout = Duration(seconds: 20);
 const Duration _sdkInjectionTimeout = Duration(seconds: 12);
 const Duration _bridgeHandshakeTimeout = Duration(seconds: 8);
-const String _expectedBridgeVersion = '2.0.0';
+// Must match the bundled adapter, not the hosted HTML shell version. The
+// shell remains 2.0.0 because it only provides a secure document origin;
+// executable call behavior is injected from assets/js at runtime.
+const String _expectedBridgeVersion = '2.1.0';
 const String _expectedSdkVersion = '1.0.7';
 
 /// Android's bundled Flutter asset is a secure WebView context on supported
@@ -185,6 +200,9 @@ class WebViewCallMediaService implements CallMediaService {
   WebViewController? _controller;
   final _events = StreamController<CallMediaEvent>.broadcast();
   final _diagnostics = StreamController<CallBridgeDiagnostic>.broadcast();
+  // Full-screen WebKit presentation is a debug-only iOS experiment. It is
+  // never release UI and does not affect Android's established media path.
+  final ValueNotifier<bool> _debugInspectorVisible = ValueNotifier(false);
   StreamSubscription<DateTime>? _watchdog;
   DateTime? _lastHeartbeat;
   Completer<void>? _ready;
@@ -235,6 +253,13 @@ class WebViewCallMediaService implements CallMediaService {
 
   bool get hasController => _controller != null;
 
+  ValueListenable<bool> get debugInspectorVisible => _debugInspectorVisible;
+
+  bool get _usesIosDebugInspector => usesIosDebugInspectorFor(
+        debugMode: kDebugMode,
+        platform: defaultTargetPlatform,
+      );
+
   bool get isStandbyReady => _engineReady && !_clientInUse;
 
   /// Reads only the bridge's boolean attachment state. An unreadable bridge is
@@ -277,6 +302,7 @@ class WebViewCallMediaService implements CallMediaService {
     _clientInUse = false;
     _callSid = null;
     _sessionId = null;
+    unawaited(_setDebugInspectorVisible(false));
     _log('media lease released reason=$reason');
   }
 
@@ -558,9 +584,52 @@ class WebViewCallMediaService implements CallMediaService {
       );
     }
     _injectedGeneration = generation;
+    await _applyDebugInspector(controller);
     _bridgeNote = 'bundled SDK and bridge ready';
     _log('bundled bridge injected generation=$generation '
         'elapsedMs=${stopwatch.elapsedMilliseconds} sdk=$_expectedSdkVersion');
+  }
+
+  Future<void> _setDebugInspectorVisible(bool visible) async {
+    final enabled = visible && _usesIosDebugInspector;
+    if (_debugInspectorVisible.value == enabled) return;
+    _debugInspectorVisible.value = enabled;
+    final controller = _controller;
+    if (controller == null || !_pageLoaded) return;
+    try {
+      await controller.runJavaScript(
+        'window.OmniDesk && window.OmniDesk.call && '
+        'window.OmniDesk.call.setDebugInspector(${enabled ? 'true' : 'false'})',
+      );
+    } catch (_) {
+      // Presentation diagnostics must never block a media cleanup path.
+    }
+  }
+
+  Future<void> _applyDebugInspector(WebViewController controller) async {
+    if (!_usesIosDebugInspector || !_debugInspectorVisible.value) return;
+    await controller.runJavaScript(
+      'window.OmniDesk.call.setDebugInspector(true)',
+    );
+  }
+
+  /// Mirrors a strictly allowlisted CallKit snapshot into the temporary iOS
+  /// inspector. It is diagnostic-only and can never block media operations.
+  Future<void> updateNativeAudioDiagnostic(
+    NativeAudioSessionDiagnostic diagnostic,
+  ) async {
+    if (!_usesIosDebugInspector || !_debugInspectorVisible.value) return;
+    final controller = _controller;
+    if (controller == null || !_pageLoaded) return;
+    try {
+      await controller.runJavaScript(
+        'window.OmniDesk && window.OmniDesk.call && '
+        'window.OmniDesk.call.setNativeAudioSession('
+        '${jsonEncode(diagnostic.toSafeMap())})',
+      );
+    } catch (_) {
+      // Do not let diagnostic delivery interfere with a live call.
+    }
   }
 
   /// Loads a fresh page for a media attempt. The remote bridge is preferred
@@ -682,6 +751,7 @@ class WebViewCallMediaService implements CallMediaService {
     CallId? incomingCallId,
     bool reserveClient = true,
   }) async {
+    if (reserveClient) unawaited(_setDebugInspectorVisible(true));
     if (reserveClient) _clientReservation++;
     final activeInitialization = _initialization;
     if (activeInitialization != null) {
@@ -695,9 +765,16 @@ class WebViewCallMediaService implements CallMediaService {
       if (identical(_initialization, operation)) _initialization = null;
     });
     _initialization = operation;
-    final session = await operation;
-    if (reserveClient) _clientInUse = true;
-    return session;
+    try {
+      final session = await operation;
+      if (reserveClient) _clientInUse = true;
+      return session;
+    } catch (_) {
+      if (reserveClient && !_clientInUse) {
+        unawaited(_setDebugInspectorVisible(false));
+      }
+      rethrow;
+    }
   }
 
   Future<String> _initializeWithFallback(CallMediaConfig config,
@@ -949,15 +1026,23 @@ class WebViewCallMediaService implements CallMediaService {
         return false;
       }
       final heartbeat = _lastHeartbeat;
-      if (heartbeat != null) {
-        final heartbeatAge = DateTime.now().difference(heartbeat);
-        if (heartbeatAge >= const Duration(seconds: 15)) {
-          // Soft signal only. A successful status probe above proves the
-          // current WebView generation is still responsive. Keep the warm AT
-          // client and make the age observable for later performance work.
-          _log('standby heartbeat stale but status probe passed '
-              'heartbeatAgeMs=${heartbeatAge.inMilliseconds}');
-        }
+      final heartbeatAge =
+          heartbeat == null ? null : DateTime.now().difference(heartbeat);
+      if (defaultTargetPlatform == TargetPlatform.iOS &&
+          (heartbeatAge == null ||
+              heartbeatAge >= const Duration(seconds: 15))) {
+        // A status() evaluation proves only that the JavaScript heap still
+        // exists. It does not prove that an invisible WKWebView retains its
+        // AT signalling socket. iOS previously reused clients with 80s+ stale
+        // heartbeats, then client.call() emitted no provider event at all.
+        // Rebuild a clean client rather than issuing a dial into that state.
+        _log('standby health check failed: stale iOS heartbeat '
+            'ageMs=${heartbeatAge?.inMilliseconds ?? 'missing'}');
+        return false;
+      }
+      if (heartbeatAge != null && heartbeatAge >= const Duration(seconds: 15)) {
+        _log('standby heartbeat stale but status probe passed '
+            'heartbeatAgeMs=${heartbeatAge.inMilliseconds}');
       }
       return true;
     } catch (error) {
@@ -971,7 +1056,11 @@ class WebViewCallMediaService implements CallMediaService {
   /// prewarming. The bridge still receives a platform permission grant during
   /// the real capture request.
   Future<bool> requestMicrophonePermission() async {
-    final microphone = await Permission.microphone.request();
+    final before = await Permission.microphone.status;
+    _log('microphone permission before=$before');
+    final microphone =
+        before.isGranted ? before : await Permission.microphone.request();
+    _log('microphone permission after=$microphone');
     return microphone.isGranted;
   }
 
@@ -1180,6 +1269,17 @@ class WebViewCallMediaService implements CallMediaService {
             'trackMuted',
             'errorName',
             'required',
+            'returnType',
+            'promiseState',
+            'signalingState',
+            'iceGatheringState',
+            'iceConnectionState',
+            'connectionState',
+            'audioElementCount',
+            'mediaElementState',
+            'audioOutputMuted',
+            'audioOutputVolume',
+            'audioOutputPaused',
           }.contains(key)) {
             final value = entry.value;
             if (value is String ||
@@ -1280,6 +1380,7 @@ class WebViewCallMediaService implements CallMediaService {
     _cancelDialWatch(null);
     await _events.close();
     await _diagnostics.close();
+    _debugInspectorVisible.dispose();
   }
 }
 
@@ -1399,16 +1500,31 @@ class _HiddenCallWebViewState extends ConsumerState<HiddenCallWebView>
   }
 
   @override
-  Widget build(BuildContext context) => ExcludeSemantics(
-        child: IgnorePointer(
-          child: Opacity(
-            opacity: 0.01,
-            child: SizedBox.expand(
-              child: WebViewWidget(controller: _controller),
-            ),
-          ),
-        ),
-      );
+  Widget build(BuildContext context) {
+    final webView =
+        SizedBox.expand(child: WebViewWidget(controller: _controller));
+    final service = ref.read(webViewCallMediaServiceProvider);
+    // This platform view is placed before the app's routed Flutter content in
+    // the root Stack, so it remains visually covered and cannot intercept
+    // touches. Giving WKWebView a real alpha on iOS is nevertheless material:
+    // an alpha-hidden view reports document.visibilityState=hidden and may
+    // suspend its WebRTC/microphone work while client.call() is in progress.
+    return ValueListenableBuilder<bool>(
+      valueListenable: service.debugInspectorVisible,
+      builder: (context, inspectorVisible, _) {
+        // In iOS debug builds this deliberately becomes a real, opaque,
+        // focusable platform view. It is a controlled capture-eligibility
+        // experiment; release and Android retain the invisible media host.
+        if (inspectorVisible && defaultTargetPlatform == TargetPlatform.iOS) {
+          return webView;
+        }
+        final attachedWebView = defaultTargetPlatform == TargetPlatform.iOS
+            ? webView
+            : Opacity(opacity: 0.01, child: webView);
+        return ExcludeSemantics(child: IgnorePointer(child: attachedWebView));
+      },
+    );
+  }
 }
 
 final webViewCallMediaServiceProvider =

@@ -138,6 +138,10 @@ class DeviceRegistry {
 
   Future<void> _register() async {
     final id = await installationId();
+    // Dual-token design (backend contract): iOS registers the PushKit VoIP
+    // token (incoming-call wake-ups via `voip_push_token`) AND the FCM token
+    // (cancellation/state updates via `fcm_token`, delivered as APNs
+    // background pushes). Android sends only `fcm_token`.
     // Android owns `MESSAGING_EVENT` natively so Firebase's Flutter plugin
     // is not guaranteed to receive every token callback. The native service
     // persists the same FCM token, which is the authoritative fallback here.
@@ -157,8 +161,12 @@ class DeviceRegistry {
               ? nativePushToken
               : null),
     );
-    // The server can only route a mobile offer after it has a platform-native
-    // wake token. Avoid registering a misleading, non-routable installation.
+    // The server can only wake a mobile offer after it has a platform-native
+    // wake token (VoIP on iOS, FCM on Android). Avoid registering a
+    // misleading, non-routable installation. The FCM update token is
+    // best-effort: when iOS Firebase has not issued one yet, registration
+    // still proceeds on the VoIP token and re-registers with both tokens as
+    // soon as the FCM token arrives (fingerprint change via tokenChanges).
     if (registration.platform == 'unsupported' ||
         (registration.platform == 'android' &&
             (registration.fcmToken == null ||
