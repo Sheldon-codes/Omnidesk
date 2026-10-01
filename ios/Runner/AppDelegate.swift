@@ -37,8 +37,21 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // CallKit must know about our CXProvider before a CXCallController submits
+    // an outgoing CXStartCallAction. Incoming calls already instantiate this
+    // provider through reportNewIncomingCall, but an outbound call on a cold
+    // launch otherwise reaches CallKit with no registered provider and is
+    // rejected as CXErrorCodeRequestTransactionErrorUnknownCallProvider.
+    ensureCallProvider()
     configureVoipPush()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  /// Materializes the process-wide CallKit provider. Keeping this explicit is
+  /// important because [callProvider] is lazy: outbound calls do not otherwise
+  /// reference it before requesting their first transaction.
+  private func ensureCallProvider() {
+    _ = callProvider
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
@@ -159,8 +172,7 @@ import UIKit
 
   func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
     mediaLogger.info(
-      "CallKit audio activated category=\(audioSession.category.rawValue, privacy: .public) " +
-      "mode=\(audioSession.mode.rawValue, privacy: .public)"
+      "CallKit audio activated category=\(audioSession.category.rawValue, privacy: .public) mode=\(audioSession.mode.rawValue, privacy: .public)"
     )
   }
 
@@ -206,6 +218,9 @@ import UIKit
         result(FlutterError(code: "invalid_call", message: "Missing call identity", details: nil))
         return
       }
+      // Be defensive in case this handler is ever invoked before normal app
+      // startup has completed (for example, during engine restoration).
+      ensureCallProvider()
       let handle = CXHandle(type: .phoneNumber, value: args["phoneNumber"] as? String ?? "Unknown")
       let action = CXStartCallAction(call: uuid(for: identity), handle: handle)
       action.contactIdentifier = args["displayName"] as? String
