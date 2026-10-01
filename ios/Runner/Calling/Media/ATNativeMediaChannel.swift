@@ -14,11 +14,16 @@ final class ATNativeMediaChannel {
   private let rtc = ATWebRTCSession()
   private var sessionID: String?
   private var callSid: String?
+  private var incomingCallID: String?
+  private var pendingIncomingOffer: [String: Any]?
+  private var answerInProgress = false
+  private var pendingAnswerResult: FlutterResult?
   private var callAccepted = false
   private var connectedEmitted = false
   private var peerConnected = false
   private var callRequestSent = false
   private var pendingLocalCandidates: [[String: Any]?] = []
+  private var connectionTimeout: Timer?
 
   init(messenger: FlutterBinaryMessenger) {
     channel = FlutterMethodChannel(name: Self.name, binaryMessenger: messenger)
@@ -53,6 +58,7 @@ final class ATNativeMediaChannel {
         switch state {
         case .connected:
           self.peerConnected = true
+          self.emit("diagnostic", payload: ["phase": "webrtc_state", "result": "connected"])
           self.emitConnectedIfReady()
         case .failed, .closed:
           self.peerConnected = false
@@ -88,6 +94,14 @@ final class ATNativeMediaChannel {
         result(FlutterError(code: "invalid_config", message: "Missing capability token", details: nil)); return
       }
       sessionID = "at-native-\(UUID().uuidString)"
+      if let callID = args["incomingCallId"] as? String, !callID.isEmpty {
+        incomingCallID = callID
+      } else {
+        incomingCallID = nil
+      }
+      pendingIncomingOffer = nil
+      answerInProgress = false
+      pendingAnswerResult = nil
       signaling.connect(gateway: args["gatewayUrl"] as? String, capabilityToken: token) { [weak self] outcome in
         DispatchQueue.main.async {
           guard let self else { return }
@@ -130,14 +144,58 @@ final class ATNativeMediaChannel {
         }
       }
     case "answer":
-      result(FlutterError(code: "unsupported", message: "Gate 2 currently implements outbound negotiation only.", details: nil))
+      guard let args = call.arguments as? [String: Any],
+            let requestedCallID = args["callSid"] as? String,
+            requestedCallID == incomingCallID,
+            requestedCallID == callSid,
+            let offer = pendingIncomingOffer,
+            !answerInProgress else {
+        result(FlutterError(
+          code: "incoming_call_unavailable",
+          message: "No matching AT incoming offer is pending.",
+          details: nil))
+        return
+      }
+      answerInProgress = true
+      pendingAnswerResult = result
+      rtc.makeAnswer(for: offer) { [weak self] answer in
+        DispatchQueue.main.async {
+          guard let self, self.callSid == requestedCallID, self.answerInProgress else { return }
+          self.answerInProgress = false
+          let answerResult = self.pendingAnswerResult
+          self.pendingAnswerResult = nil
+          switch answer {
+          case .success(let jsep):
+            self.signaling.sendAccept(answer: jsep)
+            self.emit("diagnostic", payload: ["phase": "incoming_answer", "result": "submitted"])
+            self.callRequestSent = true
+            self.pendingLocalCandidates.forEach { self.signaling.sendTrickle($0) }
+            self.pendingLocalCandidates.removeAll()
+            self.pendingIncomingOffer = nil
+            self.connectionTimeout?.invalidate()
+            self.connectionTimeout = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
+              guard let self, self.callSid == requestedCallID, !self.connectedEmitted else { return }
+              self.emit("processTerminated", payload: ["reason": "provider_media_timeout"])
+              self.finishCall(reason: "media_connection_timeout", sendHangup: true)
+            }
+            answerResult?(nil)
+          case .failure(let error):
+            self.signaling.sendDecline()
+            self.finishCall(reason: "answer_failed", sendHangup: false)
+            answerResult?(FlutterError(
+              code: "webrtc_answer_failed",
+              message: error.localizedDescription,
+              details: nil))
+          }
+        }
+      }
     case "setMuted":
       let enabled = (call.arguments as? [String: Any])?["enabled"] as? Bool ?? false
       rtc.setMuted(enabled)
       emit("micStatus", payload: ["muted": enabled])
       result(nil)
     case "setHeld", "sendDtmf":
-      result(FlutterError(code: "unsupported", message: "This media operation is not implemented in Gate 2.", details: nil))
+      result(FlutterError(code: "unsupported", message: "This media operation is not implemented in Gate 3.", details: nil))
     case "end":
       finishCall(reason: "local_end", sendHangup: true)
       result(nil)
@@ -152,11 +210,43 @@ final class ATNativeMediaChannel {
   }
 
   private func handleSignaling(_ event: ATSignalingEvent) {
+    if event.name == "incomingcall" {
+      guard let incomingCallID else {
+        emit("diagnostic", payload: [
+          "phase": "incoming_offer_ignored",
+          "result": "missing_call_identity_or_offer",
+        ])
+        return
+      }
+      if callSid == incomingCallID, pendingIncomingOffer != nil { return }
+      guard callSid == nil,
+            let offer = event.jsep,
+            offer["type"] as? String == "offer",
+            offer["sdp"] as? String != nil else {
+        emit("error", payload: ["reason": "incoming_offer_missing_jsep"])
+        return
+      }
+      pendingIncomingOffer = offer
+      callSid = incomingCallID
+      callAccepted = false
+      connectedEmitted = false
+      peerConnected = false
+      callRequestSent = false
+      answerInProgress = false
+      pendingLocalCandidates.removeAll()
+      emit("diagnostic", payload: ["phase": "incoming_offer", "result": "received"])
+      emit("incoming", payload: ["callSid": incomingCallID])
+      return
+    }
     if event.name == "trickle", let candidate = event.payload["candidate"] as? [String: Any] {
+      guard incomingCallID != nil || callSid != nil else { return }
       rtc.addRemoteCandidate(candidate)
       return
     }
-    if let jsep = event.jsep, ["progress", "accepted"].contains(event.name) {
+    let shouldApplyRemoteJSEP = incomingCallID == nil || callRequestSent
+    if shouldApplyRemoteJSEP,
+       let jsep = event.jsep,
+       ["progress", "accepted"].contains(event.name) {
       rtc.applyRemoteDescription(jsep) { [weak self] result in
         DispatchQueue.main.async {
           guard let self else { return }
@@ -167,7 +257,10 @@ final class ATNativeMediaChannel {
     }
     switch event.name {
     case "calling", "progress": emit("ringing", payload: ["callSid": callSid ?? ""])
-    case "accepted": callAccepted = true; emitConnectedIfReady()
+    case "accepted":
+      callAccepted = true
+      emit("diagnostic", payload: ["phase": "provider_call", "result": "accepted"])
+      emitConnectedIfReady()
     case "hangup", "decline", "missed_call": finishCall(reason: event.name, sendHangup: false)
     case "registration_failed": emit("error", payload: ["reason": "registration_failed"])
     default: break
@@ -176,6 +269,8 @@ final class ATNativeMediaChannel {
 
   private func emitConnectedIfReady() {
     guard callAccepted, peerConnected, !connectedEmitted, callSid != nil else { return }
+    connectionTimeout?.invalidate()
+    connectionTimeout = nil
     // The peer callback separately verifies ICE + DTLS connected; AT's
     // accepted event or SDP application alone does not mark media connected.
     // This flag is set only from the connection callback's connected path.
@@ -184,15 +279,29 @@ final class ATNativeMediaChannel {
   }
 
   private func finishCall(reason: String, sendHangup: Bool) {
-    guard callSid != nil || connectedEmitted else { return }
-    if sendHangup { signaling.sendHangup() }
+    let hadProviderCall = callSid != nil || connectedEmitted
+    guard hadProviderCall || incomingCallID != nil else { return }
+    if sendHangup, hadProviderCall { signaling.sendHangup() }
+    let answerResult = pendingAnswerResult
+    pendingAnswerResult = nil
+    connectionTimeout?.invalidate()
+    connectionTimeout = nil
     rtc.closePeer()
-    emit("ended", payload: ["callSid": callSid ?? "", "reason": reason])
+    if hadProviderCall || incomingCallID != nil {
+      emit("ended", payload: ["callSid": callSid ?? incomingCallID ?? "", "reason": reason])
+    }
+    answerResult?(FlutterError(
+      code: "answer_cancelled",
+      message: "The incoming media answer was cancelled.",
+      details: nil))
     callSid = nil
+    incomingCallID = nil
+    pendingIncomingOffer = nil
     callAccepted = false
     connectedEmitted = false
     peerConnected = false
     callRequestSent = false
+    answerInProgress = false
     pendingLocalCandidates.removeAll()
   }
 

@@ -85,6 +85,14 @@ final class ATSignalingClient: NSObject {
     send(request: "call", fields: ["to": number], jsep: offer)
   }
 
+  func sendAccept(answer: [String: Any]) {
+    send(request: "accept", jsep: answer)
+  }
+
+  func sendDecline() {
+    send(request: "decline")
+  }
+
   func sendTrickle(_ candidate: [String: Any]?) {
     sendJSON(["command": "trickle", "candidate": candidate ?? ["completed": true]])
   }

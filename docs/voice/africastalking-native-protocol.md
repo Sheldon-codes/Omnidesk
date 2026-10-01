@@ -1,6 +1,6 @@
 # Africa's Talking native WebRTC protocol
 
-Status: Gate 1 baseline, with Gate 2 implementation details appended
+Status: Gate 1 baseline, with Gate 2 and Gate 3 implementation details appended
 
 Sources:
 
@@ -234,5 +234,32 @@ firewalls. This is a deliberate fidelity choice, not a production-grade
 connectivity guarantee. Do not enable the build-time iOS-native flag for
 general deployment until a live AT handshake and physical-device two-way
 audio/candidate-path validation pass. Incoming native answering, DTMF, and
-hold are outside this outbound Gate 2 slice; the WebView implementation stays
-available and remains the default.
+hold were outside the outbound Gate 2 slice; the WebView implementation stays
+available as a fallback.
+
+## Gate 3 native inbound implementation
+
+The iOS native adapter now implements the SDK's inbound WebRTC sequence:
+
+1. The accepted backend call ID is passed into native initialization as the
+   inbound correlation identity.
+2. After `/media-ready`, the adapter consumes AT's `incomingcall` event and
+   retains its remote JSEP offer without logging SDP or caller credentials.
+3. Remote trickle candidates, including end-of-candidates, are buffered until
+   the remote offer is applied to the peer connection.
+4. Flutter signals the answer action only after the inbound event is received.
+   Native WebRTC applies the remote offer, creates and applies a local audio
+   answer, sends `message` / `accept` with that JSEP, and flushes local ICE.
+5. The media service reports `connected` only after AT's `accepted` event and
+   WebRTC's connected state have both occurred. If both are not observed
+   within 30 seconds after sending the answer, native media terminates the
+   attempt and reports a sanitized timeout instead of leaving the call UI
+   connecting indefinitely.
+
+This implementation is source-aligned with the bundled 1.0.7 SDK's
+`incomingcall` → `createAnswer(jsep)` → `request=accept` behavior. Physical
+device/provider validation is still required: the pasted failure log showed
+that backend `/accept` and `/media-ready` success precede the provider event,
+and a successful HTTP response alone is not evidence of an AT media leg.
+The native ICE configuration remains empty per the Gate 1 source trace, so
+connectivity is still subject to host-candidate/NAT limitations.

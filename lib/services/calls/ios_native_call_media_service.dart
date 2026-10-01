@@ -149,12 +149,20 @@ class IOSNativeCallMediaService implements CallMediaService {
       'micStatus' => CallMediaEventType.micStatus,
       'processTerminated' => CallMediaEventType.processTerminated,
       'error' => CallMediaEventType.error,
+      'diagnostic' => CallMediaEventType.diagnostic,
       _ => null,
     };
     if (event == null) return;
+    final diagnostic = call.method == 'diagnostic'
+        ? <String?>[
+            args['phase']?.toString(),
+            args['negotiatedProtocol']?.toString(),
+            args['result']?.toString(),
+          ].whereType<String>().where((value) => value.isNotEmpty).join(':')
+        : null;
     _events.add(CallMediaEvent(
       type: event,
-      reason: args['reason']?.toString(),
+      reason: diagnostic ?? args['reason']?.toString(),
       mediaSessionId: args['sessionId']?.toString(),
       callSid: args['callSid']?.toString(),
     ));

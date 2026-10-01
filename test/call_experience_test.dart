@@ -156,6 +156,26 @@ void main() {
         CallLifecycle.active);
   });
 
+  test('incoming media event during initialization is not lost', () async {
+    final api = _FakeCallApi();
+    final media = _FakeMedia()..incomingInitializationGate = Completer<void>();
+    final container = _liveContainer(api: api, media: media);
+    addTearDown(container.dispose);
+    final controller = container.read(callSessionControllerProvider.notifier);
+
+    expect(await controller.handleIncomingOffer(_incomingOffer()), isTrue);
+    final answer = controller.answer();
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(media.incomingEventsEmitted, 1);
+
+    media.incomingInitializationGate!.complete();
+    await answer.timeout(const Duration(seconds: 1));
+
+    expect(api.mediaReadySent, isTrue);
+    expect(container.read(callSessionControllerProvider).lifecycle,
+        CallLifecycle.active);
+  });
+
   test('remote decline keeps a short terminal acknowledgement', () async {
     final native = _FakeNativeCallService();
     final container = _liveContainer(native: native);
@@ -473,6 +493,8 @@ class _FakeMedia implements CallMediaService {
   final _events = StreamController<CallMediaEvent>.broadcast();
   Object? outboundAdmissionError;
   int outboundAdmissionChecks = 0;
+  Completer<void>? incomingInitializationGate;
+  int incomingEventsEmitted = 0;
 
   @override
   Stream<CallMediaEvent> get events => _events.stream;
@@ -493,9 +515,16 @@ class _FakeMedia implements CallMediaService {
     Timer.run(() =>
         _events.add(const CallMediaEvent(type: CallMediaEventType.ready)));
     if (incomingCallId != null) {
-      Future<void>.delayed(const Duration(milliseconds: 5), () {
+      final gate = incomingInitializationGate;
+      if (gate != null) {
+        incomingEventsEmitted++;
         _events.add(const CallMediaEvent(type: CallMediaEventType.incoming));
-      });
+        await gate.future;
+      } else {
+        Future<void>.delayed(const Duration(milliseconds: 5), () {
+          _events.add(const CallMediaEvent(type: CallMediaEventType.incoming));
+        });
+      }
     }
     return 'webview-test-1';
   }

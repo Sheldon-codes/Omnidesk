@@ -722,6 +722,10 @@ class CallSessionController extends _$CallSessionController {
           'The call service did not provide a usable media credential.',
         );
       }
+      // Subscribe before native registration finishes. AT can deliver the
+      // incomingcall event immediately after registration/media-ready, and a
+      // native event must not be lost before the waiter is installed.
+      _incomingMedia = Completer<void>();
       final mediaSessionId =
           await _selectMedia(config).initialize(config, incomingCallId: callId);
       _markAttemptPhase('client_ready');
@@ -748,9 +752,8 @@ class CallSessionController extends _$CallSessionController {
         await _media.endMedia(mediaSessionId);
         return;
       }
-      // Install the waiter before notifying the backend. The provider can
-      // create the WebRTC leg immediately after media-ready returns.
-      _incomingMedia = Completer<void>();
+      // The waiter was installed before native initialization. The provider
+      // can create the WebRTC leg immediately after media-ready returns.
       developer.log(
         'Incoming call flow phase=media_ready_requested callId=$callId '
         'mediaSession=$mediaSessionId.',
@@ -1092,6 +1095,8 @@ class CallSessionController extends _$CallSessionController {
             _reportClientEvent(CallClientEvent.microphoneCaptureReady),
           );
         }
+        break;
+      case CallMediaEventType.diagnostic:
         break;
       case CallMediaEventType.incoming:
         unawaited(_reportClientEvent(CallClientEvent.incoming));

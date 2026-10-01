@@ -14,6 +14,7 @@ final class ATWebRTCSession: NSObject {
   private var localTrack: RTCAudioTrack?
   private var pendingRemoteCandidates: [RTCIceCandidate] = []
   private var hasRemoteDescription = false
+  private var remoteDescriptionSDP: String?
   private var sentEndOfCandidates = false
 
   override init() {
@@ -25,24 +26,8 @@ final class ATWebRTCSession: NSObject {
   }
 
   func makeOffer(completion: @escaping (Result<[String: Any], Error>) -> Void) {
-    closePeer()
-    let configuration = RTCConfiguration()
-    configuration.iceServers = []
-    configuration.bundlePolicy = .balanced
-    configuration.rtcpMuxPolicy = .require
-    configuration.sdpSemantics = .unifiedPlan
-    let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
-    guard let peer = factory.peerConnection(with: configuration, constraints: constraints, delegate: self) else {
-      completion(.failure(ATSignalingError.protocolError("Unable to create peer connection.")))
-      return
-    }
-    self.peer = peer
-    let audioSource = factory.audioSource(with: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil))
-    let track = factory.audioTrack(with: audioSource, trackId: "at-audio")
-    localTrack = track
-    guard peer.add(track, streamIds: ["at-audio-stream"]) != nil else {
-      closePeer()
-      completion(.failure(ATSignalingError.protocolError("Unable to add local audio track.")))
+    guard let peer = createPeerConnectionWithAudioTrack() else {
+      completion(.failure(ATSignalingError.protocolError("Unable to create audio peer connection.")))
       return
     }
 
@@ -63,10 +48,56 @@ final class ATWebRTCSession: NSObject {
     }
   }
 
+  func makeAnswer(
+    for remoteOffer: [String: Any],
+    completion: @escaping (Result<[String: Any], Error>) -> Void
+  ) {
+    guard remoteOffer["type"] as? String == "offer",
+          remoteOffer["sdp"] as? String != nil else {
+      completion(.failure(ATSignalingError.protocolError("Invalid incoming JSEP offer.")))
+      return
+    }
+    // The AT gateway may trickle the first candidates before it delivers the
+    // incomingcall event. Preserve that queue while creating the peer.
+    let earlyCandidates = pendingRemoteCandidates
+    guard let peer = createPeerConnectionWithAudioTrack() else {
+      completion(.failure(ATSignalingError.protocolError("Unable to create audio peer connection.")))
+      return
+    }
+    pendingRemoteCandidates = earlyCandidates
+
+    applyRemoteDescription(remoteOffer) { [weak self, weak peer] result in
+      guard let self, let peer else { return }
+      guard case .success = result else {
+        if case .failure(let error) = result { completion(.failure(error)) }
+        return
+      }
+      let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+      peer.answer(for: constraints) { [weak self, weak peer] answer, error in
+        guard let self, let peer else { return }
+        guard let answer, error == nil else {
+          completion(.failure(error ?? ATSignalingError.protocolError("WebRTC answer creation failed.")))
+          return
+        }
+        peer.setLocalDescription(answer) { error in
+          guard error == nil else {
+            completion(.failure(error ?? ATSignalingError.protocolError("Setting local SDP answer failed.")))
+            return
+          }
+          completion(.success(["type": "answer", "sdp": answer.sdp]))
+        }
+      }
+    }
+  }
+
   func applyRemoteDescription(_ jsep: [String: Any], completion: @escaping (Result<Void, Error>) -> Void) {
     guard let type = jsep["type"] as? String, let sdp = jsep["sdp"] as? String,
           let peer else {
       completion(.failure(ATSignalingError.protocolError("Invalid remote JSEP description.")))
+      return
+    }
+    if hasRemoteDescription, remoteDescriptionSDP == sdp {
+      completion(.success(()))
       return
     }
     let sdpType: RTCSdpType
@@ -84,6 +115,7 @@ final class ATWebRTCSession: NSObject {
         return
       }
       self.hasRemoteDescription = true
+      self.remoteDescriptionSDP = sdp
       let buffered = self.pendingRemoteCandidates
       self.pendingRemoteCandidates.removeAll()
       self.addCandidates(buffered, completion: completion)
@@ -91,18 +123,16 @@ final class ATWebRTCSession: NSObject {
   }
 
   func addRemoteCandidate(_ json: [String: Any]) {
-    guard let peer else { return }
+    let candidate: RTCIceCandidate
     if json["completed"] as? Bool == true {
-      peer.add(RTCIceCandidate(sdp: "", sdpMLineIndex: 0, sdpMid: "audio")) { [weak self] error in
-        if let error { self?.onFailure?(error) }
-      }
-      return
+      candidate = RTCIceCandidate(sdp: "", sdpMLineIndex: 0, sdpMid: "audio")
+    } else {
+      guard let sdp = json["candidate"] as? String,
+            let mid = json["sdpMid"] as? String,
+            let line = (json["sdpMLineIndex"] as? NSNumber)?.int32Value else { return }
+      candidate = RTCIceCandidate(sdp: sdp, sdpMLineIndex: line, sdpMid: mid)
     }
-    guard let sdp = json["candidate"] as? String,
-          let mid = json["sdpMid"] as? String,
-          let line = (json["sdpMLineIndex"] as? NSNumber)?.int32Value else { return }
-    let candidate = RTCIceCandidate(sdp: sdp, sdpMLineIndex: line, sdpMid: mid)
-    guard hasRemoteDescription else {
+    guard let peer, hasRemoteDescription else {
       pendingRemoteCandidates.append(candidate)
       return
     }
@@ -120,7 +150,30 @@ final class ATWebRTCSession: NSObject {
     localTrack = nil
     pendingRemoteCandidates.removeAll()
     hasRemoteDescription = false
+    remoteDescriptionSDP = nil
     sentEndOfCandidates = false
+  }
+
+  private func createPeerConnectionWithAudioTrack() -> RTCPeerConnection? {
+    closePeer()
+    let configuration = RTCConfiguration()
+    configuration.iceServers = []
+    configuration.bundlePolicy = .balanced
+    configuration.rtcpMuxPolicy = .require
+    configuration.sdpSemantics = .unifiedPlan
+    let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+    guard let peer = factory.peerConnection(with: configuration, constraints: constraints, delegate: self) else {
+      return nil
+    }
+    self.peer = peer
+    let audioSource = factory.audioSource(with: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil))
+    let track = factory.audioTrack(with: audioSource, trackId: "at-audio")
+    localTrack = track
+    guard peer.add(track, streamIds: ["at-audio-stream"]) != nil else {
+      closePeer()
+      return nil
+    }
+    return peer
   }
 
   private func addCandidates(_ candidates: [RTCIceCandidate], completion: @escaping (Result<Void, Error>) -> Void) {

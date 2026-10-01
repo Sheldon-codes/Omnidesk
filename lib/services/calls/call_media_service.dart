@@ -20,6 +20,9 @@ enum CallMediaEventType {
   /// state directly.
   micStatus,
 
+  /// Sanitized protocol/state trace from a media engine; informational only.
+  diagnostic,
+
   /// The media process/engine disappeared mid-call. Always fatal for the
   /// active call: the UI must never show ACTIVE against dead air.
   processTerminated,
