@@ -22,6 +22,7 @@ import UIKit
 
   private var voipRegistry: PKPushRegistry?
   private var callChannel: FlutterMethodChannel?
+  private var nativeMediaChannel: ATNativeMediaChannel?
   // CallKit owns activation/deactivation. We only retain the desired route so
   // a speaker selection made while WebRTC is connecting is applied as soon as
   // CallKit supplies the active AVAudioSession.
@@ -93,6 +94,7 @@ import UIKit
       self?.handleFlutterCall(call, result: result)
     }
     callChannel = channel
+    nativeMediaChannel = ATNativeMediaChannel(messenger: engineBridge.applicationRegistrar.messenger())
   }
 
   private func configureVoipPush() {
@@ -319,6 +321,7 @@ import UIKit
       // and preserves a receiver default until the agent explicitly selects
       // loudspeaker.
       try configureCallAudioSession(audioSession, speaker: speakerRequested)
+      nativeMediaChannel?.callKitDidActivate(audioSession)
       mediaLogger.info(
         "CallKit audio activated category=\(audioSession.category.rawValue, privacy: .public) mode=\(audioSession.mode.rawValue, privacy: .public) route=\(self.audioRouteDescription(audioSession), privacy: .public) speaker=\(self.speakerRequested, privacy: .public)"
       )
@@ -335,6 +338,7 @@ import UIKit
   }
 
   func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+    nativeMediaChannel?.callKitDidDeactivate(audioSession)
     activeCallAudioSession = nil
     mediaLogger.info("CallKit audio deactivated")
     emitAudioSessionDiagnostic("callkit_deactivated", session: audioSession)

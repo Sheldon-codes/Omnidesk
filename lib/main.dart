@@ -29,6 +29,7 @@ import 'pages/tickets_page/tickets_page_widget.dart';
 import 'services/auth_session_controller.dart';
 import 'services/agent_counters.dart';
 import 'services/calls/call_lifecycle_coordinator.dart';
+import 'services/calls/call_media_provider.dart';
 import 'services/calls/native_call_service.dart';
 import 'services/fcm_service.dart';
 import 'services/onboarding_controller.dart';
@@ -424,9 +425,9 @@ class _CallStartupPlaceholder extends StatelessWidget {
       );
 }
 
-/// App-root call overlay: the existing call UI plus an authenticated warm
-/// WebView bridge. The bridge shell is preloaded only after the first app
-/// frame, and remains inert until a call obtains fresh media credentials.
+/// App-root call overlay: the existing Flutter call UI plus an authenticated
+/// WebView bridge on Android or when the iOS fallback is explicitly selected.
+/// Native iOS media never mounts a WebView platform view.
 class _AppCallOverlay extends ConsumerStatefulWidget {
   const _AppCallOverlay({required this.child});
 
@@ -478,6 +479,10 @@ class _AppCallOverlayState extends ConsumerState<_AppCallOverlay> {
         ref.watch(authSessionControllerProvider).isAuthenticated;
     if (authenticated) _scheduleMediaWarmup();
     final callState = ref.watch(callSessionControllerProvider);
+    final useNativeIOSMedia = defaultTargetPlatform == TargetPlatform.iOS &&
+        useIosNativeAtMedia;
+    if (useNativeIOSMedia) return CallExperienceHost(child: widget.child);
+
     final media = ref.read(webViewCallMediaServiceProvider);
     final shouldMountMedia =
         (authenticated && (_warmMedia || media.hasController)) ||

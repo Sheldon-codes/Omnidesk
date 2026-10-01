@@ -3,7 +3,8 @@ import 'dart:async';
 import 'call_models.dart';
 
 /// Media-engine events. The controller owns the platform-neutral lifecycle;
-/// production audio flows through the hidden Africa's Talking WebView client.
+/// iOS uses native WebRTC by default, with the WebView retained as fallback,
+/// while Android continues to use the existing WebView client.
 enum CallMediaEventType {
   /// Engine initialized and ready (SIP registered / WebRTC client connected).
   ready,
@@ -44,9 +45,9 @@ class MediaUnavailable implements Exception {
 
 /// Transport-agnostic voice media boundary.
 ///
-/// The hidden-WebView Africa's Talking client is the only production media
-/// implementation. It remains transport-neutral so a future supported engine
-/// can implement this contract without changing the call state machine.
+/// Call-engine boundary shared by native iOS WebRTC and the existing WebView
+/// client. It remains transport-neutral so platform selection does not leak
+/// into the call state machine.
 abstract class CallMediaService {
   Stream<CallMediaEvent> get events;
 
