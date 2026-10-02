@@ -76,6 +76,19 @@ final class ATSignalingClient: NSObject {
     sendJSON(message)
   }
 
+  /// Sends a live-call control only while the registered signaling handle is
+  /// usable. AT's shipped SDK uses the same `hold`/`unhold` requests and sends
+  /// DTMF through Janus as `dtmf.tones`.
+  @discardableResult
+  func sendCallControl(request: String, fields: [String: Any] = [:]) -> Bool {
+    guard isRegistered, hasCreatedHandle, !isClosing, socket != nil else {
+      return false
+    }
+    var body: [String: Any] = ["request": request]
+    fields.forEach { body[$0.key] = $0.value }
+    return sendJSON(["command": "message", "body": body])
+  }
+
   func sendKeepalive() {
     guard hasCreatedHandle else { return }
     sendJSON(["command": "keepalive"])
@@ -144,10 +157,11 @@ final class ATSignalingClient: NSObject {
     send(request: "register")
   }
 
-  private func sendJSON(_ value: [String: Any]) {
+  @discardableResult
+  private func sendJSON(_ value: [String: Any]) -> Bool {
     guard let socket, JSONSerialization.isValidJSONObject(value),
           let data = try? JSONSerialization.data(withJSONObject: value),
-          let text = String(data: data, encoding: .utf8) else { return }
+          let text = String(data: data, encoding: .utf8) else { return false }
     let generation = connectionGeneration
     socket.send(.string(text)) { [weak self] error in
       guard let error, let self else { return }
@@ -155,6 +169,7 @@ final class ATSignalingClient: NSObject {
         self.failTransport(error, generation: generation)
       }
     }
+    return true
   }
 
   private func receiveNext(generation: UInt64) {

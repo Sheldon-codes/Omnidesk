@@ -233,9 +233,30 @@ network-dependent and can fail behind restrictive NATs, carrier networks, or
 firewalls. This is a deliberate fidelity choice, not a production-grade
 connectivity guarantee. Do not enable the build-time iOS-native flag for
 general deployment until a live AT handshake and physical-device two-way
-audio/candidate-path validation pass. Incoming native answering, DTMF, and
-hold were outside the outbound Gate 2 slice; the WebView implementation stays
-available as a fallback.
+audio/candidate-path validation pass. Incoming native answering was outside
+the outbound Gate 2 slice and is implemented in Gate 3. DTMF and hold are
+implemented by the native adapter using the same signaling shapes as the
+bundled 1.0.7 SDK: `hold`, `unhold`, and Janus `dtmf` with `dtmf.tones`. The
+Flutter adapter refuses those controls when `/calls/media-config` does not
+advertise the capability. The WebView implementation remains available as a
+fallback. The AT SDK does not expose a control acknowledgment callback, so
+local success means the registered signaling client accepted the message for
+sending; it is not provider-confirmed state.
+
+## Native controls and telemetry hardening
+
+Native iOS hold/resume and single-digit DTMF use the SDK-derived Janus request
+shapes. Hold is serialized in the Flutter controller to prevent rapid UI taps
+from reordering `hold` and `unhold`; a local signaling-not-ready result rolls
+the optimistic UI update back. DTMF is restricted to `0-9`, `*`, and `#` and
+requires the backend capability flag.
+
+Client-event telemetry remains best-effort and outside call setup/teardown.
+Failures now log the classified API error kind and status code (if present),
+not raw exception messages or response bodies. Automatic retries are
+intentionally omitted until the backend's idempotency contract is verified;
+a lost response can mean the event was accepted even though the client did
+not receive its acknowledgment.
 
 ## Gate 3 native inbound implementation
 

@@ -200,6 +200,7 @@ class CallSessionController extends _$CallSessionController {
   Completer<void>? _incomingMedia;
   bool _isFinishing = false;
   bool _backendAccepted = false;
+  bool _holdControlInFlight = false;
   CallMediaConfig? _warmMediaConfig;
   DateTime? _warmMediaConfigAt;
   String? _warmMediaScope;
@@ -423,11 +424,12 @@ class CallSessionController extends _$CallSessionController {
     } catch (error) {
       // Telemetry is deliberately non-blocking. The bridge and call state
       // must continue even when the endpoint is offline or unavailable.
+      final failure = error is CallApiException
+          ? 'kind=${error.kind.name} status=${error.statusCode ?? 'none'}'
+          : 'error=${error.runtimeType}';
       developer.log(
-        'Client-event telemetry failed event=${event.value} '
-        'error=${error.runtimeType}.',
-        name: 'CallSession',
-      );
+          'Client-event telemetry failed event=${event.value} $failure.',
+          name: 'CallSession');
     }
   }
 
@@ -978,8 +980,9 @@ class CallSessionController extends _$CallSessionController {
   }
 
   Future<void> toggleHold() async {
-    if (!state.isActive) return;
+    if (!state.isActive || _holdControlInFlight) return;
     final enabled = !state.onHold;
+    _holdControlInFlight = true;
     state = state.copyWith(
       onHold: enabled,
       phase: enabled ? CallPhase.held : CallPhase.active,
@@ -993,6 +996,8 @@ class CallSessionController extends _$CallSessionController {
         phase: !enabled ? CallPhase.held : CallPhase.active,
         failureMessage: _messageFor(error),
       );
+    } finally {
+      _holdControlInFlight = false;
     }
   }
 

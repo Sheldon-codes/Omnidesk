@@ -194,8 +194,26 @@ final class ATNativeMediaChannel {
       rtc.setMuted(enabled)
       emit("micStatus", payload: ["muted": enabled])
       result(nil)
-    case "setHeld", "sendDtmf":
-      result(FlutterError(code: "unsupported", message: "This media operation is not implemented in Gate 3.", details: nil))
+    case "setHeld":
+      let enabled = (call.arguments as? [String: Any])?["enabled"] as? Bool ?? false
+      guard callSid != nil else {
+        result(FlutterError(code: "no_active_call", message: "Hold requires an active call.", details: nil)); return
+      }
+      let request = enabled ? "hold" : "unhold"
+      guard signaling.sendCallControl(request: request) else {
+        result(FlutterError(code: "signaling_unavailable", message: "The AT signaling connection is not ready.", details: nil)); return
+      }
+      result(nil)
+    case "sendDtmf":
+      guard callSid != nil,
+            let digit = (call.arguments as? [String: Any])?["digit"] as? String,
+            digit.range(of: #"^[0-9*#]$"#, options: .regularExpression) != nil else {
+        result(FlutterError(code: "invalid_dtmf", message: "DTMF requires an active call and one valid digit.", details: nil)); return
+      }
+      guard signaling.sendCallControl(request: "dtmf", fields: ["dtmf": ["tones": digit]]) else {
+        result(FlutterError(code: "signaling_unavailable", message: "The AT signaling connection is not ready.", details: nil)); return
+      }
+      result(nil)
     case "end":
       finishCall(reason: "local_end", sendHangup: true)
       result(nil)

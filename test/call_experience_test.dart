@@ -176,6 +176,22 @@ void main() {
         CallLifecycle.active);
   });
 
+  test('failed client-event telemetry does not block inbound media connection',
+      () async {
+    final api = _FakeCallApi()..failClientEvents = true;
+    final container = _liveContainer(api: api);
+    addTearDown(container.dispose);
+    final controller = container.read(callSessionControllerProvider.notifier);
+
+    expect(await controller.handleIncomingOffer(_incomingOffer()), isTrue);
+    await controller.answer();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(container.read(callSessionControllerProvider).lifecycle,
+        CallLifecycle.active);
+    expect(api.clientEventFailures, greaterThan(0));
+  });
+
   test('remote decline keeps a short terminal acknowledgement', () async {
     final native = _FakeNativeCallService();
     final container = _liveContainer(native: native);
@@ -321,6 +337,8 @@ class _FakeCallApi implements CallApi {
   bool accepted = false;
   bool mediaReadySent = false;
   bool outboundInitiated = false;
+  bool failClientEvents = false;
+  int clientEventFailures = 0;
 
   @override
   Future<void> acknowledgeDelivery({
@@ -363,7 +381,12 @@ class _FakeCallApi implements CallApi {
     required String offerId,
     required String installationId,
     required CallClientEvent event,
-  }) async {}
+  }) async {
+    if (failClientEvents) {
+      clientEventFailures++;
+      throw StateError('simulated telemetry failure');
+    }
+  }
 
   @override
   Future<void> end({required String callId, required String reason}) async {

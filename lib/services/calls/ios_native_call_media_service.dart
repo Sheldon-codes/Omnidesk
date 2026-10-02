@@ -21,6 +21,8 @@ class IOSNativeCallMediaService implements CallMediaService {
   final StreamController<CallMediaEvent> _events =
       StreamController<CallMediaEvent>.broadcast();
   bool _disposed = false;
+  bool _supportsHold = false;
+  bool _supportsDtmf = false;
 
   @override
   Stream<CallMediaEvent> get events => _events.stream;
@@ -49,6 +51,8 @@ class IOSNativeCallMediaService implements CallMediaService {
       throw const MediaUnavailable(
           'The WebRTC media configuration is unusable.');
     }
+    _supportsHold = config.supportsHold;
+    _supportsDtmf = config.supportsDtmf;
     final result = await _invokeMap('initialize', <String, Object?>{
       'token': token,
       'gatewayUrl': config.webrtcGatewayUrl,
@@ -89,12 +93,25 @@ class IOSNativeCallMediaService implements CallMediaService {
       _invoke('setMuted', <String, Object?>{'enabled': enabled});
 
   @override
-  Future<void> setHeld(bool enabled) =>
-      _invoke('setHeld', <String, Object?>{'enabled': enabled});
+  Future<void> setHeld(bool enabled) async {
+    if (!_supportsHold) {
+      throw const MediaUnavailable(
+          'Hold is not supported by the configured call provider.');
+    }
+    await _invoke('setHeld', <String, Object?>{'enabled': enabled});
+  }
 
   @override
-  Future<void> sendDtmf(String digit) =>
-      _invoke('sendDtmf', <String, Object?>{'digit': digit});
+  Future<void> sendDtmf(String digit) async {
+    if (!_supportsDtmf) {
+      throw const MediaUnavailable(
+          'DTMF is not supported by the configured call provider.');
+    }
+    if (!RegExp(r'^[0-9*#]$').hasMatch(digit)) {
+      throw const MediaUnavailable('The DTMF digit is invalid.');
+    }
+    await _invoke('sendDtmf', <String, Object?>{'digit': digit});
+  }
 
   @override
   Future<void> dispose() async {
@@ -103,6 +120,8 @@ class IOSNativeCallMediaService implements CallMediaService {
     try {
       await _invoke('dispose');
     } finally {
+      _supportsHold = false;
+      _supportsDtmf = false;
       await _events.close();
     }
   }
