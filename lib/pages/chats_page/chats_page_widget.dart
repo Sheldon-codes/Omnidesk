@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
 import '../../components/user_avatar/user_avatar.dart';
+import '../../components/omni_skeleton.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../services/realtime/connection_monitor.dart';
 import '../../services/realtime/realtime_event.dart';
@@ -1159,7 +1160,7 @@ class _ConversationRowSkeleton extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Row(children: [
-          CircleAvatar(radius: 23, backgroundColor: color),
+          OmniSkeleton(width: 46, height: 46, circle: true, baseTint: color),
           const SizedBox(width: 12),
           Expanded(
               child: Column(
@@ -1167,7 +1168,7 @@ class _ConversationRowSkeleton extends StatelessWidget {
                   children: [
                 _SkeletonBar(color: color, width: 120, height: 13),
                 const SizedBox(height: 9),
-                _SkeletonBar(color: color, width: 188, height: 11),
+                _SkeletonBar(color: color, width: 160, height: 11),
               ])),
           const SizedBox(width: 12),
           _SkeletonBar(color: color, width: 28, height: 10),
@@ -1177,7 +1178,7 @@ class _ConversationRowSkeleton extends StatelessWidget {
   }
 }
 
-class _SkeletonBar extends StatefulWidget {
+class _SkeletonBar extends StatelessWidget {
   const _SkeletonBar(
       {required this.color, required this.width, required this.height});
   final Color color;
@@ -1185,50 +1186,12 @@ class _SkeletonBar extends StatefulWidget {
   final double height;
 
   @override
-  State<_SkeletonBar> createState() => _SkeletonBarState();
-}
-
-class _SkeletonBarState extends State<_SkeletonBar>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1150),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final child = Container(
-      width: widget.width,
-      height: widget.height,
-      decoration: BoxDecoration(
-        color: widget.color,
-        borderRadius: BorderRadius.circular(widget.height),
-      ),
-    );
-    if (MediaQuery.disableAnimationsOf(context)) return child;
-    return AnimatedBuilder(
-      animation: _controller,
-      child: child,
-      builder: (context, value) => ShaderMask(
-        blendMode: BlendMode.srcATop,
-        shaderCallback: (bounds) => LinearGradient(
-          colors: [
-            widget.color,
-            widget.color.withValues(alpha: .32),
-            widget.color
-          ],
-          stops: const [0, .5, 1],
-          begin: Alignment(-1.5 + _controller.value * 3, 0),
-          end: Alignment(-.5 + _controller.value * 3, 0),
-        ).createShader(bounds),
-        child: child,
-      ),
+    return OmniSkeleton(
+      width: width,
+      height: height,
+      borderRadius: BorderRadius.circular(height),
+      baseTint: color,
     );
   }
 }

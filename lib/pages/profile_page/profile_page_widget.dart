@@ -24,6 +24,7 @@ class ProfilePageWidget extends ConsumerWidget {
     final theme = FlutterFlowTheme.of(context);
     final user = ref.watch(authSessionControllerProvider).session?.user;
     final presence = ref.watch(agentPresenceProvider);
+    final ticketRouting = ref.watch(ticketRoutingStatusProvider);
     final appThemeMode = ref.watch(appThemeModeProvider);
     final workspaceState = ref.watch(profileWorkspacesProvider);
     // `viewPadding` is the physical display cut-out/status-bar inset. Unlike
@@ -83,6 +84,27 @@ class ProfilePageWidget extends ConsumerWidget {
                         theme: theme,
                         onChanged: (enabled) =>
                             _setReceiveIncomingCalls(context, ref, enabled),
+                      ),
+                      _MenuTile(
+                        icon: IconsaxPlusBroken.ticket,
+                        iconColor: ticketRouting.isActive == true
+                            ? theme.success
+                            : theme.secondaryText,
+                        label: 'Ticket Assignment',
+                        subtitle: 'Managed by Workspace Supervisor',
+                        theme: theme,
+                        showArrow: false,
+                        trailing: ticketRouting.loading &&
+                                ticketRouting.isActive == null
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : _TicketRoutingBadge(
+                                isActive: ticketRouting.isActive == true,
+                              ),
                       ),
                     ],
                   ),
@@ -793,6 +815,32 @@ class _MenuTile extends StatelessWidget {
           ),
         ),
       );
+}
+
+class _TicketRoutingBadge extends StatelessWidget {
+  const _TicketRoutingBadge({required this.isActive});
+  final bool isActive;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FlutterFlowTheme.of(context);
+    final color = isActive ? theme.success : theme.secondaryText;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        isActive ? 'Active' : 'Suspended',
+        style: theme.bodySmall.override(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
 }
 
 class _ToggleTile extends StatelessWidget {

@@ -31,6 +31,10 @@ class _TicketRepository implements TicketsRepository {
   @override
   Future<void> updateStatus(String id, String status,
       {String? reason, CancelToken? cancelToken}) async {}
+  @override
+  Future<TicketReassignmentResult> reassign(String id,
+          {required int agentId, int? teamId}) async =>
+      TicketReassignmentResult(agentName: 'Agent');
 }
 
 void main() {
@@ -48,13 +52,24 @@ void main() {
     expect(find.text('Resolve ticket'), findsOneWidget);
   });
 
-  testWidgets(
-      'ticket editor has separate information and classification sections',
-      (tester) async {
+  testWidgets('ticket creation screen is blocked', (tester) async {
     await tester.pumpWidget(const ProviderScope(
         child: MaterialApp(home: TicketEditorPageWidget())));
     await tester.pumpAndSettle();
-    expect(find.text('Create ticket'), findsWidgets);
-    expect(find.text('Ticket info'), findsOneWidget);
+    expect(find.text('Creating tickets is not available.'), findsOneWidget);
+    expect(find.text('Ticket info'), findsNothing);
+  });
+
+  test('editor notifier refuses create submissions', () async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier =
+        container.read(ticketEditorProvider(ticketId: null).notifier);
+
+    expect(await notifier.submit(), isNull);
+    expect(
+      container.read(ticketEditorProvider(ticketId: null)).errors['form'],
+      'Creating tickets is not available.',
+    );
   });
 }

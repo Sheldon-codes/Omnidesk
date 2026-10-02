@@ -10,6 +10,7 @@ import 'package:audio_session/audio_session.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../../components/call_experience/call_session_controller.dart';
+import '../../components/omni_skeleton.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../services/calls/call_log_store.dart';
 import '../customer_details_page/customer_details_page_widget.dart';
@@ -265,18 +266,31 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
         ),
       ),
       if (state.historyLoadingMore)
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Center(
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: theme.primary,
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+          sliver: SliverList.builder(
+            itemCount: 3,
+            itemBuilder: (_, __) => SizedBox(
+              height: 74,
+              child: Row(children: [
+                OmniSkeleton(
+                    width: 19,
+                    height: 19,
+                    circle: true,
+                    baseTint: theme.alternate),
+                const SizedBox(width: 29),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _SkeletonBar(theme: theme, widthFactor: .46, height: 14),
+                      const SizedBox(height: 8),
+                      _SkeletonBar(theme: theme, widthFactor: .7, height: 11),
+                    ],
+                  ),
                 ),
-              ),
+              ]),
             ),
           ),
         ),
@@ -1465,14 +1479,11 @@ class _CallHistorySkeleton extends StatelessWidget {
             height: 74,
             child: Row(
               children: [
-                Container(
-                  width: 19,
-                  height: 19,
-                  decoration: BoxDecoration(
-                    color: theme.alternate,
-                    shape: BoxShape.circle,
-                  ),
-                ),
+                OmniSkeleton(
+                    width: 19,
+                    height: 19,
+                    circle: true,
+                    baseTint: theme.alternate),
                 const SizedBox(width: 29),
                 Expanded(
                   child: Column(
@@ -1507,12 +1518,11 @@ class _SkeletonBar extends StatelessWidget {
   Widget build(BuildContext context) => FractionallySizedBox(
         widthFactor: widthFactor,
         alignment: Alignment.centerLeft,
-        child: Container(
+        child: OmniSkeleton(
+          width: double.infinity,
           height: height,
-          decoration: BoxDecoration(
-            color: theme.alternate,
-            borderRadius: BorderRadius.circular(height / 2),
-          ),
+          borderRadius: BorderRadius.circular(height / 2),
+          baseTint: theme.alternate,
         ),
       );
 }

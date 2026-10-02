@@ -34,8 +34,13 @@ void main() {
 
   testWidgets('Profile renders account data and availability controls',
       (tester) async {
+    final routingRepository = _FakeTicketRoutingStatusRepository(true);
     final container = ProviderContainer(overrides: [
       authSessionControllerProvider.overrideWithValue(_authenticatedState),
+      agentPresenceRepositoryProvider
+          .overrideWithValue(_FakePresenceRepository(failNext: false)),
+      ticketRoutingStatusRepositoryProvider
+          .overrideWithValue(routingRepository),
     ]);
     addTearDown(container.dispose);
     await tester.pumpWidget(UncontrolledProviderScope(
@@ -49,6 +54,9 @@ void main() {
     expect(find.text('Agent · Digiskool'), findsOneWidget);
     expect(find.text('hillary@omnidesk.co.ke'), findsOneWidget);
     expect(find.text('Receive incoming calls'), findsOneWidget);
+    expect(find.text('Ticket Assignment'), findsOneWidget);
+    expect(find.text('Managed by Workspace Supervisor'), findsOneWidget);
+    expect(find.text('Active'), findsOneWidget);
     expect(find.text('Change password'), findsOneWidget);
     expect(find.text('Home'), findsNothing);
 
@@ -56,7 +64,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Set availability'), findsOneWidget);
     expect(find.text('Busy'), findsOneWidget);
-    await tester.tap(find.text('Away').last);
+    await tester.tap(find.widgetWithText(InkWell, 'Away'));
     await tester.pumpAndSettle();
     expect(container.read(agentPresenceProvider).status, PresenceStatus.away);
 
@@ -96,6 +104,14 @@ void main() {
     controller.setThemeMode(ThemeMode.system);
     expect(container.read(appThemeModeProvider), ThemeMode.system);
   });
+}
+
+class _FakeTicketRoutingStatusRepository
+    implements TicketRoutingStatusRepository {
+  _FakeTicketRoutingStatusRepository(this.active);
+  final bool active;
+  @override
+  Future<bool> isActive() async => active;
 }
 
 class _FakePresenceRepository implements AgentPresenceRepository {

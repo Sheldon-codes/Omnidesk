@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
+import '../../components/omni_skeleton.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import 'email_page_model.dart';
 
@@ -169,10 +170,11 @@ class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
   Widget _emailList(EmailPageState state, FlutterFlowTheme theme) {
     final store = ref.watch(emailStoreProvider);
     if (store.loading && store.threads.isEmpty) {
-      return const SliverToBoxAdapter(
-        child: Padding(
-          padding: EdgeInsets.all(32),
-          child: Center(child: CircularProgressIndicator()),
+      return SliverPadding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+        sliver: SliverList.builder(
+          itemCount: 7,
+          itemBuilder: (_, __) => const _EmailRowSkeleton(),
         ),
       );
     }
@@ -499,6 +501,39 @@ class _EmailSearchField extends StatelessWidget {
           ),
         ),
       );
+}
+
+class _EmailRowSkeleton extends StatelessWidget {
+  const _EmailRowSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FlutterFlowTheme.of(context);
+    return ExcludeSemantics(
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const OmniSkeleton(width: 124, height: 13),
+                    const SizedBox(height: 7),
+                    const OmniSkeleton(width: 210, height: 13),
+                    const SizedBox(height: 7),
+                    OmniSkeleton(
+                        width: 170, height: 11, baseTint: theme.alternate),
+                  ]),
+            ),
+            const SizedBox(width: 12),
+            OmniSkeleton(width: 34, height: 10, baseTint: theme.alternate),
+          ]),
+        ),
+        Divider(height: 1, color: theme.alternate),
+      ]),
+    );
+  }
 }
 
 class _EmailRow extends StatelessWidget {

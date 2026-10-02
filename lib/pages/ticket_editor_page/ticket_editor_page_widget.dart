@@ -52,6 +52,27 @@ class _TicketEditorPageWidgetState
     final provider = ticketEditorProvider(ticketId: widget.ticketId);
     final state = ref.watch(provider);
     final notifier = ref.read(provider.notifier);
+    if (!_editing) {
+      return Scaffold(
+        backgroundColor: theme.primaryBackground,
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.block_outlined, size: 36),
+                  const SizedBox(height: 12),
+                  Text('Creating tickets is not available.',
+                      style: theme.titleMedium),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     if (_editing && state.initial == null) {
       return Scaffold(
           body: SafeArea(

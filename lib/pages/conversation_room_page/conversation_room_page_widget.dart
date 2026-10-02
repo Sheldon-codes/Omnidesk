@@ -11,6 +11,7 @@ import 'package:intl/intl.dart';
 
 import '../../components/call_experience/call_session_controller.dart';
 import '../../components/user_avatar/user_avatar.dart';
+import '../../components/omni_skeleton.dart';
 import '../../services/realtime/connection_monitor.dart';
 import '../../services/realtime/realtime_event.dart';
 import '../../services/realtime/realtime_service.dart';
@@ -30,6 +31,7 @@ class ConversationRoomPageWidget extends ConsumerStatefulWidget {
       {super.key,
       required this.conversationId,
       this.channel = ChatChannel.whatsapp,
+      this.initialTimelineId,
       this.initialThread});
 
   static const routeName = 'ConversationRoomPage';
@@ -39,6 +41,7 @@ class ConversationRoomPageWidget extends ConsumerStatefulWidget {
 
   final String conversationId;
   final ChatChannel channel;
+  final String? initialTimelineId;
   final ConversationThread? initialThread;
 
   @override
@@ -226,10 +229,12 @@ class _ConversationRoomPageWidgetState
     _composerFocusNode.requestFocus();
   }
 
-  Future<void> _jumpToMessage(
+  Future<bool> _jumpToMessage(
     ConversationThread thread,
     String messageId,
   ) async {
+    final index = thread.messages.indexWhere((item) => item.id == messageId);
+    if (index < 0) return false;
     final existingContext = _messageKeys[messageId]?.currentContext;
     if (existingContext != null) {
       await Scrollable.ensureVisible(
@@ -241,8 +246,6 @@ class _ConversationRoomPageWidgetState
         alignment: .32,
       );
     } else if (_scrollController.hasClients) {
-      final index = thread.messages.indexWhere((item) => item.id == messageId);
-      if (index < 0) return;
       final extent = _scrollController.position.maxScrollExtent;
       final fraction = thread.messages.length <= 1
           ? 0.0
@@ -254,13 +257,16 @@ class _ConversationRoomPageWidgetState
             : const Duration(milliseconds: 260),
         curve: Curves.easeOut,
       );
+    } else {
+      return false;
     }
-    if (!mounted) return;
+    if (!mounted) return false;
     _highlightTimer?.cancel();
     setState(() => _highlightedMessageId = messageId);
     _highlightTimer = Timer(const Duration(milliseconds: 850), () {
       if (mounted) setState(() => _highlightedMessageId = null);
     });
+    return true;
   }
 
   void _showSnack(String message) {
@@ -294,7 +300,11 @@ class _ConversationRoomPageWidgetState
             .firstOrNull
         : null;
     final thread = _isLive
-        ? (liveState?.thread ?? widgetLiveState?.thread ?? widget.initialThread)
+        ? (liveState?.thread ??
+            widgetLiveState?.thread ??
+            widget.initialThread ??
+            inboxThread ??
+            widgetInboxThread)
         : localThread;
     final theme = FlutterFlowTheme.of(context);
     if (_isLive &&
@@ -314,12 +324,12 @@ class _ConversationRoomPageWidgetState
     // cold open uses the full-screen skeleton; message loading is represented
     // within the timeline below.
     final showSkeleton = _isLive && thread == null;
-    final timelineLoading = _isLive &&
-        thread != null &&
-        thread.messages.isEmpty &&
-        ((_isLiveWhatsApp && (liveState == null || liveState.loading)) ||
-            (_isLiveWidget &&
-                (widgetLiveState == null || widgetLiveState.loading)));
+    final threadLoading = _isLiveWhatsApp
+        ? liveState?.loading ?? true
+        : _isLiveWidget
+            ? widgetLiveState?.loading ?? true
+            : false;
+    final timelineLoading = _isLive && thread != null && threadLoading;
     if (showSkeleton) {
       return _ConversationRoomSkeleton(
           theme: theme, knownThread: inboxThread ?? widgetInboxThread);
@@ -364,12 +374,26 @@ class _ConversationRoomPageWidgetState
       _jumpForConversation = widget.conversationId;
       _initialJumpDone = false;
     }
-    if (!_initialJumpDone && thread.messages.isNotEmpty) {
+    final hasRequestedTimelineId =
+        widget.initialTimelineId?.trim().isNotEmpty == true;
+    if (!_initialJumpDone &&
+        thread.messages.isNotEmpty &&
+        (!hasRequestedTimelineId || !threadLoading)) {
       _initialJumpDone = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _jumpToLatest();
-        // Second frame catches late layout growth (remote images sizing).
-        WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToLatest());
+        final timelineId = widget.initialTimelineId?.trim();
+        if (timelineId != null && timelineId.isNotEmpty) {
+          _jumpToMessage(thread, timelineId).then((found) {
+            if (mounted && !found) {
+              _showSnack('Message was archived or could not be highlighted.');
+              _jumpToLatest();
+            }
+          });
+        } else {
+          _jumpToLatest();
+          // Second frame catches late layout growth (remote images sizing).
+          WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToLatest());
+        }
       });
     }
     return Scaffold(
@@ -429,10 +453,11 @@ class _ConversationRoomPageWidgetState
             Expanded(
               child: ColoredBox(
                 color: theme.secondaryBackground,
-                child: timelineLoading
+                child: timelineLoading && thread.messages.isEmpty
                     ? _ConversationTimelineSkeleton(theme: theme)
                     : _MessageTimeline(
                         thread: thread,
+                        isLoading: timelineLoading,
                         controller: _scrollController,
                         theme: theme,
                         audioController: _audioController,
@@ -1192,6 +1217,7 @@ class _RoomHeader extends StatelessWidget {
 class _MessageTimeline extends StatelessWidget {
   const _MessageTimeline({
     required this.thread,
+    required this.isLoading,
     required this.controller,
     required this.theme,
     required this.audioController,
@@ -1208,6 +1234,7 @@ class _MessageTimeline extends StatelessWidget {
   });
 
   final ConversationThread thread;
+  final bool isLoading;
   final ScrollController controller;
   final FlutterFlowTheme theme;
   final ConversationAudioController audioController;
@@ -1235,21 +1262,47 @@ class _MessageTimeline extends StatelessWidget {
       child: ListView.builder(
         controller: controller,
         padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
-        itemCount: items.length + (thread.isLoadingOlderMessages ? 1 : 0),
+        itemCount: items.length +
+            (thread.isLoadingOlderMessages ? 1 : 0) +
+            (isLoading ? 2 : 0),
         itemBuilder: (context, index) {
           if (thread.isLoadingOlderMessages && index == 0) {
-            return const Padding(
-              padding: EdgeInsets.all(12),
-              child: Center(
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Column(children: [
+                _TimelineSkeletonBubble(
+                  color: theme.alternate,
+                  alignment: Alignment.centerLeft,
+                  width: 142,
+                  height: 38,
+                  borderRadius: BorderRadius.circular(14),
                 ),
-              ),
+                const SizedBox(height: 6),
+                _TimelineSkeletonBubble(
+                  color: theme.alternate,
+                  alignment: Alignment.centerLeft,
+                  width: 192,
+                  height: 44,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ]),
             );
           }
-          final item = items[index - (thread.isLoadingOlderMessages ? 1 : 0)];
+          final contentIndex = index - (thread.isLoadingOlderMessages ? 1 : 0);
+          if (contentIndex >= items.length) {
+            final loadingIndex = contentIndex - items.length;
+            return _TimelineSkeletonBubble(
+              color: theme.alternate,
+              alignment: loadingIndex.isEven
+                  ? Alignment.centerLeft
+                  : Alignment.centerRight,
+              width: loadingIndex.isEven ? 148 : 186,
+              height: loadingIndex.isEven ? 42 : 52,
+              borderRadius: BorderRadius.circular(14),
+              withAvatar: loadingIndex.isEven,
+            );
+          }
+          final item = items[contentIndex];
           if (item case _DateItem(:final date)) {
             return _TimelineDate(date: date, theme: theme);
           }
@@ -1583,7 +1636,7 @@ class _ConversationTimelineSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = theme.alternate.withValues(alpha: .56);
+    final base = theme.alternate;
     return ExcludeSemantics(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
@@ -1640,7 +1693,7 @@ class _ConversationRoomSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = theme.alternate.withValues(alpha: .56);
+    final base = theme.alternate;
     return Scaffold(
       backgroundColor: theme.primaryBackground,
       body: SafeArea(
@@ -1807,20 +1860,13 @@ class _RoomSkeletonShape extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The shimmer must be clipped by the actual component silhouette. A
-    // transparent child lets ShaderMask paint its rectangular bounds, which
-    // makes otherwise rounded bubbles look like square blocks while loading.
     final radius = borderRadius ?? BorderRadius.circular(round ? width : 12);
-    return ClipRRect(
+    return OmniSkeleton(
+      width: width,
+      height: height,
       borderRadius: radius,
-      child: _RoomShimmer(
-        color: color,
-        child: SizedBox(
-          width: width,
-          height: height,
-          child: ColoredBox(color: color),
-        ),
-      ),
+      circle: round,
+      baseTint: color,
     );
   }
 }
@@ -1863,54 +1909,6 @@ class _TimelineSkeletonBubble extends StatelessWidget {
           ],
         ),
       );
-}
-
-class _RoomShimmer extends StatefulWidget {
-  const _RoomShimmer({required this.color, required this.child});
-  final Color color;
-  final Widget child;
-
-  @override
-  State<_RoomShimmer> createState() => _RoomShimmerState();
-}
-
-class _RoomShimmerState extends State<_RoomShimmer>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1150),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (MediaQuery.disableAnimationsOf(context)) {
-      return ColoredBox(color: widget.color, child: widget.child);
-    }
-    // Bright highlight band sweeping across the shape — a real shine sweep
-    // rather than a subtle pulse. The band is lerped toward white so it
-    // reads on both light and dark themes.
-    final shine = Color.lerp(widget.color, Colors.white, .72) ?? Colors.white;
-    return AnimatedBuilder(
-      animation: _controller,
-      child: widget.child,
-      builder: (context, child) => ShaderMask(
-        blendMode: BlendMode.srcATop,
-        shaderCallback: (bounds) => LinearGradient(
-          colors: [widget.color, shine, widget.color],
-          stops: const [.32, .5, .68],
-          begin: Alignment(-1.9 + _controller.value * 3.8, -.25),
-          end: Alignment(-.9 + _controller.value * 3.8, .25),
-        ).createShader(bounds),
-        child: ColoredBox(color: widget.color, child: child),
-      ),
-    );
-  }
 }
 
 class _LiveRoomError extends StatelessWidget {

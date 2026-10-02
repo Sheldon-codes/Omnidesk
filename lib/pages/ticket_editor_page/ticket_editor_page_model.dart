@@ -177,6 +177,12 @@ class TicketEditorNotifier extends _$TicketEditorNotifier {
   }
 
   Future<TicketRecord?> submit() async {
+    if (state.mode == TicketEditorMode.create) {
+      state = state.copyWith(
+        errors: {'form': 'Creating tickets is not available.'},
+      );
+      return null;
+    }
     if (!validate() || state.submitting) return null;
     state = state.copyWith(submitting: true);
     try {

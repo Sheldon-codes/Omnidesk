@@ -130,18 +130,28 @@ class TicketConversationSourceContext extends TicketSourceContext {
   const TicketConversationSourceContext(
       {required this.conversationId,
       required this.preview,
-      required this.channel});
+      required this.channel,
+      this.sourceTimelineId,
+      this.latestTimelineId});
   final String conversationId;
   final String preview;
   final TicketSource channel;
+  final String? sourceTimelineId;
+  final String? latestTimelineId;
 }
 
 class TicketEmailSourceContext extends TicketSourceContext {
   const TicketEmailSourceContext(
-      {required this.threadId, required this.preview, required this.from});
+      {required this.threadId,
+      required this.preview,
+      required this.from,
+      this.sourceTimelineId,
+      this.latestTimelineId});
   final String threadId;
   final String preview;
   final String from;
+  final String? sourceTimelineId;
+  final String? latestTimelineId;
 }
 
 class TicketManualSourceContext extends TicketSourceContext {

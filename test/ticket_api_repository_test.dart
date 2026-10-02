@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omnidesk_agent/pages/tickets_page/ticket_api_repository.dart';
+import 'package:omnidesk_agent/pages/tickets_page/ticket_store.dart';
 import 'package:omnidesk_agent/services/api_service.dart';
 
 class _QueueAdapter implements HttpClientAdapter {
@@ -78,7 +79,7 @@ void main() {
   test('loads tickets with workspace auth headers and normalizes API fields',
       () async {
     final adapter = _QueueAdapter([
-      '''{"data":[{"id":14,"display_number":"#TKT-14","subject":"Account change","status":"pending","priority":"urgent","source":"whatsapp","category":"Account","is_overdue":true,"sla_deadline":"2026-08-31T14:30:00Z","customer":{"id":88,"name":"David Mwangi","phone_number":"+254768270973","email":"david@example.com"},"assigned_agent":{"id":5,"name":"Alice Agent"},"created_at":"2026-08-31T07:38:00Z","updated_at":"2026-08-31T08:00:00Z"}],"meta":{"current_page":1,"last_page":3,"total":41}}'''
+      '''{"data":[{"id":14,"display_number":"#TKT-14","subject":"Account change","status":"pending","priority":"urgent","source":"whatsapp","source_timeline_id":501,"latest_timeline_id":508,"source_context":{"channel":"whatsapp","ticket_id":14,"source_timeline_id":501,"latest_timeline_id":508,"deep_link_path":"/chats/14?timelineId=501"},"category":"Account","is_overdue":true,"sla_deadline":"2026-08-31T14:30:00Z","customer":{"id":88,"name":"David Mwangi","phone_number":"+254768270973","email":"david@example.com"},"assigned_agent":{"id":5,"name":"Alice Agent"},"created_at":"2026-08-31T07:38:00Z","updated_at":"2026-08-31T08:00:00Z"}],"meta":{"current_page":1,"last_page":3,"total":41}}'''
     ]);
     final repository = RemoteTicketsRepository(_api(adapter));
     final result = await repository.list(const TicketQuery(status: 'pending'));
@@ -92,6 +93,12 @@ void main() {
     expect(ticket.contactIdentifier, '+254768270973');
     expect(ticket.assignedAgentId, '5');
     expect(ticket.isOverdue, isTrue);
+    expect(ticket.capabilities.canEdit, isTrue);
+    expect(ticket.sourceContext, isA<TicketConversationSourceContext>());
+    final source = ticket.sourceContext as TicketConversationSourceContext;
+    expect(source.conversationId, '14');
+    expect(source.sourceTimelineId, '501');
+    expect(source.latestTimelineId, '508');
     expect(result.lastPage, 3);
     expect(adapter.requests.single.path, '/tickets');
     expect(adapter.requests.single.queryParameters['status'], 'pending');
@@ -103,7 +110,7 @@ void main() {
   test('loads ticket details and timeline using their documented endpoints',
       () async {
     final adapter = _QueueAdapter([
-      '''{"ticket":{"id":14,"subject":"Billing","description":"Body","status":"open","priority":"medium","source":"email","customer":{"id":88,"name":"David Mwangi","email":"david@example.com"},"department":{"id":1,"name":"Support"},"ticket_category":{"id":2,"name":"General Inquiries"},"assigned_agent":{"id":5,"name":"Alice Agent"},"created_at":"2026-08-31T07:38:00Z"}}''',
+      '''{"ticket":{"id":14,"subject":"Billing","description":"Body","status":"open","priority":"medium","source":"email","source_context":{"channel":"email","ticket_id":14,"source_timeline_id":501,"latest_timeline_id":508,"customer_email":"david@example.com"},"capabilities":{"can_edit":false},"customer":{"id":88,"name":"David Mwangi","email":"david@example.com"},"department":{"id":1,"name":"Support"},"ticket_category":{"id":2,"name":"General Inquiries"},"assigned_agent":{"id":5,"name":"Alice Agent"},"created_at":"2026-08-31T07:38:00Z"}}''',
       '''{"ticket_id":14,"timeline":[{"id":501,"event_type":"customer_message","description":"Please help","is_from_customer":true,"is_read_by_agent":true,"created_at":"2026-08-31T07:38:00Z","formatted_time":"07:38"}]}''',
     ]);
     final detail = await RemoteTicketsRepository(_api(adapter)).detail('14');
@@ -111,6 +118,11 @@ void main() {
     expect(detail.ticket.description.plainText, 'Body');
     expect(detail.ticket.department, 'Support');
     expect(detail.ticket.categoryId, '2');
+    expect(detail.ticket.capabilities.canEdit, isFalse);
+    expect(detail.ticket.sourceContext, isA<TicketEmailSourceContext>());
+    final source = detail.ticket.sourceContext as TicketEmailSourceContext;
+    expect(source.threadId, '14');
+    expect(source.sourceTimelineId, '501');
     expect(detail.activity.single.id, '501');
     expect(detail.activity.single.title, 'Customer message');
     expect(adapter.requests.map((request) => request.path), [
@@ -127,6 +139,20 @@ void main() {
     expect(adapter.requests.single.path, '/tickets/14/status');
     expect(adapter.requests.single.data,
         {'status': 'resolved', 'reason': 'Issue fixed'});
+  });
+
+  test('reassigns ticket with numeric agent and optional team IDs', () async {
+    final adapter = _QueueAdapter(['{"success":true,"agent_name":"Jane Doe"}']);
+    final result = await RemoteTicketsRepository(_api(adapter)).reassign(
+      '14',
+      agentId: 6,
+      teamId: 1,
+    );
+
+    expect(result.agentName, 'Jane Doe');
+    expect(adapter.requests.single.method, 'POST');
+    expect(adapter.requests.single.path, '/tickets/14/reassign');
+    expect(adapter.requests.single.data, {'agent_id': 6, 'team_id': 1});
   });
 
   test('rejects malformed detail payloads without inventing a ticket',

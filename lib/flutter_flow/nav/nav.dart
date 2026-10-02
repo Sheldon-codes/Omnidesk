@@ -5,7 +5,6 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../index.dart';
 import '../../main.dart';
-import '../../pages/notifications_page/notifications_page_widget.dart';
 import '../../services/auth_session_controller.dart';
 import '../../services/onboarding_controller.dart';
 
@@ -125,6 +124,7 @@ GoRouter goRouter(Ref ref) {
         path: ConversationRoomPageWidget.routePath,
         builder: (_, state) => ConversationRoomPageWidget(
           conversationId: state.pathParameters['conversationId']!,
+          initialTimelineId: state.uri.queryParameters['timelineId'],
           initialThread: state.extra is ConversationThread
               ? state.extra as ConversationThread
               : null,
@@ -135,6 +135,7 @@ GoRouter goRouter(Ref ref) {
         path: ConversationRoomPageWidget.liveRoutePath,
         builder: (_, state) => ConversationRoomPageWidget(
           conversationId: state.pathParameters['conversationId']!,
+          initialTimelineId: state.uri.queryParameters['timelineId'],
           channel: state.pathParameters['channel'] == 'widget'
               ? ChatChannel.widgetChat
               : ChatChannel.whatsapp,
@@ -166,8 +167,10 @@ GoRouter goRouter(Ref ref) {
       GoRoute(
         name: EmailThreadPageWidget.routeName,
         path: EmailThreadPageWidget.routePath,
-        builder: (_, state) =>
-            EmailThreadPageWidget(threadId: state.pathParameters['threadId']!),
+        builder: (_, state) => EmailThreadPageWidget(
+          threadId: state.pathParameters['threadId']!,
+          initialTimelineId: state.uri.queryParameters['timelineId'],
+        ),
       ),
       GoRoute(
         name: TicketsPageWidget.routeName,
@@ -187,7 +190,7 @@ GoRouter goRouter(Ref ref) {
       GoRoute(
         name: 'TicketCreate',
         path: '/tickets/new',
-        builder: (_, __) => const TicketEditorPageWidget(),
+        redirect: (_, __) => '/tickets',
       ),
       GoRoute(
         name: 'TicketEdit',

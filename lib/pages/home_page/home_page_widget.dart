@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
 import '../../components/home_app_bar/home_app_bar.dart';
+import '../../components/omni_skeleton.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../services/auth_session_controller.dart';
 import '../notifications_page/notifications_page_model.dart';
@@ -116,6 +117,7 @@ class HomePageWidget extends ConsumerWidget {
                         overdueLabel: stats == null
                             ? null
                             : '${stats.channels.calls.overdue} overdue',
+                        loading: stats == null && dashboard.loading,
                         onTap: () => context.go('/phone'),
                       ),
                     ),
@@ -130,6 +132,7 @@ class HomePageWidget extends ConsumerWidget {
                         overdueLabel: stats == null
                             ? null
                             : '${stats.channels.whatsapp.overdue + stats.channels.widget.overdue} overdue',
+                        loading: stats == null && dashboard.loading,
                         onTap: () => context.go('/chats'),
                       ),
                     ),
@@ -148,6 +151,7 @@ class HomePageWidget extends ConsumerWidget {
                         overdueLabel: stats == null
                             ? null
                             : '${stats.channels.email.overdue} overdue',
+                        loading: stats == null && dashboard.loading,
                         onTap: () => context.go('/email'),
                       ),
                     ),
@@ -160,6 +164,7 @@ class HomePageWidget extends ConsumerWidget {
                         label: 'Tickets · open',
                         overdueLabel:
                             stats == null ? null : '${stats.overdue} overdue',
+                        loading: stats == null && dashboard.loading,
                         onTap: () => context.go('/tickets'),
                       ),
                     ),
@@ -251,6 +256,44 @@ class HomePageWidget extends ConsumerWidget {
                           )
                           .toList(growable: false),
                     ),
+                  ),
+                ] else if (dashboard.loading && !dashboard.hasData) ...[
+                  const SizedBox(height: 28),
+                  _SectionHeader(
+                    theme: theme,
+                    title: 'My work',
+                    actionLabel: 'View all',
+                    onActionTap: () => context.go('/tickets'),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: theme.primaryBackground,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: theme.alternate),
+                    ),
+                    child: Column(children: [
+                      for (var i = 0; i < 3; i++) ...[
+                        if (i > 0) Divider(height: 1, color: theme.alternate),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                OmniSkeleton(
+                                    width: 220,
+                                    height: 13,
+                                    baseTint: theme.alternate),
+                                const SizedBox(height: 8),
+                                OmniSkeleton(
+                                    width: 150,
+                                    height: 11,
+                                    baseTint: theme.alternate),
+                              ]),
+                        ),
+                      ],
+                    ]),
                   ),
                 ],
                 if ((stats?.recentCallers.isNotEmpty ?? false) ||
@@ -408,6 +451,7 @@ class _ChannelCell extends StatelessWidget {
     required this.value,
     required this.label,
     this.overdueLabel,
+    this.loading = false,
     required this.onTap,
   });
 
@@ -416,6 +460,7 @@ class _ChannelCell extends StatelessWidget {
   final String value;
   final String label;
   final String? overdueLabel;
+  final bool loading;
   final VoidCallback onTap;
 
   @override
@@ -438,30 +483,39 @@ class _ChannelCell extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  value,
-                  style: theme.headlineSmall.copyWith(
-                    color: theme.primaryText,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
+                loading
+                    ? OmniSkeleton(
+                        width: 38, height: 22, baseTint: theme.alternate)
+                    : Text(
+                        value,
+                        style: theme.headlineSmall.copyWith(
+                          color: theme.primaryText,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
                 Icon(icon, size: 18, color: theme.secondaryText),
               ],
             ),
             const SizedBox(height: 2),
-            Text(
-              label,
-              style: theme.bodySmall.copyWith(color: theme.secondaryText),
-            ),
-            if (overdueLabel != null) ...[
-              const SizedBox(height: 2),
+            if (loading)
+              OmniSkeleton(width: 116, height: 11, baseTint: theme.alternate)
+            else
               Text(
-                overdueLabel!,
-                style: theme.bodySmall.copyWith(
-                  color: theme.error,
-                  fontWeight: FontWeight.w500,
-                ),
+                label,
+                style: theme.bodySmall.copyWith(color: theme.secondaryText),
               ),
+            if (loading || overdueLabel != null) ...[
+              const SizedBox(height: 2),
+              if (loading)
+                OmniSkeleton(width: 84, height: 10, baseTint: theme.alternate)
+              else
+                Text(
+                  overdueLabel!,
+                  style: theme.bodySmall.copyWith(
+                    color: theme.error,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
             ],
           ],
         ),

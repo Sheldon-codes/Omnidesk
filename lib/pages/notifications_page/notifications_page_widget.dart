@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
+import '../../components/omni_skeleton.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import 'notification_target_resolver.dart';
 import 'notifications_models.dart';
@@ -66,9 +67,42 @@ class _NotificationsPageWidgetState
               ],
             ),
             if (state.loading && state.items.isEmpty)
-              const SliverFillRemaining(
-                hasScrollBody: false,
-                child: Center(child: CircularProgressIndicator()),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                sliver: SliverList.builder(
+                  itemCount: 6,
+                  itemBuilder: (_, __) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Row(children: [
+                      OmniSkeleton(
+                          width: 40,
+                          height: 40,
+                          circle: true,
+                          baseTint: theme.alternate),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              OmniSkeleton(
+                                  width: 188,
+                                  height: 13,
+                                  baseTint: theme.alternate),
+                              const SizedBox(height: 8),
+                              OmniSkeleton(
+                                  width: 180,
+                                  height: 11,
+                                  baseTint: theme.alternate),
+                              const SizedBox(height: 7),
+                              OmniSkeleton(
+                                  width: 72,
+                                  height: 10,
+                                  baseTint: theme.alternate),
+                            ]),
+                      ),
+                    ]),
+                  ),
+                ),
               )
             else if (state.error != null && state.items.isEmpty)
               SliverFillRemaining(

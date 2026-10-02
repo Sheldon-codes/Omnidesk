@@ -7,6 +7,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../../components/call_experience/call_session_controller.dart';
+import '../../components/omni_skeleton.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../email_page/email_page_model.dart';
 import '../email_page/widgets/email_body_renderer.dart';
@@ -264,9 +265,8 @@ class TicketDetailsPageWidget extends ConsumerWidget {
   void _openSource(BuildContext context, TicketRecord ticket) =>
       switch (ticket.sourceContext) {
         TicketConversationSourceContext source =>
-          context.push('/chats/${source.conversationId}'),
-        TicketEmailSourceContext source =>
-          context.push('/email/${source.threadId}'),
+          context.push(_sourceRoute(source)),
+        TicketEmailSourceContext source => context.push(_sourceRoute(source)),
         _ => _snack(context, 'No source to open'),
       };
   Future<void> _reassign(
@@ -593,7 +593,7 @@ class _Source extends StatelessWidget {
             subtitle: Text(source.preview,
                 maxLines: 2, overflow: TextOverflow.ellipsis),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push('/chats/${source.conversationId}')),
+            onTap: () => context.push(_sourceRoute(source))),
         TicketEmailSourceContext source => ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.mail_outline),
@@ -601,7 +601,7 @@ class _Source extends StatelessWidget {
             subtitle: Text(source.preview,
                 maxLines: 2, overflow: TextOverflow.ellipsis),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push('/email/${source.threadId}')),
+            onTap: () => context.push(_sourceRoute(source))),
         _ => Text(
             ticket.source == TicketSource.manual
                 ? 'Created manually'
@@ -609,6 +609,26 @@ class _Source extends StatelessWidget {
             style: theme.bodyMedium.override(color: theme.secondaryText)),
       };
 }
+
+String _sourceRoute(TicketSourceContext source) => switch (source) {
+      TicketConversationSourceContext context => Uri(
+          path: context.channel == TicketSource.widget
+              ? '/chats/widget/${Uri.encodeComponent(context.conversationId)}'
+              : '/chats/${Uri.encodeComponent(context.conversationId)}',
+          queryParameters: {
+            if (context.sourceTimelineId != null)
+              'timelineId': context.sourceTimelineId!,
+          },
+        ).toString(),
+      TicketEmailSourceContext context => Uri(
+          path: '/email/${Uri.encodeComponent(context.threadId)}',
+          queryParameters: {
+            if (context.sourceTimelineId != null)
+              'timelineId': context.sourceTimelineId!,
+          },
+        ).toString(),
+      _ => '/',
+    };
 
 String _ticketStatusLabel(TicketRecord ticket) => ticket.statusRaw == null
     ? ticket.status.label
@@ -686,7 +706,7 @@ class _CustomerSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = theme ?? FlutterFlowTheme.of(context);
     return Row(children: [
-      CircleAvatar(radius: 20, backgroundColor: t.alternate),
+      const OmniSkeleton(width: 40, height: 40, circle: true),
       const SizedBox(width: 12),
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _skeletonBar(t, 130, 14),
@@ -742,7 +762,7 @@ class _ActivitySkeleton extends StatelessWidget {
         for (var i = 0; i < 3; i++) ...[
           if (i > 0) Divider(height: 20, color: t.alternate),
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            CircleAvatar(radius: 14, backgroundColor: t.alternate),
+            const OmniSkeleton(width: 28, height: 28, circle: true),
             const SizedBox(width: 10),
             Expanded(
                 child: Column(
@@ -777,13 +797,11 @@ class _InlineDetailError extends StatelessWidget {
 }
 
 Widget _skeletonBar(FlutterFlowTheme theme, double width, double height) =>
-    Container(
+    OmniSkeleton(
       width: width,
       height: height,
-      decoration: BoxDecoration(
-        color: theme.alternate.withValues(alpha: .62),
-        borderRadius: BorderRadius.circular(height / 2),
-      ),
+      borderRadius: BorderRadius.circular(height / 2),
+      baseTint: theme.alternate,
     );
 
 class _CallRow extends StatelessWidget {

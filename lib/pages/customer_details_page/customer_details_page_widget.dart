@@ -8,6 +8,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../components/call_experience/call_session_controller.dart';
+import '../../components/omni_skeleton.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../customer_editor_page/customer_editor_page_model.dart';
 import '../conversation_room_page/whatsapp_compose_sheet.dart';
@@ -994,7 +995,7 @@ String _dateLabel(DateTime? date) {
 
 String _durationLabel(int seconds) => '${seconds ~/ 60}m ${seconds % 60}s';
 
-class _DetailSkeletonLine extends StatefulWidget {
+class _DetailSkeletonLine extends StatelessWidget {
   const _DetailSkeletonLine(
       {required this.theme,
       required this.width,
@@ -1006,50 +1007,12 @@ class _DetailSkeletonLine extends StatefulWidget {
   final double radius;
 
   @override
-  State<_DetailSkeletonLine> createState() => _DetailSkeletonLineState();
-}
-
-class _DetailSkeletonLineState extends State<_DetailSkeletonLine>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1200),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => ExcludeSemantics(
-        child: SizedBox(
-          width: widget.width,
-          height: widget.height,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(widget.radius),
-            child: MediaQuery.disableAnimationsOf(context)
-                ? ColoredBox(
-                    color: widget.theme.alternate.withValues(alpha: .65))
-                : AnimatedBuilder(
-                    animation: _controller,
-                    builder: (context, _) => DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment(-1.5 + 3 * _controller.value, 0),
-                          end: Alignment(-.5 + 3 * _controller.value, 0),
-                          colors: [
-                            widget.theme.alternate.withValues(alpha: .55),
-                            widget.theme.secondaryBackground,
-                            widget.theme.alternate.withValues(alpha: .55),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-          ),
-        ),
+  Widget build(BuildContext context) => OmniSkeleton(
+        width: width,
+        height: height,
+        borderRadius: BorderRadius.circular(radius),
+        circle: radius >= width / 2 && radius >= height / 2,
+        baseTint: theme.alternate,
       );
 }
 

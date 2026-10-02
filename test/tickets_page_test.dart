@@ -80,6 +80,10 @@ class _FakeTicketsRepository implements TicketsRepository {
   @override
   Future<void> updateStatus(String id, String status,
       {String? reason, CancelToken? cancelToken}) async {}
+  @override
+  Future<TicketReassignmentResult> reassign(String id,
+          {required int agentId, int? teamId}) async =>
+      TicketReassignmentResult(agentName: 'Agent');
 }
 
 void main() {

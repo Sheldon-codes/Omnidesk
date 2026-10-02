@@ -7,6 +7,7 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../components/call_experience/call_session_controller.dart';
+import '../../components/omni_skeleton.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../conversation_room_page/whatsapp_compose_sheet.dart';
 import '../conversation_room_page/whatsapp_live_store.dart';
@@ -431,7 +432,7 @@ class _CustomerSkeletonRow extends StatelessWidget {
                   children: [
                 _SkeletonBlock(width: 154, height: 14, radius: 5),
                 const SizedBox(height: 8),
-                _SkeletonBlock(width: 190, height: 11, radius: 5),
+                _SkeletonBlock(width: 140, height: 11, radius: 5),
               ])),
           _SkeletonBlock(width: 45, height: 10, radius: 5),
           const SizedBox(width: 14),
@@ -443,7 +444,7 @@ class _CustomerSkeletonRow extends StatelessWidget {
   }
 }
 
-class _SkeletonBlock extends StatefulWidget {
+class _SkeletonBlock extends StatelessWidget {
   const _SkeletonBlock(
       {required this.width, required this.height, required this.radius});
   final double width;
@@ -451,47 +452,11 @@ class _SkeletonBlock extends StatefulWidget {
   final double radius;
 
   @override
-  State<_SkeletonBlock> createState() => _SkeletonBlockState();
-}
-
-class _SkeletonBlockState extends State<_SkeletonBlock>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1200),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final theme = FlutterFlowTheme.of(context);
-    final base = theme.alternate.withValues(alpha: .55);
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    return SizedBox(
-      width: widget.width,
-      height: widget.height,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(widget.radius),
-        child: reduceMotion
-            ? ColoredBox(color: base)
-            : AnimatedBuilder(
-                animation: _controller,
-                builder: (context, _) => DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment(-1.5 + 3 * _controller.value, 0),
-                      end: Alignment(-.5 + 3 * _controller.value, 0),
-                      colors: [base, theme.secondaryBackground, base],
-                    ),
-                  ),
-                ),
-              ),
-      ),
+    return OmniSkeleton(
+      width: width,
+      height: height,
+      borderRadius: BorderRadius.circular(radius),
     );
   }
 }

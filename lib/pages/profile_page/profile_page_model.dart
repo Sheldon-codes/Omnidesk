@@ -100,6 +100,85 @@ final agentPresenceRepositoryProvider = Provider<AgentPresenceRepository>(
   },
 );
 
+/// Ticket-routing eligibility is owned by workspace administration. Keep it
+/// separate from editable voice presence so the mobile client cannot mutate it.
+abstract class TicketRoutingStatusRepository {
+  Future<bool> isActive();
+}
+
+class ApiTicketRoutingStatusRepository
+    implements TicketRoutingStatusRepository {
+  const ApiTicketRoutingStatusRepository(this._api);
+  final ApiService _api;
+
+  @override
+  Future<bool> isActive() async {
+    final response = await _api.get('/agent/profile');
+    final user = response is Map ? response['user'] : null;
+    if (user is! Map || user['status'] is! String) {
+      throw const FormatException('Invalid agent profile response.');
+    }
+    return (user['status'] as String).trim().toLowerCase() == 'active';
+  }
+}
+
+class LocalTicketRoutingStatusRepository
+    implements TicketRoutingStatusRepository {
+  const LocalTicketRoutingStatusRepository(this._isActive);
+  final bool _isActive;
+  @override
+  Future<bool> isActive() async => _isActive;
+}
+
+final ticketRoutingStatusRepositoryProvider =
+    Provider<TicketRoutingStatusRepository>((ref) {
+  final api = ref.read(apiServiceProvider);
+  final user = ref.watch(authSessionControllerProvider).session?.user;
+  return api.baseUrl.isEmpty
+      ? LocalTicketRoutingStatusRepository(user?.status == 'active')
+      : ApiTicketRoutingStatusRepository(api);
+});
+
+final ticketRoutingStatusProvider =
+    NotifierProvider<TicketRoutingStatusController, TicketRoutingStatusState>(
+  TicketRoutingStatusController.new,
+);
+
+class TicketRoutingStatusState {
+  const TicketRoutingStatusState({this.isActive, this.loading = false});
+  final bool? isActive;
+  final bool loading;
+}
+
+class TicketRoutingStatusController extends Notifier<TicketRoutingStatusState> {
+  var _generation = 0;
+
+  @override
+  TicketRoutingStatusState build() {
+    final auth = ref.watch(authSessionControllerProvider);
+    final user = auth.session?.user;
+    final initial = user == null ? null : user.status == 'active';
+    if (auth.isAuthenticated) Future.microtask(refresh);
+    return TicketRoutingStatusState(
+        isActive: initial, loading: auth.isAuthenticated);
+  }
+
+  Future<void> refresh() async {
+    final generation = ++_generation;
+    state = TicketRoutingStatusState(isActive: state.isActive, loading: true);
+    try {
+      final isActive =
+          await ref.read(ticketRoutingStatusRepositoryProvider).isActive();
+      if (!ref.mounted || generation != _generation) return;
+      state = TicketRoutingStatusState(isActive: isActive);
+    } catch (_) {
+      if (!ref.mounted || generation != _generation) return;
+      // Preserve the authenticated profile snapshot if the refresh fails.
+      state = TicketRoutingStatusState(isActive: state.isActive);
+    }
+  }
+}
+
 class ProfileWorkspace {
   const ProfileWorkspace({
     required this.id,

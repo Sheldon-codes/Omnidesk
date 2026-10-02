@@ -132,6 +132,11 @@ class TicketDetailResult {
   final List<TicketActivity> activity;
 }
 
+class TicketReassignmentResult {
+  const TicketReassignmentResult({this.agentName});
+  final String? agentName;
+}
+
 abstract interface class TicketsRepository {
   Future<TicketFilterOptions> filters(
       {CancelToken? cancelToken,
@@ -147,6 +152,11 @@ abstract interface class TicketsRepository {
       void Function()? onCacheMiss});
   Future<void> updateStatus(String id, String status,
       {String? reason, CancelToken? cancelToken});
+  Future<TicketReassignmentResult> reassign(
+    String id, {
+    required int agentId,
+    int? teamId,
+  });
 }
 
 @Riverpod(keepAlive: true)
@@ -327,6 +337,27 @@ class RemoteTicketsRepository implements TicketsRepository {
     });
   }
 
+  @override
+  Future<TicketReassignmentResult> reassign(
+    String id, {
+    required int agentId,
+    int? teamId,
+  }) async {
+    final response = await _api.post(
+      '/tickets/${Uri.encodeComponent(id)}/reassign',
+      {
+        'agent_id': agentId,
+        if (teamId != null) 'team_id': teamId,
+      },
+    );
+    final root = _map(response, 'ticket reassignment response');
+    if (root['success'] == false) {
+      throw FormatException(
+          _string(root['error']).ifEmpty('Ticket reassignment failed.'));
+    }
+    return TicketReassignmentResult(agentName: _nullable(root['agent_name']));
+  }
+
   static TicketRecord _ticket(Map<String, dynamic> json) {
     final customer = json['customer'] is Map
         ? _stringMap(json['customer'])
@@ -357,6 +388,14 @@ class RemoteTicketsRepository implements TicketsRepository {
     final resolutionRaw = json['resolution'] is Map
         ? _stringMap(json['resolution'])
         : const <String, dynamic>{};
+    final capabilitiesRaw = json['capabilities'] is Map
+        ? _stringMap(json['capabilities'] as Map)
+        : const <String, dynamic>{};
+    final rawCanEdit = capabilitiesRaw['can_edit'] ??
+        capabilitiesRaw['canEdit'] ??
+        json['can_edit'] ??
+        json['canEdit'];
+    final canEdit = rawCanEdit is bool ? rawCanEdit : true;
     final resolutionNote = _string(resolutionRaw['note'])
         .ifEmpty(_string(json['resolution_note']));
     final resolvedAt = _dateTime(resolutionRaw['resolved_at']) ??
@@ -388,7 +427,7 @@ class RemoteTicketsRepository implements TicketsRepository {
       assignedAgentId: agent['id']?.toString(),
       createdAt: created,
       updatedAt: updated,
-      sourceContext: _context(sourceRaw),
+      sourceContext: _context(sourceRaw, json, id, customerName, contact),
       resolution: statusRaw == 'resolved' || statusRaw == 'closed'
           ? TicketResolution(
               note: resolutionNote,
@@ -400,8 +439,8 @@ class RemoteTicketsRepository implements TicketsRepository {
           : null,
       activities: const [],
       revision: _integer(json['revision'], 1),
-      capabilities: const TicketCapabilities(
-        canEdit: false,
+      capabilities: TicketCapabilities(
+        canEdit: canEdit,
         canReassign: false,
         canChangeStatus: true,
         canResolve: true,
@@ -462,12 +501,48 @@ class RemoteTicketsRepository implements TicketsRepository {
         _ => TicketSource.manual,
       };
 
-  static TicketSourceContext _context(String source) => switch (source) {
-        'phone' => const TicketPhoneSourceContext(),
-        'email' => const TicketManualSourceContext(),
-        'whatsapp' || 'widget' => TicketManualSourceContext(),
-        _ => const TicketManualSourceContext(),
-      };
+  static TicketSourceContext _context(
+      String source,
+      Map<String, dynamic> ticket,
+      String ticketId,
+      String customerName,
+      String contact) {
+    if (source == 'phone') return const TicketPhoneSourceContext();
+    final rawContext = ticket['source_context'];
+    final context =
+        rawContext is Map ? _stringMap(rawContext) : const <String, dynamic>{};
+    final channel = _string(context['channel']).ifEmpty(source).toLowerCase();
+    final contextTicketId = _string(context['ticket_id']).ifEmpty(ticketId);
+    final sourceTimelineId = _nullable(context['source_timeline_id']) ??
+        _nullable(ticket['source_timeline_id']);
+    final latestTimelineId = _nullable(context['latest_timeline_id']) ??
+        _nullable(ticket['latest_timeline_id']);
+    if (channel == 'email' || source == 'email') {
+      return TicketEmailSourceContext(
+        threadId: contextTicketId,
+        preview: _string(ticket['subject']),
+        from: _string(context['customer_email'])
+            .ifEmpty(contact)
+            .ifEmpty(customerName),
+        sourceTimelineId: sourceTimelineId,
+        latestTimelineId: latestTimelineId,
+      );
+    }
+    if (channel == 'whatsapp' ||
+        channel == 'widget' ||
+        source == 'whatsapp' ||
+        source == 'widget') {
+      return TicketConversationSourceContext(
+        conversationId: contextTicketId,
+        preview: _string(ticket['subject']),
+        channel:
+            channel == 'widget' ? TicketSource.widget : TicketSource.whatsapp,
+        sourceTimelineId: sourceTimelineId,
+        latestTimelineId: latestTimelineId,
+      );
+    }
+    return const TicketManualSourceContext();
+  }
 
   static Map<String, dynamic> _map(dynamic value, String label) {
     if (value is Map) return _stringMap(value);

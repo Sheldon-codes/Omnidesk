@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 
+import '../../components/omni_skeleton.dart';
 import '../../flutter_flow/flutter_flow_theme.dart';
 import 'tickets_page_model.dart';
 
@@ -1116,14 +1117,11 @@ class _TicketRowSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = theme ?? FlutterFlowTheme.of(context);
-    final fill = t.alternate.withValues(alpha: .62);
-    Widget bar(double width, double height) => Container(
+    Widget bar(double width, double height) => OmniSkeleton(
           width: width,
           height: height,
-          decoration: BoxDecoration(
-            color: fill,
-            borderRadius: BorderRadius.circular(height / 2),
-          ),
+          borderRadius: BorderRadius.circular(height / 2),
+          baseTint: t.alternate,
         );
     return ExcludeSemantics(
       child: Column(children: [
@@ -1136,7 +1134,7 @@ class _TicketRowSkeleton extends StatelessWidget {
                   children: [
                     bar(68, 11),
                     const SizedBox(height: 7),
-                    bar(235, 15),
+                    bar(190, 15),
                     const SizedBox(height: 7),
                     bar(125, 12),
                     const SizedBox(height: 8),
