@@ -1555,39 +1555,6 @@ That belongs to the OS-call layer.
 
 ---
 
-# 40. Baresip cleanup
-
-For this test, explicitly disable:
-
-```swift
-OmniDeskBaresipAdapter
-```
-
-from being constructed.
-
-You do not want:
-
-```text
-native WebRTC
-+
-Baresip
-+
-CallKit
-```
-
-all touching iOS audio.
-
-Do not delete all Baresip source in the same commit.
-
-First:
-
-```text
-stop instantiating it
-prove native WebRTC
-```
-
-Then remove legacy files separately.
-
 ---
 
 # 41. Do not delete WebView implementation yet
@@ -1913,7 +1880,6 @@ I would give Codex this almost verbatim:
 > - `NativeCallService`
 > - `AppDelegate.swift`
 > - `Info.plist`
-> - current Baresip adapter
 > - uploaded AT JS 1.0.7 bundle
 > - uploaded OmniDesk JS bridge
 >
@@ -1959,7 +1925,7 @@ I would give Codex this almost verbatim:
 > - Do not introduce competing `setActive(true/false)` calls.
 > - preserve receiver default, explicit speaker, Bluetooth HFP and route changes.
 >
-> Disable creation of the deprecated Baresip adapter for this test so only one native media implementation can touch audio. Do not delete all Baresip source in the same change.
+> Ensure only the selected native media implementation can own call audio.
 >
 > Do not use the deprecated `GoogleWebRTC` CocoaPod. For production, prefer a reproducibly pinned WebRTC framework built from a specific official upstream WebRTC revision. For the POC, a recent prebuilt XCFramework is acceptable only if its upstream revision, license and checksum are pinned.
 >

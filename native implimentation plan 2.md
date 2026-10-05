@@ -196,7 +196,6 @@ another WebView
 JavaScriptCore executing AT SDK
 Node runtime
 SIP
-Baresip
 CallKeep
 ```
 
@@ -1368,12 +1367,9 @@ PushKit malformed-payload handling
 CallKit UUID cleanup
 cold-start routing
 ngrok replacement
-Baresip cleanup
 ```
 
 They are real issues, but combining everything into one PR will make it impossible to tell why native media succeeds or fails.
-
-The exception is **Baresip audio interference**: make sure the deprecated Baresip adapter is not acquiring/configuring audio while testing native WebRTC.
 
 ---
 
@@ -1481,7 +1477,7 @@ You can give the agent the specification above plus this instruction at the top:
 
 > **Implement this sequentially with hard gates. Do not attempt the entire native client in one pass. Start by inspecting the exact bundled `africastalking-client-1.0.7.min.js`, the current 1.0.8 package, our existing `CallMediaService`, `WebViewCallMediaService`, `CallSessionController`, `NativeCallService`, and iOS `AppDelegate`. Produce `africastalking-native-protocol.md` and a concrete file-by-file implementation plan before changing runtime code.**
 >
-> **The goal is an iOS-only native Africa's Talking WebRTC client that reproduces the supported behavior of the AT JavaScript client without WKWebView. Android must remain unchanged. Preserve the existing Flutter `CallMediaService` contract, backend `/calls/media-config` contract, PushKit/CallKit architecture, and Flutter call UI. Do not introduce SIP/Baresip, `flutter_webrtc`, another WebView, or a second call state machine.**
+> **The goal is an iOS-only native Africa's Talking WebRTC client that reproduces the supported behavior of the AT JavaScript client without WKWebView. Android must remain unchanged. Preserve the existing Flutter `CallMediaService` contract, backend `/calls/media-config` contract, PushKit/CallKit architecture, and Flutter call UI. Do not introduce a SIP stack, `flutter_webrtc`, another WebView, or a second call state machine.**
 >
 > **The first implementation gate is AT WebSocket registration on a physical iPhone. The second is outbound signaling. The decisive third gate is real two-way native audio with increasing inbound and outbound RTP bytes. Stop and report if the AT wire protocol contains behavior that cannot be confidently derived from the shipped/public client; do not invent protocol messages.**
 

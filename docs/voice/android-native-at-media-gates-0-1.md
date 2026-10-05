@@ -17,7 +17,7 @@ observable call behavior as the working iOS Swift client, using Kotlin and
 Android-native WebRTC APIs. It is a protocol/state-machine parity port, not a
 line-by-line language port. Keep the existing `CallMediaService`, backend
 `/calls/media-config` and accept/media-ready flow, Flutter call state machine,
-and UI. No Baresip/SIP migration or cleanup is in scope.
+and UI. The retired SIP media stack is not part of this architecture.
 
 The protocol baseline remains
 [`africastalking-native-protocol.md`](africastalking-native-protocol.md):
@@ -106,10 +106,6 @@ Current code sites that must be centralized before enabling native Android:
 - `OmniDeskTelecomManager.setSpeaker()` and its cleanup route reset currently
   mutate `AudioManager` directly; replace them with runtime/coordinator
   requests and remove those direct writes.
-- `BaresipMediaCoordinator.setSpeaker()` also directly mutates routes. The
-  Baresip call stack remains out of scope, but this setter must delegate to
-  the same coordinator (or become unavailable) so it cannot violate the
-  single-authority invariant.
 - `MainActivity` may translate Flutter's route request but must not obtain or
   mutate `AudioManager` itself.
 - `OmniDeskConnectionService`/`OmniDeskConnection` may report Telecom state
@@ -305,8 +301,6 @@ Change:
   `OmniDeskCallActionReceiver.kt`, and `MainActivity.kt` to route system and
   Flutter actions through the runtime/audio authority, with no direct
   `AudioManager` mutations outside `AndroidCallAudioCoordinator`.
-- `BaresipMediaCoordinator.kt` only to remove/delegate its direct speaker
-  route mutation; no Baresip cleanup or SIP behavior change.
 - `call_media_provider.dart` to add `USE_ANDROID_NATIVE_AT_MEDIA`, defaulting
   to `true` for the current native validation rollout. `false` is an explicit
   pre-call rollback to the intact Android WebView path; never switch engines

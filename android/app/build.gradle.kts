@@ -64,11 +64,6 @@ dependencies {
     testImplementation("org.json:json:20250517")
 }
 
-// The historical Baresip integration is intentionally not part of the active
-// Android build. Its sources stay checked in until the dedicated cleanup pass
-// after Android Telecom + WebRTC acceptance; normal builds must never compile,
-// package, or invoke it.
-
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
