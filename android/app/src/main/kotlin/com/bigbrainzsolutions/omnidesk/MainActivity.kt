@@ -20,6 +20,9 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        if (!flutterEngine.plugins.has(AndroidNativeCallMediaPlugin::class.java)) {
+            flutterEngine.plugins.add(AndroidNativeCallMediaPlugin())
+        }
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, callsChannel)
         AndroidCallEventBridge.attach(channel)
         channel.setMethodCallHandler(::handleCallMethod)
@@ -79,10 +82,8 @@ class MainActivity : FlutterActivity() {
         val systemCallId = callId.ifBlank { callSid }
         Log.i(logTag, "Flutter native call method=${call.method} callId=$callId callSid=$callSid")
         when (call.method) {
-            // Gate 1 system-call boundary. Android Telecom takes ownership in
-            // Gate 3; these no-op acknowledgements keep the established
-            // Flutter/WebRTC path functional while no SIP method is exposed
-            // through NativeCallService any longer.
+            // Native call identity/action bridge. Media remains owned by the
+            // foreground service; Activity methods only forward Telecom work.
             "readNativePushToken" -> result.success(IncomingCallStateStore.readFcmToken(applicationContext))
             "peekPendingOffer" -> result.success(IncomingCallStateStore.peekOffer(applicationContext))
             "takePendingOffer" -> result.success(IncomingCallStateStore.takeOffer(applicationContext))
@@ -103,7 +104,14 @@ class MainActivity : FlutterActivity() {
             "markSystemCallActive" -> { OmniDeskTelecomManager.markActive(applicationContext, systemCallId); result.success(null) }
             "markSystemCallFailed" -> { OmniDeskTelecomManager.markFailed(applicationContext, systemCallId, args["reason"]?.toString()); result.success(null) }
             "dismissSystemCall" -> { OmniDeskTelecomManager.dismiss(applicationContext, systemCallId); result.success(null) }
-            "setSystemSpeaker" -> { OmniDeskTelecomManager.setSpeaker(applicationContext, args["enabled"] == true); result.success(null) }
+            "setSystemSpeaker" -> OmniDeskTelecomManager.setSpeaker(applicationContext, args["enabled"] == true) { outcome ->
+                runOnUiThread {
+                    outcome.fold(
+                        onSuccess = { result.success(null) },
+                        onFailure = { result.error("system_audio_route_failed", it.message ?: "Telecom rejected the route.", null) },
+                    )
+                }
+            }
             else -> result.notImplemented()
         }
     }

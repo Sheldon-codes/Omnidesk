@@ -45,6 +45,12 @@ android {
 }
 
 dependencies {
+    // Pinned Gate 1 upstream WebRTC SDK; checksum is enforced by Gradle's
+    // dependency verification metadata (see android/gradle/verification-metadata.xml).
+    implementation("io.github.webrtc-sdk:android:150.7871.01")
+    // Used only as the WebSocket transport. No HTTP logging interceptor is
+    // installed because the upgrade request carries the AT capability token.
+    implementation("com.squareup.okhttp3:okhttp:5.4.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     // The app owns the native FCM entry point, so it needs the Firebase
     // Messaging API directly rather than relying on the Flutter plugin's
@@ -54,6 +60,8 @@ dependencies {
     // looks for a binding. Ship the matching no-op binding so release R8 has
     // the optional StaticLoggerBinder class without enabling extra logging.
     implementation("org.slf4j:slf4j-nop:1.7.25")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
 }
 
 // The historical Baresip integration is intentionally not part of the active

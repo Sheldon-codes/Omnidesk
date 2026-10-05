@@ -3,8 +3,6 @@ package com.bigbrainzsolutions.omnidesk
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.media.AudioManager
-import android.os.Build
 import android.util.Log
 import io.flutter.plugin.common.MethodChannel
 import java.util.UUID
@@ -22,7 +20,6 @@ class BaresipMediaCoordinator(
     private val emit: (NativeEvent) -> Unit,
 ) {
     private val logTag = "OmniDeskCalls"
-    private val audioManager = context.getSystemService(AudioManager::class.java)
     private var registration: PendingRegistration? = null
     private var activeSession: MediaSession? = null
 
@@ -126,17 +123,8 @@ class BaresipMediaCoordinator(
         NativeBaresip.setMuted(enabled)
     }
 
-    @Suppress("DEPRECATION")
     fun setSpeaker(enabled: Boolean, result: MethodChannel.Result) = execute(result) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val speaker = audioManager.availableCommunicationDevices.firstOrNull {
-                it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
-            }
-            if (enabled && speaker != null) audioManager.setCommunicationDevice(speaker)
-            if (!enabled) audioManager.clearCommunicationDevice()
-        } else {
-            audioManager.isSpeakerphoneOn = enabled
-        }
+        AndroidCallMediaRuntime.setSpeaker(context, enabled)
     }
 
     fun setHeld(enabled: Boolean, result: MethodChannel.Result) = execute(result) {

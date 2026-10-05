@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -135,6 +136,39 @@ void main() {
         CallLifecycle.failed);
   });
 
+  test('native Android prewarm registers without creating a backend call',
+      () async {
+    if (!useAndroidNativeAtMedia) return;
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final api = _FakeCallApi();
+    final media = _FakeMedia();
+    final container = _liveContainer(api: api, media: media);
+    addTearDown(container.dispose);
+
+    await container.read(callSessionControllerProvider.notifier).prewarmMedia();
+
+    expect(api.mediaConfigReads, 1);
+    expect(media.initializeCalls, 1);
+    expect(api.outboundInitiated, isFalse);
+
+    container.read(callSessionControllerProvider.notifier).startOutgoing(
+          const CallParty(
+            displayName: 'Caller',
+            phoneNumber: '+254700000001',
+          ),
+        );
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (!api.outboundInitiated && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(media.outboundAdmissionChecks, 1,
+        reason: 'native call prep must run before backend call creation');
+    expect(media.microphonePermissionChecks, 1,
+        reason: 'native microphone permission must be checked before dialing');
+    expect(api.outboundInitiated, isTrue);
+  });
+
   test('live incoming offer follows accept, media-ready, then native connect',
       () async {
     final api = _FakeCallApi();
@@ -154,6 +188,73 @@ void main() {
     expect(api.mediaReadySent, isTrue);
     expect(container.read(callSessionControllerProvider).lifecycle,
         CallLifecycle.active);
+  });
+
+  test('Android audio readiness starts only after backend accept succeeds',
+      () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final order = <String>[];
+    final api = _FakeCallApi()..flowOrder = order;
+    final media = _FakeMedia()..flowOrder = order;
+    final container = _liveContainer(api: api, media: media);
+    addTearDown(container.dispose);
+    final controller = container.read(callSessionControllerProvider.notifier);
+
+    expect(await controller.handleIncomingOffer(_incomingOffer()), isTrue);
+    await controller.answer();
+
+    expect(order.indexOf('accept_succeeded'),
+        lessThan(order.indexOf('system_audio_ready')));
+    expect(media.systemAudioPreparations, [('call-1', true)]);
+  });
+
+  test('failed backend accept never promotes incoming Telecom to active audio',
+      () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final api = _FakeCallApi()..acceptFailure = true;
+    final media = _FakeMedia();
+    final container = _liveContainer(api: api, media: media);
+    addTearDown(container.dispose);
+    final controller = container.read(callSessionControllerProvider.notifier);
+
+    expect(await controller.handleIncomingOffer(_incomingOffer()), isTrue);
+    await controller.answer();
+
+    expect(media.systemAudioPreparations, isEmpty);
+    expect(container.read(callSessionControllerProvider).lifecycle,
+        CallLifecycle.failed);
+  });
+
+  test('Android outbound registration waits for its DIALING audio lease',
+      () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final order = <String>[];
+    final api = _FakeCallApi()..flowOrder = order;
+    final media = _FakeMedia()..flowOrder = order;
+    final native = _FakeNativeCallService()..flowOrder = order;
+    final container = _liveContainer(api: api, media: media, native: native);
+    addTearDown(container.dispose);
+    final controller = container.read(callSessionControllerProvider.notifier);
+
+    expect(
+        controller.startOutgoing(const CallParty(
+          displayName: 'Caller',
+          phoneNumber: '+254700000001',
+        )),
+        isTrue);
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (!order.contains('dial') && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(order.indexOf('begin_outgoing'),
+        lessThan(order.indexOf('system_audio_ready')));
+    expect(order.indexOf('system_audio_ready'),
+        lessThan(order.indexOf('initialize')));
+    expect(order.indexOf('initialize'), lessThan(order.indexOf('dial')));
   });
 
   test('incoming media event during initialization is not lost', () async {
@@ -339,6 +440,9 @@ class _FakeCallApi implements CallApi {
   bool outboundInitiated = false;
   bool failClientEvents = false;
   int clientEventFailures = 0;
+  int mediaConfigReads = 0;
+  bool acceptFailure = false;
+  List<String>? flowOrder;
 
   @override
   Future<void> acknowledgeDelivery({
@@ -356,7 +460,10 @@ class _FakeCallApi implements CallApi {
     required String offerId,
     required String installationId,
   }) async {
+    flowOrder?.add('accept_requested');
+    if (acceptFailure) throw StateError('test_accept_failure');
     accepted = true;
+    flowOrder?.add('accept_succeeded');
     return ActiveCallSnapshot(
       callId: callId,
       direction: CallDirection.inbound,
@@ -407,6 +514,7 @@ class _FakeCallApi implements CallApi {
     String? ticketId,
   }) async {
     outboundInitiated = true;
+    flowOrder?.add('backend_outbound');
     return const OutboundCallResult(callSid: 'AT-call-sess-initiated');
   }
 
@@ -418,23 +526,27 @@ class _FakeCallApi implements CallApi {
       CallLogPage(records: const [], page: page, hasMore: false);
 
   @override
-  Future<CallMediaConfig> getMediaConfig() async => const CallMediaConfig(
-        provider: 'africas_talking',
-        transport: 'webrtc',
-        endpointType: 'mobile',
-        sipUri: '',
-        sipUsername: '',
-        sipAuthUsername: '',
-        registrar: '',
-        sipDomain: '',
-        sipProxy: '',
-        sipTransport: '',
-        port: 0,
-        supportsHold: true,
-        supportsDtmf: true,
-        supportsNativeIncoming: true,
-        webrtcToken: 'ATCAPtkn_test',
-      );
+  Future<CallMediaConfig> getMediaConfig() async {
+    mediaConfigReads++;
+    return const CallMediaConfig(
+      provider: 'africas_talking',
+      transport: 'webrtc',
+      endpointType: 'mobile',
+      sipUri: '',
+      sipUsername: '',
+      sipAuthUsername: '',
+      registrar: '',
+      sipDomain: '',
+      sipProxy: '',
+      sipTransport: '',
+      port: 0,
+      supportsHold: true,
+      supportsDtmf: true,
+      supportsNativeIncoming: true,
+      webrtcToken: 'ATCAPtkn_test',
+      webrtcGatewayUrl: 'wss://gateway.example/connect',
+    );
+  }
 
   @override
   Future<void> mediaReady({
@@ -453,6 +565,7 @@ class _FakeCallApi implements CallApi {
 
 class _FakeNativeCallService implements NativeCallService {
   final _events = StreamController<NativeCallEvent>.broadcast();
+  List<String>? flowOrder;
 
   @override
   Stream<NativeCallEvent> get events => _events.stream;
@@ -493,7 +606,8 @@ class _FakeNativeCallService implements NativeCallService {
       );
 
   @override
-  Future<void> beginOutgoing(NativeCallIdentity identity) async {}
+  Future<void> beginOutgoing(NativeCallIdentity identity) async =>
+      flowOrder?.add('begin_outgoing');
 
   @override
   Future<void> waitForSystemAudioReady() async {}
@@ -516,8 +630,12 @@ class _FakeMedia implements CallMediaService {
   final _events = StreamController<CallMediaEvent>.broadcast();
   Object? outboundAdmissionError;
   int outboundAdmissionChecks = 0;
+  int microphonePermissionChecks = 0;
   Completer<void>? incomingInitializationGate;
   int incomingEventsEmitted = 0;
+  int initializeCalls = 0;
+  List<String>? flowOrder;
+  final List<(String, bool)> systemAudioPreparations = [];
 
   @override
   Stream<CallMediaEvent> get events => _events.stream;
@@ -530,12 +648,28 @@ class _FakeMedia implements CallMediaService {
   }
 
   @override
+  Future<void> prepareSystemAudio({
+    required String systemCallId,
+    required bool incoming,
+  }) async {
+    flowOrder?.add('system_audio_ready');
+    systemAudioPreparations.add((systemCallId, incoming));
+  }
+
+  @override
+  Future<void> ensureMicrophonePermission() async {
+    microphonePermissionChecks++;
+  }
+
+  @override
   Future<void> abandonMediaPreparation() async {}
 
   @override
   Future<String> initialize(CallMediaConfig config,
       {CallId? incomingCallId}) async {
-    Timer.run(() =>
+    initializeCalls++;
+    flowOrder?.add('initialize');
+    scheduleMicrotask(() =>
         _events.add(const CallMediaEvent(type: CallMediaEventType.ready)));
     if (incomingCallId != null) {
       final gate = incomingInitializationGate;
@@ -557,7 +691,8 @@ class _FakeMedia implements CallMediaService {
       {required String callSid,
       required String phoneNumber,
       String? sipTargetUri}) async {
-    Timer.run(() => _events.add(
+    flowOrder?.add('dial');
+    scheduleMicrotask(() => _events.add(
         CallMediaEvent(type: CallMediaEventType.ringing, callSid: callSid)));
     return 'webview-test-1';
   }

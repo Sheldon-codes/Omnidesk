@@ -59,6 +59,20 @@ abstract class CallMediaService {
   /// idle stale reservation here. They must never tear down an unknown call.
   Future<void> prepareForNewOutboundCall() async {}
 
+  /// Waits for the native system-call audio owner to grant the matching call
+  /// its capture/playout lease. Android Telecom calls this after backend
+  /// acceptance for inbound and after `beginOutgoing` for outbound. iOS keeps
+  /// its existing CallKit activation flow through NativeCallService.
+  Future<void> prepareSystemAudio({
+    required String systemCallId,
+    required bool incoming,
+  });
+
+  /// Requests microphone permission from the visible Activity when required
+  /// by the selected media implementation. Must complete before backend
+  /// outbound call creation.
+  Future<void> ensureMicrophonePermission();
+
   /// Releases setup state when an attempt ends before [initialize] returns a
   /// media-session ID. This prevents a leaked engine reservation from
   /// blocking the next call.

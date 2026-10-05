@@ -3,11 +3,9 @@ package com.bigbrainzsolutions.omnidesk
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.media.AudioDeviceInfo
-import android.media.AudioManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
+import android.os.Build
 import android.telecom.Connection
 import android.telecom.PhoneAccount
 import android.telecom.PhoneAccountHandle
@@ -112,11 +110,7 @@ object OmniDeskTelecomManager {
     fun createIncomingConnection(context: Context, extras: Bundle): Connection {
         val callId = extras.getString(extraCallId).orEmpty()
         val offerId = extras.getString(extraOfferId).orEmpty()
-        val connection = OmniDeskConnection(
-            context,
-            SystemCallIdentity(callId = callId, callSid = null),
-            true,
-        )
+        val connection = createConnection(context, SystemCallIdentity(callId = callId, callSid = null), true)
         // A cancellation can race Telecom's asynchronous ConnectionService
         // callback. Never resurrect a cancelled offer into a fresh ringing
         // system connection.
@@ -136,6 +130,7 @@ object OmniDeskTelecomManager {
         connection.setAddress(Uri.fromParts("tel", extras.getString(extraCallerNumber).orEmpty(), null), TelecomManager.PRESENTATION_ALLOWED)
         connection.setCallerDisplayName(extras.getString(extraCallerName).orEmpty().ifBlank { extras.getString(extraCallerNumber).orEmpty() }, TelecomManager.PRESENTATION_ALLOWED)
         connection.setRinging()
+        AndroidCallMediaRuntime.onTelecomConnectionState(context, callId, connection.state, false)
         return connection
     }
 
@@ -147,7 +142,7 @@ object OmniDeskTelecomManager {
             ?: claimPendingOutgoing()
             ?: SystemCallIdentity(callId = "", callSid = null)
         logTrackedConnections("createOutgoingConnection callId=${identity.callId}")
-        val connection = OmniDeskConnection(context, identity, false)
+        val connection = createConnection(context, identity, false)
         if (identity.systemCallId.isNotBlank()) {
             connections[identity.systemCallId] = connection
             clearPendingOutgoing(identity.systemCallId)
@@ -164,6 +159,7 @@ object OmniDeskTelecomManager {
             TelecomManager.PRESENTATION_ALLOWED,
         )
         connection.setDialing()
+        AndroidCallMediaRuntime.onTelecomConnectionState(context, identity.systemCallId, connection.state, false)
         return connection
     }
 
@@ -206,6 +202,7 @@ object OmniDeskTelecomManager {
         // markAnswering.
         OmniDeskCallNotification.dismissIncoming(context, callId)
         connections[callId]?.setActive()
+        AndroidCallMediaRuntime.onTelecomConnectionState(context, callId, Connection.STATE_ACTIVE, false)
         if (androidx.core.content.ContextCompat.checkSelfPermission(
                 context, android.Manifest.permission.RECORD_AUDIO
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -260,12 +257,41 @@ object OmniDeskTelecomManager {
      */
     fun markAnswering(context: Context, callId: String) {
         OmniDeskCallNotification.dismissIncoming(context, callId)
-        connections[callId]?.setInitializing()
         // The bridge/WebView has to survive the entire preparation phase,
         // not only the already-connected phase. Starting here also covers a
         // cold Flutter engine after an Answer action from the system surface.
         startForegroundServiceSafely(context, callId)
         Log.i(logTag, "Incoming Telecom ringing stopped; preparing callId=$callId")
+    }
+
+    /** Called only after backend /accept succeeds for incoming calls. */
+    fun prepareSystemAudio(context: Context, callId: String, incoming: Boolean, callback: (Result<Unit>) -> Unit) {
+        val connection = connections[callId]
+        if (connection == null || connection.state == Connection.STATE_DISCONNECTED ||
+            (incoming && connection.state != Connection.STATE_RINGING && connection.state != Connection.STATE_ACTIVE) ||
+            (!incoming && connection.state != Connection.STATE_DIALING && connection.state != Connection.STATE_ACTIVE)
+        ) {
+            callback(Result.failure(IllegalStateException("matching_telecom_connection_unavailable")))
+            return
+        }
+        if (incoming && connection.state == Connection.STATE_RINGING) {
+            OmniDeskCallNotification.dismissIncoming(context, callId)
+            connection.setActive()
+            AndroidCallMediaRuntime.onTelecomConnectionState(context, callId, Connection.STATE_ACTIVE, false)
+            Log.i(logTag, "Telecom transition callId=$callId state=ACTIVE ownership=telecom reason=backend_accept")
+        }
+        startForegroundServiceSafely(context, callId)
+        AndroidCallMediaRuntime.awaitSystemAudioReadiness(context, callId, incoming, callback)
+    }
+
+    /** Telecom surface adapter; audio policy/readiness decisions stay in the foreground service coordinator. */
+    fun requestSpeakerRoute(callId: String, enabled: Boolean, callback: (Result<Unit>) -> Unit) {
+        val connection = connections[callId]
+        if (connection == null || connection.state == Connection.STATE_DISCONNECTED) {
+            callback(Result.failure(IllegalStateException("matching_telecom_connection_unavailable")))
+            return
+        }
+        connection.requestSpeakerRoute(enabled, callback)
     }
 
     fun decline(context: Context, callId: String, reason: String = "user_declined") {
@@ -308,34 +334,18 @@ object OmniDeskTelecomManager {
 
     fun dismiss(context: Context, callId: String) = cleanup(context, callId, null)
 
-    fun setSpeaker(context: Context, enabled: Boolean) {
-        val audioManager = context.getSystemService(AudioManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val target = if (enabled) {
-                audioManager.availableCommunicationDevices.firstOrNull {
-                    it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
-                } ?: throw IllegalStateException("No built-in speaker route is available")
-            } else {
-                audioManager.availableCommunicationDevices.firstOrNull {
-                    it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
-                }
-            }
-            val routed = target?.let(audioManager::setCommunicationDevice)
-                ?: run {
-                    audioManager.clearCommunicationDevice()
-                    true
-                }
-            if (!routed) {
-                throw IllegalStateException("Android rejected the requested call audio route")
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            run {
-                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-                audioManager.isSpeakerphoneOn = enabled
-            }
+    fun setSpeaker(context: Context, enabled: Boolean, callback: (Result<Unit>) -> Unit = {}) {
+        AndroidCallMediaRuntime.setSpeaker(context, enabled, callback)
+    }
+
+    fun onConnectionServiceFocusChanged(context: Context, gained: Boolean, released: () -> Unit = {}) {
+        val callId = connections.entries.firstOrNull { it.value.state == Connection.STATE_ACTIVE }?.key
+            ?: connections.entries.firstOrNull { it.value.state == Connection.STATE_DIALING }?.key
+        if (callId == null) {
+            if (!gained) released()
+            return
         }
-        Log.i(logTag, "Call audio route changed speaker=$enabled")
+        AndroidCallMediaRuntime.onTelecomFocusChanged(context, callId, gained, released)
     }
 
     private fun cleanup(
@@ -365,8 +375,7 @@ object OmniDeskTelecomManager {
         IncomingCallStateStore.clearPresentation(context, callId, offerId)
         MainActivity.clearIncomingCallLaunchPresentation(callId)
         clearPendingOutgoing(callId)
-        releaseCommunicationRoute(context)
-        OmniDeskCallForegroundService.stop(context)
+        AndroidCallMediaRuntime.endSystemAudio(context, callId)
     }
 
     private fun identityFromExtras(extras: Bundle): SystemCallIdentity = SystemCallIdentity(
@@ -375,6 +384,10 @@ object OmniDeskTelecomManager {
         displayName = extras.getString(extraCallerName).orEmpty(),
         phoneNumber = extras.getString(extraCallerNumber).orEmpty(),
     )
+
+    private fun createConnection(context: Context, identity: SystemCallIdentity, incoming: Boolean): OmniDeskConnection =
+        if (Build.VERSION.SDK_INT >= 34) OmniDeskConnectionApi34(context, identity, incoming)
+        else OmniDeskConnection(context, identity, incoming)
 
     private fun reservePendingOutgoing(identity: SystemCallIdentity) = synchronized(pendingOutgoingLock) {
         val existing = pendingOutgoing
@@ -403,19 +416,6 @@ object OmniDeskTelecomManager {
         // This log makes a stale native Connection diagnosable without using
         // it as an unreliable concurrency gate.
         Log.i(logTag, "$action trackedConnections=${connections.keys.joinToString(",")}")
-    }
-
-    private fun releaseCommunicationRoute(context: Context) {
-        val audioManager = context.getSystemService(AudioManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            audioManager.clearCommunicationDevice()
-        } else {
-            @Suppress("DEPRECATION")
-            run {
-                audioManager.isSpeakerphoneOn = false
-                audioManager.mode = AudioManager.MODE_NORMAL
-            }
-        }
     }
 
     /** Keep the native Answer path usable if an OEM rejects an FGS start. */

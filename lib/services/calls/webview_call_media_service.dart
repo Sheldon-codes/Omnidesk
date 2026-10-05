@@ -342,6 +342,15 @@ class WebViewCallMediaService implements CallMediaService {
   }
 
   @override
+  Future<void> prepareSystemAudio({
+    required String systemCallId,
+    required bool incoming,
+  }) async {}
+
+  @override
+  Future<void> ensureMicrophonePermission() async {}
+
+  @override
   Future<void> abandonMediaPreparation() =>
       _releaseMediaLease(reason: 'setup_terminated_before_session_id');
 

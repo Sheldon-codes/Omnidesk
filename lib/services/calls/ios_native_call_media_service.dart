@@ -31,6 +31,15 @@ class IOSNativeCallMediaService implements CallMediaService {
   Future<void> prepareForNewOutboundCall() async {}
 
   @override
+  Future<void> prepareSystemAudio({
+    required String systemCallId,
+    required bool incoming,
+  }) async {}
+
+  @override
+  Future<void> ensureMicrophonePermission() async {}
+
+  @override
   Future<void> abandonMediaPreparation() async {}
 
   @override

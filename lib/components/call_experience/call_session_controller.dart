@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -250,6 +251,14 @@ class CallSessionController extends _$CallSessionController {
         'The call service returned an unsupported media transport.',
       );
     }
+    if (shouldUseAndroidNativeAtMedia(
+      platform: defaultTargetPlatform,
+      enabled: useAndroidNativeAtMedia,
+    )) {
+      final media = ref.read(callMediaServiceProvider);
+      _activeMedia = media;
+      return media;
+    }
     _activeMedia = _webView;
     return _webView;
   }
@@ -275,6 +284,17 @@ class CallSessionController extends _$CallSessionController {
         if (!usesSupportedWebViewMedia(config) ||
             state.hasCall ||
             _authScopeKey() != scope) {
+          return;
+        }
+        if (shouldUseAndroidNativeAtMedia(
+          platform: defaultTargetPlatform,
+          enabled: useAndroidNativeAtMedia,
+        )) {
+          // Registration-only warmup: this uses the authenticated
+          // /calls/media-config credentials and does not create a backend call
+          // or invoke dial(). The service owns the socket across Flutter engine
+          // detach/reattach; initialize is idempotent for the same credentials.
+          await ref.read(callMediaServiceProvider).initialize(config);
           return;
         }
         // Keep the controller dependent on the selected media implementation.
@@ -568,11 +588,30 @@ class CallSessionController extends _$CallSessionController {
     String? ticketId,
   }) async {
     OutboundCallResult? created;
+    CallMediaService? mediaBeingPrepared;
+    var mediaPreparationStarted = false;
     try {
       // Admit the local media engine before creating a backend call. The
       // WebView implementation can release a verified idle stale reservation
       // here, but refuses to touch an attached/unknown background call.
-      await _webView.prepareForNewOutboundCall();
+      final mediaForThisAttempt = shouldUseAndroidNativeAtMedia(
+        platform: defaultTargetPlatform,
+        enabled: useAndroidNativeAtMedia,
+      )
+          ? ref.read(callMediaServiceProvider)
+          : _webView;
+      mediaBeingPrepared = mediaForThisAttempt;
+      if (shouldUseAndroidNativeAtMedia(
+        platform: defaultTargetPlatform,
+        enabled: useAndroidNativeAtMedia,
+      )) {
+        // Permission prompts must be initiated while the Flutter Activity is
+        // foregrounded, before the service starts and before the backend call
+        // record is created. A foreground service cannot show this dialog.
+        await mediaForThisAttempt.ensureMicrophonePermission();
+      }
+      mediaPreparationStarted = true;
+      await mediaForThisAttempt.prepareForNewOutboundCall();
       if (state.party != party || state.phase != CallPhase.outgoingPreparing) {
         return;
       }
@@ -586,6 +625,11 @@ class CallSessionController extends _$CallSessionController {
       final result = created;
       // Ignore a late response after the agent has ended the local surface.
       if (state.party != party || state.phase != CallPhase.outgoingPreparing) {
+        if (_activeMedia == null) {
+          unawaited(
+            mediaBeingPrepared.abandonMediaPreparation().catchError((_) {}),
+          );
+        }
         return;
       }
       state = state.copyWith(
@@ -597,8 +641,18 @@ class CallSessionController extends _$CallSessionController {
       // On iOS, CallKit—not Flutter or the hidden WKWebView—owns audio
       // activation. Starting AT capture before `didActivate` can yield a
       // live-but-muted track with no outgoing RTP frames.
-      await _native.waitForSystemAudioReady();
-      _markAttemptPhase('system_audio_active');
+      if (shouldUseAndroidNativeAtMedia(
+        platform: defaultTargetPlatform,
+        enabled: useAndroidNativeAtMedia,
+      )) {
+        await mediaForThisAttempt.prepareSystemAudio(
+          systemCallId: result.callId ?? result.callSid,
+          incoming: false,
+        );
+      } else {
+        await _native.waitForSystemAudioReady();
+      }
+      _markAttemptPhase('system_audio_ready');
       final config = await configFuture;
       if (!config.canAuthenticate && !config.canUseWebRtc) {
         throw const CallApiException(
@@ -651,6 +705,12 @@ class CallSessionController extends _$CallSessionController {
             .then((_) {})
             .catchError((_) {}));
       }
+      if (created == null && _activeMedia == null && mediaPreparationStarted) {
+        final preparedMedia = mediaBeingPrepared;
+        if (preparedMedia != null) {
+          unawaited(preparedMedia.abandonMediaPreparation().catchError((_) {}));
+        }
+      }
       if (state.party == party) _fail(_messageFor(error));
     }
   }
@@ -691,6 +751,16 @@ class CallSessionController extends _$CallSessionController {
           name: 'CallSession',
         );
       }
+      final mediaForAttempt = ref.read(callMediaServiceProvider);
+      if (shouldUseAndroidNativeAtMedia(
+        platform: defaultTargetPlatform,
+        enabled: useAndroidNativeAtMedia,
+      )) {
+        // A Telecom Answer action cannot display Android's runtime permission
+        // dialog. Request it from this foreground Activity before backend
+        // acceptance; never attempt to route this failure through WebView.
+        await mediaForAttempt.ensureMicrophonePermission();
+      }
       final installationId = await _installationId();
       _acceptedInstallationId = installationId;
       final configFuture = _getMediaConfig();
@@ -699,12 +769,27 @@ class CallSessionController extends _$CallSessionController {
         'offerId=$offerId.',
         name: 'CallSession',
       );
+      debugPrint(
+        '[CallSession] incoming endpoint=/calls/$callId/accept result=requested',
+      );
       final acceptFuture = _api.accept(
         callId: callId,
         offerId: offerId,
         installationId: installationId,
       );
-      final accepted = await acceptFuture;
+      late final ActiveCallSnapshot accepted;
+      try {
+        accepted = await acceptFuture;
+        debugPrint(
+          '[CallSession] incoming endpoint=/calls/$callId/accept result=success',
+        );
+      } catch (error) {
+        debugPrint(
+          '[CallSession] incoming endpoint=/calls/$callId/accept '
+          'result=failed error=${error.runtimeType}',
+        );
+        rethrow;
+      }
       _markAttemptPhase('accept_completed');
       developer.log('Incoming call flow phase=accept_confirmed callId=$callId.',
           name: 'CallSession');
@@ -713,16 +798,35 @@ class CallSessionController extends _$CallSessionController {
         phase: CallPhase.mediaPreparing,
         startedAt: accepted.answeredAt,
       );
-      // Backend acceptance remains authoritative and is intentionally not
-      // delayed by this local CallKit readiness gate. Only WebRTC capture is.
-      await _native.waitForSystemAudioReady();
-      _markAttemptPhase('system_audio_active');
+      // Backend acceptance is authoritative. Only after it succeeds may the
+      // incoming Telecom connection leave RINGING and grant WebRTC its audio
+      // readiness lease. iOS retains its existing CallKit activation path.
+      if (shouldUseAndroidNativeAtMedia(
+        platform: defaultTargetPlatform,
+        enabled: useAndroidNativeAtMedia,
+      )) {
+        await mediaForAttempt.prepareSystemAudio(
+          systemCallId: callId,
+          incoming: true,
+        );
+      } else {
+        await _native.waitForSystemAudioReady();
+      }
+      _markAttemptPhase('system_audio_ready');
       final config = await configFuture;
       if (!config.canAuthenticate && !config.canUseWebRtc) {
         throw const CallApiException(
           CallApiErrorKind.unavailable,
           'The call service did not provide a usable media credential.',
         );
+      }
+      if (shouldUseAndroidNativeAtMedia(
+        platform: defaultTargetPlatform,
+        enabled: useAndroidNativeAtMedia,
+      )) {
+        // Promote the call FGS to microphone type only after permission is
+        // granted and before native capture can start.
+        await mediaForAttempt.prepareForNewOutboundCall();
       }
       // Subscribe before native registration finishes. AT can deliver the
       // incomingcall event immediately after registration/media-ready, and a
@@ -761,11 +865,27 @@ class CallSessionController extends _$CallSessionController {
         'mediaSession=$mediaSessionId.',
         name: 'CallSession',
       );
-      await _api.mediaReady(
-        callId: callId,
-        offerId: offerId,
-        installationId: installationId,
+      debugPrint(
+        '[CallSession] incoming endpoint=/calls/$callId/media-ready '
+        'result=requested',
       );
+      try {
+        await _api.mediaReady(
+          callId: callId,
+          offerId: offerId,
+          installationId: installationId,
+        );
+        debugPrint(
+          '[CallSession] incoming endpoint=/calls/$callId/media-ready '
+          'result=success',
+        );
+      } catch (error) {
+        debugPrint(
+          '[CallSession] incoming endpoint=/calls/$callId/media-ready '
+          'result=failed error=${error.runtimeType}',
+        );
+        rethrow;
+      }
       _markAttemptPhase('media_ready_completed');
       developer.log(
           'Incoming call flow phase=media_ready_confirmed callId=$callId; '
