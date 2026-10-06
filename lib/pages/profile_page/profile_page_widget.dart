@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../models/auth/auth_models.dart';
@@ -347,6 +348,8 @@ class _ManagedCallingTileState extends State<_ManagedCallingTile>
   bool _selected = false;
   bool _accountEnabled = false;
   bool _accountStatusKnown = false;
+  bool _preferredOutgoing = false;
+  bool _preferredStatusKnown = false;
   bool _loading = true;
 
   @override
@@ -367,26 +370,58 @@ class _ManagedCallingTileState extends State<_ManagedCallingTile>
     if (state == AppLifecycleState.resumed) _refresh();
   }
 
-  Future<void> _refresh() async {
+  Future<Map<String, dynamic>?> _refresh() async {
     try {
       final status =
           await MethodChannelNativeCallService().managedCallingStatus();
-      if (!mounted) return;
+      if (!mounted) return null;
       setState(() {
         _selected = status['selected'] == true;
         _accountEnabled = status['accountEnabled'] == true;
         _accountStatusKnown = status['accountStatusKnown'] == true;
+        _preferredOutgoing = status['preferredOutgoing'] == true;
+        _preferredStatusKnown = status['preferredStatusKnown'] == true;
         _loading = false;
       });
+      return status;
     } catch (_) {
       if (mounted) setState(() => _loading = false);
+      return null;
     }
+  }
+
+  Future<void> _checkPreferredAccountStatus() async {
+    setState(() => _loading = true);
+    String message;
+    try {
+      final permission = await Permission.phone.request();
+      if (!mounted) return;
+      final status = await _refresh();
+      if (!mounted) return;
+      message = !permission.isGranted
+          ? 'Phone permission was not granted. Allow it in Android app settings to check the preferred calling account.'
+          : status == null || status['preferredStatusKnown'] != true
+              ? 'Could not read the preferred calling account. Check Android calling-account settings.'
+              : status['preferredOutgoing'] == true
+                  ? 'OmniDesk is the preferred account for ordinary Phone calls.'
+                  : 'Another account is preferred. Select OmniDesk in Android calling-account settings.';
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      message = 'Could not check the preferred calling account. Try again or check Android calling-account settings.';
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _toggle(bool enabled) async {
     setState(() => _loading = true);
     try {
       if (enabled) {
+        // Company-device setup can inspect Telecom's preferred tel: account;
+        // denial only hides status and never prevents an explicit managed call.
+        await Permission.phone.request();
         final granted = await widget.ref
             .read(webViewCallMediaServiceProvider)
             .requestMicrophonePermission();
@@ -422,6 +457,8 @@ class _ManagedCallingTileState extends State<_ManagedCallingTile>
         _selected = status['selected'] == true;
         _accountEnabled = status['accountEnabled'] == true;
         _accountStatusKnown = status['accountStatusKnown'] == true;
+        _preferredOutgoing = status['preferredOutgoing'] == true;
+        _preferredStatusKnown = status['preferredStatusKnown'] == true;
         _loading = false;
       });
     } catch (_) {
@@ -436,15 +473,51 @@ class _ManagedCallingTileState extends State<_ManagedCallingTile>
     }
   }
 
+  Future<void> _debugPlaceExternalCall() async {
+    final controller = TextEditingController();
+    final number = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Test direct OmniDesk call'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.phone,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Phone number'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+              child: const Text('Call with OmniDesk')),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (number == null || number.isEmpty || !mounted) return;
+    try {
+      await MethodChannelNativeCallService().debugPlaceExternalManagedCall(number);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('The direct OmniDesk call could not start. Check calling-account setup.'),
+        ));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final subtitle = !_selected
         ? 'Use Android’s system call screen for calls on this device'
         : !_accountStatusKnown
-            ? 'Selected; verify OmniDesk is enabled in Android calling-account settings'
-            : _accountEnabled
-                ? 'Android system call screen is enabled'
-                : 'Enable OmniDesk in Android calling-account settings';
+            ? 'Account status unavailable; verify it in Android calling-account settings'
+            : !_accountEnabled
+                ? 'Enable OmniDesk in Android calling-account settings'
+                : !_preferredStatusKnown
+                    ? 'System calling enabled; preferred outgoing account status unavailable'
+                    : _preferredOutgoing
+                        ? 'OmniDesk is the preferred outgoing calling account'
+                        : 'System calling enabled; ordinary Phone calls still use another account';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Row(children: [
@@ -469,7 +542,7 @@ class _ManagedCallingTileState extends State<_ManagedCallingTile>
                 overflow: TextOverflow.ellipsis,
                 style: widget.theme.bodySmall
                     .override(color: widget.theme.secondaryText)),
-            if (_selected && (!_accountStatusKnown || !_accountEnabled))
+            if (_selected)
               TextButton(
                 onPressed: _loading
                     ? null
@@ -479,6 +552,16 @@ class _ManagedCallingTileState extends State<_ManagedCallingTile>
                         await _refresh();
                       },
                 child: const Text('Open calling-account settings'),
+              ),
+            if (_selected && !_preferredStatusKnown)
+              TextButton(
+                onPressed: _loading ? null : _checkPreferredAccountStatus,
+                child: const Text('Check preferred account status'),
+              ),
+            if (kDebugMode && _selected && _accountEnabled)
+              TextButton(
+                onPressed: _loading ? null : _debugPlaceExternalCall,
+                child: const Text('Test direct OmniDesk call'),
               ),
           ]),
         ),

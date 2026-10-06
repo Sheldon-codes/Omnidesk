@@ -11,6 +11,8 @@ import java.util.concurrent.TimeUnit
 
 /** Implements the existing Dart CallApi wire contract for background managed calls. */
 internal class ManagedCallBackendClient(context: Context) {
+    class HttpFailure(val status: Int) : IllegalStateException("managed_call_api_http_$status")
+    data class Outbound(val callId: String, val callSid: String, val number: String)
     private val app = context.applicationContext
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS)
@@ -45,6 +47,20 @@ internal class ManagedCallBackendClient(context: Context) {
         val session = activeCallSession ?: credentials()
         post(session, "/calls/$callId/media-ready", JSONObject()
             .put("installation_id", session.installationId).put("offer_id", offerId).put("transport", "webrtc"))
+    }
+
+    fun initiate(number: String): Outbound {
+        val session = credentials().also { activeCallSession = it }
+        val response = post(session, "/calls/initiate", JSONObject().put("to_number", number))
+        return decodeOutbound(response, number)
+    }
+
+    fun complete(callSid: String, connectedSeconds: Long) {
+        validateId(callSid)
+        val session = activeCallSession ?: credentials()
+        post(session, "/calls/complete", JSONObject()
+            .put("call_sid", callSid).put("duration", connectedSeconds.coerceAtLeast(0)))
+        activeCallSession = null
     }
 
     fun end(callId: String, reason: String) {
@@ -84,15 +100,24 @@ internal class ManagedCallBackendClient(context: Context) {
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 Log.w(TAG, "Managed call API failed path=$path status=${response.code}")
-                error("managed_call_api_http_${response.code}")
+                throw HttpFailure(response.code)
             }
             val root = JSONObject(response.body?.string().orEmpty())
             return root.optJSONObject("data") ?: root
         }
     }
 
-    private companion object {
-        const val TAG = "OmniDeskManagedCall"
-        val JSON = "application/json; charset=utf-8".toMediaType()
+    internal companion object {
+        private const val TAG = "OmniDeskManagedCall"
+        private val JSON = "application/json; charset=utf-8".toMediaType()
+        fun decodeOutbound(response: JSONObject, dialedNumber: String): Outbound {
+            check(response.optBoolean("success", true)) { "outbound_initiate_rejected" }
+            val callId = response.optString("call_id")
+            val callSid = response.optString("call_sid")
+            require(callId.matches(Regex("[A-Za-z0-9_-]{1,128}")) &&
+                callSid.matches(Regex("[A-Za-z0-9_-]{1,128}"))) { "outbound_identity_invalid" }
+            return Outbound(callId, callSid,
+                response.optString("normalized_to_number").ifBlank { dialedNumber })
+        }
     }
 }

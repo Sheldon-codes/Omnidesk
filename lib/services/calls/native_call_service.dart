@@ -423,6 +423,10 @@ class MethodChannelNativeCallService implements NativeCallService {
   Future<void> openManagedCallAccountSettings() =>
       _invoke('openManagedCallAccountSettings', const {});
 
+  /// Debug-only explicit managed-account probe; bypasses Flutter call reservation.
+  Future<void> debugPlaceExternalManagedCall(String number) =>
+      _invoke('debugPlaceExternalManagedCall', {'number': number});
+
   @override
   Future<void> syncManagedCallSession({
     required String baseUrl,

@@ -34,7 +34,7 @@ class OmniDeskConnectionService : ConnectionService() {
     override fun onCreateOutgoingConnection(
         connectionManagerPhoneAccount: android.telecom.PhoneAccountHandle?,
         request: ConnectionRequest,
-    ): Connection = OmniDeskTelecomManager.createOutgoingConnection(this, request.extras ?: Bundle())
+    ): Connection = OmniDeskTelecomManager.createOutgoingConnection(this, request)
 
     override fun onCreateIncomingConnectionFailed(
         connectionManagerPhoneAccount: android.telecom.PhoneAccountHandle?,

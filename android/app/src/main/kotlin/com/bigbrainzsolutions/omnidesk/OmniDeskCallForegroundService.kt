@@ -25,10 +25,12 @@ class OmniDeskCallForegroundService : Service() {
     private lateinit var peer: ATWebRTCSession
     private lateinit var media: ATNativeMediaCoordinator
     private lateinit var managedInbound: ManagedInboundCallOrchestrator
+    private lateinit var managedOutbound: ManagedOutboundCallOrchestrator
     private val localBinder = LocalBinder()
 
     inner class LocalBinder : Binder() {
         fun snapshot(): Map<String, Any?> = this@OmniDeskCallForegroundService.snapshot()
+        fun externalOutboundSnapshot(): Map<String, Any?> = managedOutbound.snapshot()
         fun addListener(listener: (Map<String, Any?>) -> Unit) { listeners.add(listener) }
         fun removeListener(listener: (Map<String, Any?>) -> Unit) { listeners.remove(listener) }
         fun initialize(gateway: String, token: String, incomingCallId: String?, callback: (Result<String>) -> Unit) = media.initialize(gateway, token, incomingCallId, callback)
@@ -58,6 +60,8 @@ class OmniDeskCallForegroundService : Service() {
         fun answerManagedInbound(callId: String) { managedInbound.answer(callId) }
         fun managedCallDisconnected(callId: String) { managedInbound.onDisconnected(callId) }
         fun managedCallDeclined(callId: String, reason: String) { managedInbound.decline(callId, reason) }
+        fun beginManagedOutbound(localId: String, number: String) { managedOutbound.start(localId, number) }
+        fun managedOutboundDisconnected(localId: String) { managedOutbound.onDisconnected(localId) }
     }
 
     override fun onCreate() {
@@ -65,7 +69,14 @@ class OmniDeskCallForegroundService : Service() {
         audio = AndroidCallAudioCoordinator(serial, OmniDeskTelecomManager::requestSpeakerRoute)
         peer = ATWebRTCSession(applicationContext, serial, audio)
         media = ATNativeMediaCoordinator(serial, ::publish, peerConnection = peer)
-        managedInbound = ManagedInboundCallOrchestrator(applicationContext, serial, media)
+        managedOutbound = ManagedOutboundCallOrchestrator(applicationContext, serial, media,
+            emit = { event ->
+                try { serial.execute { publish(event) } }
+                catch (_: java.util.concurrent.RejectedExecutionException) { /* Service is gone. */ }
+            })
+        managedInbound = ManagedInboundCallOrchestrator(applicationContext, serial, media,
+            canStopService = { !managedOutbound.hasLiveAttempt() &&
+                !AndroidCallMediaRuntime.hasPendingManagedOutbound() && !media.hasActiveCall() })
         Log.i(logTag, "Native call runtime owner=foreground_service created")
     }
 
@@ -128,6 +139,7 @@ class OmniDeskCallForegroundService : Service() {
         }
         audio.release()
         managedInbound.dispose()
+        managedOutbound.dispose()
         serial.shutdownNow()
         super.onDestroy()
     }
@@ -137,7 +149,10 @@ class OmniDeskCallForegroundService : Service() {
         history.addLast(event)
         while (history.size > 64) history.removeFirst()
         listeners.forEach { it(event) }
-        if (raw["type"] == "media_event") managedInbound.onMediaEvent(raw)
+        if (raw["type"] == "media_event") {
+            managedInbound.onMediaEvent(raw)
+            managedOutbound.onMediaEvent(raw)
+        }
         if (registrationOnly && event["type"] == "snapshot") {
             val state = event["state"]?.toString() ?: "connecting"
             val text = when (state) {
@@ -146,6 +161,12 @@ class OmniDeskCallForegroundService : Service() {
                 else -> "Preparing AT call signaling"
             }
             showRegistrationNotification(text)
+        } else if (event["type"] == "external_outbound_snapshot" && event["state"] == "ended" &&
+            !managedOutbound.hasLiveAttempt() && !AndroidCallMediaRuntime.hasPendingManagedOutbound() &&
+            !media.hasActiveCall()
+        ) {
+            registrationOnly = true
+            showRegistrationNotification("OmniDesk call service ready")
         } else if (event["type"] == "media_event" &&
             event["event"] in setOf("ended", "error", "processTerminated") &&
             !media.hasActiveCall()

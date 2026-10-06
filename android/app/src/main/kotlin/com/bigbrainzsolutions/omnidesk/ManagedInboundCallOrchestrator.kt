@@ -14,6 +14,7 @@ internal class ManagedInboundCallOrchestrator(
     private val context: Context,
     private val scheduler: ScheduledExecutorService,
     private val media: ATNativeMediaCoordinator,
+    private val canStopService: () -> Boolean = { true },
 ) {
     private data class Attempt(val callId: String, val offerId: String, var mediaSessionId: String? = null,
         var waitingForOffer: ScheduledFuture<*>? = null, var terminal: Boolean = false)
@@ -132,7 +133,7 @@ internal class ManagedInboundCallOrchestrator(
             try { backend.decline(callId, offerId, reason) }
             catch (_: Throwable) { Log.w(TAG, "Managed call decline API failed callId=$callId") }
             finally {
-                if (synchronized(lock) { attempt == null || attempt?.terminal == true }) {
+                if (synchronized(lock) { attempt == null || attempt?.terminal == true } && canStopService()) {
                     OmniDeskCallForegroundService.stop(context)
                 }
             }

@@ -85,20 +85,12 @@ class MainActivity : FlutterActivity() {
             // Native call identity/action bridge. Media remains owned by the
             // foreground service; Activity methods only forward Telecom work.
             "readNativePushToken" -> result.success(IncomingCallStateStore.readFcmToken(applicationContext))
-            "managedCallingStatus" -> result.success(mapOf(
-                "selected" to OmniDeskTelecomManager.managedCallingEnabled(applicationContext),
-                "accountEnabled" to OmniDeskTelecomManager.isManagedAccountEnabled(applicationContext),
-                "accountStatusKnown" to (OmniDeskTelecomManager.isManagedAccountEnabled(applicationContext) != null),
-            ))
+            "managedCallingStatus" -> result.success(OmniDeskTelecomManager.managedCallingStatus(applicationContext))
             "setManagedCallingEnabled" -> {
                 val enabled = args["enabled"] == true
                 try {
                     OmniDeskTelecomManager.setManagedCallingEnabled(applicationContext, enabled)
-                    result.success(mapOf(
-                        "selected" to enabled,
-                        "accountEnabled" to OmniDeskTelecomManager.isManagedAccountEnabled(applicationContext),
-                        "accountStatusKnown" to (OmniDeskTelecomManager.isManagedAccountEnabled(applicationContext) != null),
-                    ))
+                    result.success(OmniDeskTelecomManager.managedCallingStatus(applicationContext))
                 } catch (_: IllegalStateException) {
                     result.error("managed_call_session_not_ready", "Sign in again before enabling system calling.", null)
                 }
@@ -134,6 +126,17 @@ class MainActivity : FlutterActivity() {
             "beginOutgoingSystemCall" -> {
                 try { OmniDeskTelecomManager.beginOutgoing(applicationContext, args.mapNotNull { (key, value) -> value?.toString()?.let { key.toString() to it } }.toMap()); result.success(null) }
                 catch (error: Throwable) { result.error("telecom_outgoing_failed", error.message, null) }
+            }
+            "debugPlaceExternalManagedCall" -> {
+                if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0)
+                    result.error("debug_call_unavailable", "Debug builds only.", null)
+                else try {
+                    OmniDeskTelecomManager.debugPlaceExternalManagedCall(applicationContext,
+                        args["number"]?.toString().orEmpty())
+                    result.success(null)
+                } catch (_: Throwable) {
+                    result.error("debug_external_call_failed", "The explicit managed-account call could not start.", null)
+                }
             }
             "markSystemCallAnswering" -> { OmniDeskTelecomManager.markAnswering(applicationContext, systemCallId); result.success(null) }
             "markSystemCallActive" -> { OmniDeskTelecomManager.markActive(applicationContext, systemCallId); result.success(null) }

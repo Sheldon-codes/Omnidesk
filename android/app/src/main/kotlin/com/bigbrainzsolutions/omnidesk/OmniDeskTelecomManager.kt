@@ -3,10 +3,12 @@ package com.bigbrainzsolutions.omnidesk
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.telecom.Connection
+import android.telecom.ConnectionRequest
 import android.telecom.PhoneAccount
 import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
@@ -29,6 +31,8 @@ object OmniDeskTelecomManager {
     private val focusTracker = TelecomFocusTracker()
     private val pendingOutgoingLock = Any()
     private var pendingOutgoing: SystemCallIdentity? = null
+    private val externalOutboundIds = ConcurrentHashMap.newKeySet<String>()
+    private val recentlyFinishedExternalIds = ArrayDeque<String>()
 
     data class PresentationReceipt(val receivedAt: String, val nativePresentedAt: String) {
         fun toMap() = mapOf("receivedAt" to receivedAt, "nativePresentedAt" to nativePresentedAt)
@@ -38,8 +42,10 @@ object OmniDeskTelecomManager {
         val telecom = context.getSystemService(TelecomManager::class.java)
         telecom.registerPhoneAccount(PhoneAccount.builder(selfManagedPhoneAccountHandle(context), "OmniDesk calls")
             .setCapabilities(PhoneAccount.CAPABILITY_SELF_MANAGED).build())
-        telecom.registerPhoneAccount(PhoneAccount.builder(managedPhoneAccountHandle(context), "OmniDesk calls (System UI)")
+        telecom.registerPhoneAccount(PhoneAccount.builder(managedPhoneAccountHandle(context), "OmniDesk")
             .setCapabilities(PhoneAccount.CAPABILITY_CALL_PROVIDER)
+            .setIcon(Icon.createWithResource(context, R.mipmap.ic_launcher))
+            .setShortDescription("OmniDesk business calls")
             .setSupportedUriSchemes(listOf("tel")).build())
     }
 
@@ -57,8 +63,34 @@ object OmniDeskTelecomManager {
             .putBoolean("managed_calling_enabled", enabled).apply()
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    fun isManagedAccountEnabled(context: Context): Boolean? = null
+    fun isManagedAccountEnabled(context: Context): Boolean? = try {
+        val telecom = context.getSystemService(TelecomManager::class.java)
+        val handle = managedPhoneAccountHandle(context)
+        when {
+            Build.VERSION.SDK_INT >= 35 -> telecom.registeredPhoneAccounts
+                .firstOrNull { it.accountHandle == handle }?.isEnabled
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_PHONE_STATE) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED -> telecom.callCapablePhoneAccounts.contains(handle)
+            else -> null
+        }
+    } catch (_: SecurityException) { null }
+
+    fun isPreferredOutgoingAccount(context: Context): Boolean? {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_PHONE_STATE) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return null
+        return try {
+            context.getSystemService(TelecomManager::class.java)
+                .getDefaultOutgoingPhoneAccount(PhoneAccount.SCHEME_TEL) == managedPhoneAccountHandle(context)
+        } catch (_: SecurityException) { null }
+    }
+
+    fun managedCallingStatus(context: Context): Map<String, Any?> {
+        val enabled = isManagedAccountEnabled(context)
+        val preferred = isPreferredOutgoingAccount(context)
+        return mapOf("selected" to managedCallingEnabled(context),
+            "accountEnabled" to enabled, "accountStatusKnown" to (enabled != null),
+            "preferredOutgoing" to preferred, "preferredStatusKnown" to (preferred != null))
+    }
 
     fun openPhoneAccountSettings(context: Context) {
         context.startActivity(Intent(TelecomManager.ACTION_CHANGE_PHONE_ACCOUNTS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -182,7 +214,8 @@ object OmniDeskTelecomManager {
         return connection
     }
 
-    fun createOutgoingConnection(context: Context, extras: Bundle): Connection {
+    fun createOutgoingConnection(context: Context, request: ConnectionRequest): Connection {
+        val extras = request.extras ?: Bundle()
         // Several OEM Telecom implementations omit app-defined extras from
         // the outgoing ConnectionRequest. Claim the identity reserved before
         // placeCall() instead of creating an untrackable empty-key connection.
@@ -191,13 +224,19 @@ object OmniDeskTelecomManager {
             pendingOutgoing?.takeIf { requestIdentity == null || requestIdentity.systemCallId == it.systemCallId }
         }
         if (identity == null) {
-            // Telecom can deliver this callback after the originating call
-            // has already timed out or been cancelled. Never create a live
-            // Connection without an application call identity.
-            Log.w(logTag, "Rejecting outgoing Telecom connection without a reserved identity")
+            if (requestIdentity == null && synchronized(pendingOutgoingLock) { pendingOutgoing == null }) {
+                return createExternalOutgoingConnection(context, request)
+            }
+            Log.w(logTag, "Rejecting stale Flutter outbound Telecom callback")
             return Connection.createFailedConnection(
                 android.telecom.DisconnectCause(android.telecom.DisconnectCause.CANCELED),
             )
+        }
+        val expectedAccount = if (isManagedCall(context, identity.systemCallId))
+            managedPhoneAccountHandle(context) else selfManagedPhoneAccountHandle(context)
+        if (request.accountHandle != null && request.accountHandle != expectedAccount) {
+            Log.w(logTag, "Rejecting Flutter outbound callback account mismatch")
+            return Connection.createFailedConnection(android.telecom.DisconnectCause(android.telecom.DisconnectCause.ERROR))
         }
         logTrackedConnections("createOutgoingConnection callId=${identity.callId}")
         val connection = createConnection(context, identity, false)
@@ -234,6 +273,67 @@ object OmniDeskTelecomManager {
         AndroidCallMediaRuntime.onTelecomConnectionState(context, identity.systemCallId, connection.state, false)
         dispatchPendingTelecomFocus(context)
         return connection
+    }
+
+    private fun createExternalOutgoingConnection(context: Context, request: ConnectionRequest): Connection {
+        val account = request.accountHandle
+        val number = ExternalDialerCallPolicy.destination(context, request.address,
+            account == managedPhoneAccountHandle(context), managedCallingEnabled(context),
+            isManagedAccountEnabled(context))
+        if (number == null) {
+            Log.w(logTag, "External outbound rejected account=${accountClass(context, account)}")
+            return Connection.createFailedConnection(android.telecom.DisconnectCause(android.telecom.DisconnectCause.ERROR))
+        }
+        val localId = UUID.randomUUID().toString()
+        val identity = SystemCallIdentity(localId, null, phoneNumber = number)
+        val connection = createConnection(context, identity, false)
+        connection.setAudioModeIsVoip(true)
+        connection.setAddress(request.address, TelecomManager.PRESENTATION_ALLOWED)
+        synchronized(pendingOutgoingLock) {
+            connections[localId] = connection
+            externalOutboundIds.add(localId)
+        }
+        routeForConnection(context, localId, true)
+        connection.setDialing()
+        AndroidCallMediaRuntime.onTelecomConnectionState(context, localId, connection.state, false)
+        dispatchPendingTelecomFocus(context)
+        Log.i(logTag, "External outbound Telecom connection created origin=external_dialer account=omnidesk_managed attempt=$localId")
+        AndroidCallMediaRuntime.startManagedOutbound(context, localId, number)
+        return connection
+    }
+
+    private fun accountClass(context: Context, account: PhoneAccountHandle?): String = when (account) {
+        managedPhoneAccountHandle(context) -> "omnidesk_managed"
+        selfManagedPhoneAccountHandle(context) -> "omnidesk_self_managed"
+        null -> "none"
+        else -> "other"
+    }
+
+    fun finishExternalCall(context: Context, localId: String, cause: Int, reason: String) {
+        val first = synchronized(pendingOutgoingLock) {
+            if (!externalOutboundIds.remove(localId)) false
+            else {
+                recentlyFinishedExternalIds.addLast(localId)
+                while (recentlyFinishedExternalIds.size > 64) recentlyFinishedExternalIds.removeFirst()
+                true
+            }
+        }
+        if (!first) return
+        cleanup(context, localId, null, android.telecom.DisconnectCause(cause, reason))
+        Log.i(logTag, "External outbound Telecom finished attempt=$localId reason=$reason")
+    }
+
+    fun markExternalActive(context: Context, localId: String): Boolean {
+        val activated = synchronized(pendingOutgoingLock) {
+            val connection = connections[localId]
+            if (!externalOutboundIds.contains(localId) || connection?.state != Connection.STATE_DIALING) false
+            else { connection.setActive(); true }
+        }
+        if (activated) {
+            AndroidCallMediaRuntime.onTelecomConnectionState(context, localId, Connection.STATE_ACTIVE, false)
+            dispatchPendingTelecomFocus(context)
+        }
+        return activated
     }
 
     fun beginOutgoing(context: Context, values: Map<String, String>) {
@@ -281,6 +381,21 @@ object OmniDeskTelecomManager {
             throw error
         }
         AndroidCallEventBridge.emitOutgoingDialing(identity)
+    }
+
+    /** Debug-only probe of the external route: no Flutter reservation or backend initiation. */
+    fun debugPlaceExternalManagedCall(context: Context, number: String) {
+        check(context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            "debug_call_unavailable"
+        }
+        ensurePhoneAccount(context)
+        val address = Uri.fromParts("tel", number, null)
+        require(ExternalDialerCallPolicy.destination(context, address, true,
+            managedCallingEnabled(context), isManagedAccountEnabled(context)) != null) { "unsupported_destination" }
+        val extras = Bundle().apply {
+            putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, managedPhoneAccountHandle(context))
+        }
+        context.getSystemService(TelecomManager::class.java).placeCall(address, extras)
     }
 
     fun markActive(context: Context, callId: String, emitFlutter: Boolean = true) {
@@ -416,6 +531,11 @@ object OmniDeskTelecomManager {
     }
 
     fun disconnect(context: Context, callId: String, reason: String = "local_disconnect") {
+        if (synchronized(pendingOutgoingLock) { recentlyFinishedExternalIds.contains(callId) }) return
+        if (externalOutboundIds.contains(callId)) {
+            AndroidCallMediaRuntime.managedOutboundDisconnected(context, callId)
+            return
+        }
         OmniDeskCallNotification.dismissIncoming(context, callId)
         IncomingCallStateStore.saveAction(context, callId, "end", reason)
         cleanup(
@@ -495,6 +615,7 @@ object OmniDeskTelecomManager {
         if (isManagedCall(context, callId)) AndroidCallMediaRuntime.managedCallDisconnected(callId)
         val connection = synchronized(pendingOutgoingLock) {
             clearPendingOutgoing(callId)
+            externalOutboundIds.remove(callId)
             connections.remove(callId)
         }
         focusTracker.connectionRemoved(callId, connections.isEmpty())

@@ -20,6 +20,8 @@ internal object AndroidCallMediaRuntime : AndroidCallMediaRuntimeBridge {
     @Volatile private var callPreparationActive = false
     private val audioGeneration = AtomicLong()
     private val activeAudioRequests = ConcurrentHashMap<String, Long>()
+    private val cancelledManagedOutbound = ConcurrentHashMap.newKeySet<String>()
+    private val pendingManagedOutbound = ConcurrentHashMap.newKeySet<String>()
     private val runtimeListener: (Map<String, Any?>) -> Unit = ::broadcast
 
     private val connection = object : ServiceConnection {
@@ -27,7 +29,10 @@ internal object AndroidCallMediaRuntime : AndroidCallMediaRuntimeBridge {
             val local = binder as? OmniDeskCallForegroundService.LocalBinder ?: return
             service = local
             local.addListener(runtimeListener)
-            clients.forEach { it.onSnapshot(local.snapshot()) }
+            clients.forEach {
+                it.onSnapshot(local.snapshot())
+                it.onEvent(local.externalOutboundSnapshot())
+            }
             synchronized(this@AndroidCallMediaRuntime) {
                 pending.toList().also { pending.clear() }.forEach { it(local) }
             }
@@ -41,7 +46,10 @@ internal object AndroidCallMediaRuntime : AndroidCallMediaRuntimeBridge {
         context?.applicationContext?.let { appContext = it }
         clients.add(client)
         bindIfNeeded(start = false)
-        service?.let { client.onSnapshot(it.snapshot()) }
+        service?.let {
+            client.onSnapshot(it.snapshot())
+            client.onEvent(it.externalOutboundSnapshot())
+        }
     }
 
     override fun detach(client: Client) {
@@ -94,6 +102,38 @@ internal object AndroidCallMediaRuntime : AndroidCallMediaRuntimeBridge {
             binder.managedCallDisconnected(callId)
         }
     }
+
+    fun startManagedOutbound(context: Context, localId: String, number: String) {
+        val app = context.applicationContext
+        appContext = app
+        cancelledManagedOutbound.remove(localId)
+        pendingManagedOutbound.add(localId)
+        try {
+            OmniDeskCallForegroundService.start(app, localId, useMicrophone = true)
+            val launch: (OmniDeskCallForegroundService.LocalBinder) -> Unit = { binder ->
+                pendingManagedOutbound.remove(localId)
+                if (!cancelledManagedOutbound.remove(localId)) binder.beginManagedOutbound(localId, number)
+            }
+            val current = synchronized(this) { service ?: run { pending += launch; null } }
+            if (current != null) launch(current) else bindIfNeeded(start = true)
+        } catch (_: Throwable) {
+            pendingManagedOutbound.remove(localId)
+            cancelledManagedOutbound.remove(localId)
+            OmniDeskTelecomManager.finishExternalCall(app, localId,
+                android.telecom.DisconnectCause.ERROR, "call_service_start_failed")
+        }
+    }
+
+    fun managedOutboundDisconnected(context: Context, localId: String) {
+        if (pendingManagedOutbound.contains(localId)) cancelledManagedOutbound.add(localId)
+        val current = service
+        if (current != null) current.managedOutboundDisconnected(localId)
+        else OmniDeskTelecomManager.finishExternalCall(context, localId,
+            android.telecom.DisconnectCause.LOCAL, "local_disconnect")
+    }
+
+    fun hasPendingManagedOutbound(): Boolean = pendingManagedOutbound.isNotEmpty()
+
     fun managedCallDeclined(context: Context, callId: String, reason: String) {
         val app = context.applicationContext
         appContext = app
@@ -198,6 +238,9 @@ internal object AndroidCallMediaRuntime : AndroidCallMediaRuntimeBridge {
         else result()
     }
 
+    override fun externalOutboundSnapshot(): Map<String, Any?> =
+        service?.externalOutboundSnapshot() ?: mapOf("type" to "external_outbound_snapshot", "state" to "idle")
+
     fun setSpeaker(context: Context, enabled: Boolean) {
         setSpeaker(context, enabled) { }
     }
@@ -282,6 +325,7 @@ internal object AndroidCallMediaRuntime : AndroidCallMediaRuntimeBridge {
 
 /** Minimal plugin boundary to make engine detach/reattach behavior testable without Android service ownership. */
 internal interface AndroidCallMediaRuntimeBridge {
+    fun externalOutboundSnapshot(): Map<String, Any?> = mapOf("type" to "external_outbound_snapshot", "state" to "idle")
     fun attach(context: Context?, client: AndroidCallMediaRuntime.Client)
     fun detach(client: AndroidCallMediaRuntime.Client)
     fun initialize(context: Context?, gateway: String, token: String, incomingCallId: String?, result: (Result<String>) -> Unit)

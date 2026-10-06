@@ -45,6 +45,7 @@ class AndroidNativeCallMediaPlugin internal constructor(
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "snapshot" -> result.success(latestSnapshot)
+            "externalOutboundSnapshot" -> result.success(runtime.externalOutboundSnapshot())
             "prepareForCall" -> runtime.prepareForCall(applicationContext) {
                 completeUnit(result, it, "call_service_start_failed")
             }
