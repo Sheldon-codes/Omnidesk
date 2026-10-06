@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.OutcomeReceiver
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.annotation.RequiresApi
 
 class OmniDeskConnectionService : ConnectionService() {
@@ -79,15 +80,23 @@ open class OmniDeskConnection(
     }
 
     override fun onHold() {
+        AndroidCallMediaRuntime.setHeld(true)
         setOnHold()
     }
 
     override fun onUnhold() {
+        AndroidCallMediaRuntime.setHeld(false)
         setActive()
+    }
+
+    override fun onPlayDtmfTone(digit: Char) {
+        AndroidCallMediaRuntime.sendDtmf(digit.toString())
     }
 
     @Synchronized override fun onCallAudioStateChanged(state: android.telecom.CallAudioState) {
         super.onCallAudioStateChanged(state)
+        Log.i("OmniDeskTelecom", "Connection audio state observed state=${this.state} managed=${OmniDeskTelecomManager.isManagedCall(context, identity.systemCallId)}")
+        AndroidCallMediaRuntime.setMuted(state.isMuted)
         AndroidCallMediaRuntime.onTelecomConnectionState(
             context, identity.systemCallId,
             state = this.state,

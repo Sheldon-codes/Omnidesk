@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'call_models.dart';
 
@@ -118,6 +119,10 @@ abstract class NativeCallService {
   Future<NativeIncomingCallLaunch?> takeInitialIncomingLaunch();
   Future<NativeCallEvent?> takePendingAction();
   Future<NativeIncomingPresentationReceipt> presentIncoming(CallOffer offer);
+
+  /// Requests managed Telecom's runtime calling permission while Flutter is
+  /// foregrounded, before an outbound backend call record is created.
+  Future<void> ensureOutgoingPermission();
   Future<void> beginOutgoing(NativeCallIdentity identity);
 
   /// Waits for the system-call framework to activate its audio session before
@@ -134,6 +139,20 @@ abstract class NativeCallService {
   Future<void> markFailed(NativeCallIdentity identity, {String? reason});
   Future<void> dismiss(NativeCallIdentity identity);
   Future<void> setSystemSpeaker(bool enabled);
+
+  Future<Map<String, dynamic>> managedCallingStatus() async => const {
+        'selected': false,
+        'accountEnabled': false,
+      };
+  Future<Map<String, dynamic>> setManagedCallingEnabled(bool enabled) async =>
+      managedCallingStatus();
+  Future<void> openManagedCallAccountSettings() async {}
+  Future<void> syncManagedCallSession({
+    required String baseUrl,
+    required String accessToken,
+    required String workspaceId,
+    required String installationId,
+  }) async {}
 }
 
 class NativeAudioSessionDiagnostic {
@@ -302,6 +321,26 @@ class MethodChannelNativeCallService implements NativeCallService {
   }
 
   @override
+  Future<void> ensureOutgoingPermission() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final status = await managedCallingStatus();
+    if (status['selected'] != true) return;
+    final current = await Permission.phone.status;
+    if (current.isGranted) return;
+    if (current.isPermanentlyDenied || current.isRestricted) {
+      throw const NativeCallUnavailable(
+        'Phone permission is blocked. Enable it for OmniDesk in Android settings to place system-managed calls.',
+      );
+    }
+    final requested = await Permission.phone.request();
+    if (!requested.isGranted) {
+      throw const NativeCallUnavailable(
+        'Phone permission is required to place a system-managed call.',
+      );
+    }
+  }
+
+  @override
   Future<void> beginOutgoing(NativeCallIdentity identity) =>
       _invoke('beginOutgoingSystemCall', identity.toMap());
 
@@ -367,6 +406,36 @@ class MethodChannelNativeCallService implements NativeCallService {
   @override
   Future<void> setSystemSpeaker(bool enabled) =>
       _invoke('setSystemSpeaker', {'enabled': enabled});
+
+  @override
+  Future<Map<String, dynamic>> managedCallingStatus() async =>
+      await _readMapFromInvoke('managedCallingStatus', const {},
+          allowMissingPlugin: true) ??
+      const {};
+
+  @override
+  Future<Map<String, dynamic>> setManagedCallingEnabled(bool enabled) async =>
+      await _readMapFromInvoke('setManagedCallingEnabled', {'enabled': enabled},
+          allowMissingPlugin: true) ??
+      const {};
+
+  @override
+  Future<void> openManagedCallAccountSettings() =>
+      _invoke('openManagedCallAccountSettings', const {});
+
+  @override
+  Future<void> syncManagedCallSession({
+    required String baseUrl,
+    required String accessToken,
+    required String workspaceId,
+    required String installationId,
+  }) =>
+      _invoke('syncManagedCallSession', {
+        'baseUrl': baseUrl,
+        'accessToken': accessToken,
+        'workspaceId': workspaceId,
+        'installationId': installationId,
+      });
 
   Future<void> _invoke(
     String method,

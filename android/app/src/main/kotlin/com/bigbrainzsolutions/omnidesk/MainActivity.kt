@@ -85,6 +85,41 @@ class MainActivity : FlutterActivity() {
             // Native call identity/action bridge. Media remains owned by the
             // foreground service; Activity methods only forward Telecom work.
             "readNativePushToken" -> result.success(IncomingCallStateStore.readFcmToken(applicationContext))
+            "managedCallingStatus" -> result.success(mapOf(
+                "selected" to OmniDeskTelecomManager.managedCallingEnabled(applicationContext),
+                "accountEnabled" to OmniDeskTelecomManager.isManagedAccountEnabled(applicationContext),
+                "accountStatusKnown" to (OmniDeskTelecomManager.isManagedAccountEnabled(applicationContext) != null),
+            ))
+            "setManagedCallingEnabled" -> {
+                val enabled = args["enabled"] == true
+                try {
+                    OmniDeskTelecomManager.setManagedCallingEnabled(applicationContext, enabled)
+                    result.success(mapOf(
+                        "selected" to enabled,
+                        "accountEnabled" to OmniDeskTelecomManager.isManagedAccountEnabled(applicationContext),
+                        "accountStatusKnown" to (OmniDeskTelecomManager.isManagedAccountEnabled(applicationContext) != null),
+                    ))
+                } catch (_: IllegalStateException) {
+                    result.error("managed_call_session_not_ready", "Sign in again before enabling system calling.", null)
+                }
+            }
+            "openManagedCallAccountSettings" -> {
+                try { OmniDeskTelecomManager.openPhoneAccountSettings(applicationContext); result.success(null) }
+                catch (_: Throwable) { result.error("phone_account_settings_unavailable", "Android call-account settings are unavailable.", null) }
+            }
+            "syncManagedCallSession" -> {
+                val baseUrl = args["baseUrl"]?.toString().orEmpty()
+                val token = args["accessToken"]?.toString().orEmpty()
+                val workspace = args["workspaceId"]?.toString().orEmpty()
+                val installation = args["installationId"]?.toString().orEmpty()
+                try {
+                    if (token.isBlank()) NativeCallCredentials.clear(applicationContext)
+                    else NativeCallCredentials.write(applicationContext, baseUrl, token, workspace, installation)
+                    result.success(null)
+                } catch (_: Throwable) {
+                    result.error("native_call_session_sync_failed", "Secure call session synchronization failed.", null)
+                }
+            }
             "peekPendingOffer" -> result.success(IncomingCallStateStore.peekOffer(applicationContext))
             "takePendingOffer" -> result.success(IncomingCallStateStore.takeOffer(applicationContext))
             "peekInitialIncomingLaunch" -> result.success(IncomingCallStateStore.peekIncomingLaunch(applicationContext))

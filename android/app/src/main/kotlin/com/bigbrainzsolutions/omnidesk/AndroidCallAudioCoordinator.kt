@@ -62,15 +62,19 @@ internal class AndroidCallAudioCoordinator(
             current.timeout = executor.schedule({ synchronized(this) {
                 if (session === expected && !ready(expected)) {
                     complete(expected, Result.failure(IllegalStateException("system_audio_readiness_timeout")))
-                    log("Telecom audio readiness timeout callId=${expected.callId} generation=${expected.generation}")
+                    log("Telecom audio readiness timeout callId=${expected.callId} generation=${expected.generation} ${conditions(expected)}")
                 }
             } }, readinessTimeoutSeconds, TimeUnit.SECONDS)
-            log("Telecom audio readiness wait callId=$callId generation=${current.generation}")
+            log("Telecom audio readiness wait callId=$callId generation=${current.generation} ${conditions(current)}")
         }
     }
 
     @Synchronized fun foregroundStarted(callId: String, success: Boolean) {
-        val s = session?.takeIf { it.callId == callId } ?: run { foregroundResults[callId] = success; return }
+        val s = session?.takeIf { it.callId == callId } ?: run {
+            foregroundResults[callId] = success
+            log("Call FGS readiness cached callId=$callId ready=$success")
+            return
+        }
         s.foregroundReady = success
         log("Call FGS readiness callId=$callId ready=$success generation=${s.generation}")
         if (!success) complete(s, Result.failure(IllegalStateException("call_foreground_service_failed"))) else tryGrant(s)
@@ -79,6 +83,7 @@ internal class AndroidCallAudioCoordinator(
     @Synchronized fun connectionState(callId: String, eligible: Boolean, audioStateObserved: Boolean = false) {
         val s = session?.takeIf { it.callId == callId } ?: run {
             connectionResults[callId] = eligible to (eligible && audioStateObserved)
+            log("Telecom state cached callId=$callId eligible=$eligible audioState=$audioStateObserved")
             return
         }
         s.connectionEligible = eligible
@@ -91,6 +96,7 @@ internal class AndroidCallAudioCoordinator(
     @Synchronized fun focusChanged(callId: String, gained: Boolean) {
         val s = session?.takeIf { it.callId == callId } ?: run {
             focusResults[callId] = gained
+            log("Telecom focus cached callId=$callId gained=$gained")
             return
         }
         s.focusGained = gained
@@ -142,6 +148,8 @@ internal class AndroidCallAudioCoordinator(
 
     private fun ready(s: Session) = s.readinessState != ReadinessState.Failed &&
         s.connectionEligible && s.foregroundReady && s.focusGained
+    private fun conditions(s: Session) =
+        "connection=${s.connectionEligible} foreground=${s.foregroundReady} focus=${s.focusGained} audioState=${s.legacyAudioStateSeen}"
     private fun tryGrant(s: Session) { if (ready(s)) grant(s) }
     private fun grant(s: Session) {
         s.readinessState = ReadinessState.Ready

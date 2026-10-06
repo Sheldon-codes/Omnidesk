@@ -1,9 +1,11 @@
 import 'dart:developer' as developer;
 
 import 'package:riverpod_annotation/riverpod_annotation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../models/auth/auth_models.dart';
 import 'calls/device_installation_service.dart';
+import 'calls/native_call_service.dart';
 import 'auth_repository.dart';
 import 'auth_token_store.dart';
 import 'response_cache.dart';
@@ -105,6 +107,8 @@ class AuthSessionController extends _$AuthSessionController {
         bootstrapComplete: true,
         isOffline: true,
       );
+      await _syncManagedCallSession(provisionalSession);
+      if (!ref.mounted) return;
       developer.log(
         'Restored cached authenticated session; verifying in background.',
         name: 'AuthSession',
@@ -115,6 +119,7 @@ class AuthSessionController extends _$AuthSessionController {
         case AuthSuccess<AuthUser>(value: final user):
           final verifiedSession = provisionalSession.withUser(user);
           await store.saveSession(verifiedSession);
+          await _syncManagedCallSession(verifiedSession);
           if (!ref.mounted) return;
           state = AuthState(
             status: AuthStatus.authenticated,
@@ -202,6 +207,7 @@ class AuthSessionController extends _$AuthSessionController {
   Future<AuthFailure?> _completeLogin(AuthSession session) async {
     try {
       await ref.read(authTokenStoreProvider).saveSession(session);
+      await _syncManagedCallSession(session);
       state = AuthState(
         status: AuthStatus.authenticated,
         session: session,
@@ -247,6 +253,7 @@ class AuthSessionController extends _$AuthSessionController {
         final verifiedSession = currentSession.withUser(user);
         try {
           await ref.read(authTokenStoreProvider).saveSession(verifiedSession);
+          await _syncManagedCallSession(verifiedSession);
           state = state.copyWith(
             status: AuthStatus.authenticated,
             session: verifiedSession,
@@ -291,6 +298,7 @@ class AuthSessionController extends _$AuthSessionController {
     if (current == null) return;
     final updated = current.withActiveWorkspace(workspace);
     await ref.read(authTokenStoreProvider).saveSession(updated);
+    await _syncManagedCallSession(updated);
     state = state.copyWith(session: updated, clearFailure: true);
   }
 
@@ -314,6 +322,16 @@ class AuthSessionController extends _$AuthSessionController {
       // is temporarily unavailable. A later login can repair persistence.
     } finally {
       try {
+        await ref.read(nativeCallServiceProvider).syncManagedCallSession(
+              baseUrl: dotenv.env['API_BASE_URL'] ?? '',
+              accessToken: '',
+              workspaceId: '',
+              installationId: '',
+            );
+      } catch (_) {
+        // Continue local logout even if the platform bridge is unavailable.
+      }
+      try {
         if (!ref.mounted) return;
         await ref.read(responseCacheProvider).clearAllServerData();
       } catch (_) {
@@ -327,6 +345,27 @@ class AuthSessionController extends _$AuthSessionController {
           bootstrapComplete: true,
         );
       }
+    }
+  }
+
+  Future<void> _syncManagedCallSession(AuthSession session) async {
+    if (!ref.mounted) return;
+    try {
+      final native = ref.read(nativeCallServiceProvider);
+      final calling = await native.managedCallingStatus();
+      if (calling['selected'] != true) return;
+      final installationId = await ref
+          .read(deviceInstallationServiceProvider)
+          .getOrCreateInstallationId();
+      await native.syncManagedCallSession(
+        baseUrl: dotenv.env['API_BASE_URL'] ?? '',
+        accessToken: session.accessToken,
+        workspaceId: session.user.activeWorkspace?.id ?? '',
+        installationId: installationId,
+      );
+    } catch (_) {
+      // An unavailable native mirror disables headless managed calling only;
+      // the Flutter-owned session remains authoritative.
     }
   }
 

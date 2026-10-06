@@ -591,6 +591,10 @@ class CallSessionController extends _$CallSessionController {
     CallMediaService? mediaBeingPrepared;
     var mediaPreparationStarted = false;
     try {
+      // A managed PhoneAccount uses CALL_PHONE, whereas the self-managed
+      // rollback account uses MANAGE_OWN_CALLS. Ask before creating a backend
+      // call so a denial cannot leave an orphan outgoing call record.
+      await _native.ensureOutgoingPermission();
       // Admit the local media engine before creating a backend call. The
       // WebView implementation can release a verified idle stale reservation
       // here, but refuses to touch an attached/unknown background call.

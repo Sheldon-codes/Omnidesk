@@ -45,6 +45,22 @@ class AndroidCallAudioCoordinatorTest {
         } finally { executor.shutdownNow() }
     }
 
+    @Test fun outboundWaitSurvivesFocusAndForegroundBeforeLateConnection() {
+        val executor = Executors.newSingleThreadScheduledExecutor()
+        try {
+            val audio = AndroidCallAudioCoordinator(executor, { _, _, callback -> callback(Result.success(Unit)) }, sdkInt = 36, log = {})
+            val result = AtomicReference<Result<AndroidCallAudioCoordinator.Lease>?>()
+            val latch = CountDownLatch(1)
+            audio.begin("late-outbound", incoming = false) { result.set(it); latch.countDown() }
+            audio.focusChanged("late-outbound", true)
+            audio.foregroundStarted("late-outbound", true)
+            assertNull(result.get())
+            audio.connectionState("late-outbound", eligible = true)
+            assertTrue(latch.await(1, TimeUnit.SECONDS))
+            assertEquals("late-outbound", result.get()!!.getOrThrow().systemCallId)
+        } finally { executor.shutdownNow() }
+    }
+
     @Test fun legacyApiUsesEligibleConnectionAudioStateSignal() {
         val executor = Executors.newSingleThreadScheduledExecutor()
         try {

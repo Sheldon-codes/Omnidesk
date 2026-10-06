@@ -136,6 +136,39 @@ void main() {
         CallLifecycle.failed);
   });
 
+  test('outgoing Telecom permission denial precedes backend call creation',
+      () async {
+    final api = _FakeCallApi();
+    final media = _FakeMedia();
+    final native = _FakeNativeCallService()
+      ..outgoingPermissionFailure = const NativeCallUnavailable(
+        'Phone permission is required to place a system-managed call.',
+      );
+    final container = _liveContainer(api: api, media: media, native: native);
+    addTearDown(container.dispose);
+
+    expect(
+      container.read(callSessionControllerProvider.notifier).startOutgoing(
+            const CallParty(
+              displayName: 'Caller',
+              phoneNumber: '+254700000001',
+            ),
+          ),
+      isTrue,
+    );
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (container.read(callSessionControllerProvider).lifecycle !=
+            CallLifecycle.failed &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(api.outboundInitiated, isFalse);
+    expect(media.outboundAdmissionChecks, 0);
+    expect(container.read(callSessionControllerProvider).failureMessage,
+        'Phone permission is required to place a system-managed call.');
+  });
+
   test('native Android prewarm registers without creating a backend call',
       () async {
     if (!useAndroidNativeAtMedia) return;
@@ -252,6 +285,8 @@ void main() {
 
     expect(order.indexOf('begin_outgoing'),
         lessThan(order.indexOf('system_audio_ready')));
+    expect(order.indexOf('outgoing_permission'),
+        lessThan(order.indexOf('backend_outbound')));
     expect(order.indexOf('system_audio_ready'),
         lessThan(order.indexOf('initialize')));
     expect(order.indexOf('initialize'), lessThan(order.indexOf('dial')));
@@ -566,6 +601,7 @@ class _FakeCallApi implements CallApi {
 class _FakeNativeCallService implements NativeCallService {
   final _events = StreamController<NativeCallEvent>.broadcast();
   List<String>? flowOrder;
+  Object? outgoingPermissionFailure;
 
   @override
   Stream<NativeCallEvent> get events => _events.stream;
@@ -606,6 +642,13 @@ class _FakeNativeCallService implements NativeCallService {
       );
 
   @override
+  Future<void> ensureOutgoingPermission() async {
+    flowOrder?.add('outgoing_permission');
+    final error = outgoingPermissionFailure;
+    if (error != null) throw error;
+  }
+
+  @override
   Future<void> beginOutgoing(NativeCallIdentity identity) async =>
       flowOrder?.add('begin_outgoing');
 
@@ -624,6 +667,27 @@ class _FakeNativeCallService implements NativeCallService {
 
   @override
   Future<void> setSystemSpeaker(bool enabled) async {}
+
+  @override
+  Future<Map<String, dynamic>> managedCallingStatus() async => const {
+        'selected': false,
+        'accountEnabled': false,
+      };
+
+  @override
+  Future<Map<String, dynamic>> setManagedCallingEnabled(bool enabled) async =>
+      {'selected': enabled, 'accountEnabled': enabled};
+
+  @override
+  Future<void> openManagedCallAccountSettings() async {}
+
+  @override
+  Future<void> syncManagedCallSession({
+    required String baseUrl,
+    required String accessToken,
+    required String workspaceId,
+    required String installationId,
+  }) async {}
 }
 
 class _FakeMedia implements CallMediaService {

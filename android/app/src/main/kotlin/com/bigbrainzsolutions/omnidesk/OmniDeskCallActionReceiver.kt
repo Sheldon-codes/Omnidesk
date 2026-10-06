@@ -9,6 +9,11 @@ import android.util.Log
 class OmniDeskCallActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val callId = intent.getStringExtra(OmniDeskTelecomManager.extraCallId).orEmpty()
+        if (intent.action == openManagedAccountSettingsAction) {
+            try { OmniDeskTelecomManager.openPhoneAccountSettings(context) }
+            catch (_: Throwable) { Log.w(logTag, "Android call-account settings could not be opened") }
+            return
+        }
         if (callId.isBlank()) {
             Log.w(logTag, "Ignoring call action without call identity")
             return
@@ -23,6 +28,7 @@ class OmniDeskCallActionReceiver : BroadcastReceiver() {
     companion object {
         const val answerAction = "com.bigbrainzsolutions.omnidesk.ANSWER_CALL"
         const val declineAction = "com.bigbrainzsolutions.omnidesk.DECLINE_CALL"
+        const val openManagedAccountSettingsAction = "com.bigbrainzsolutions.omnidesk.OPEN_MANAGED_ACCOUNT_SETTINGS"
         private const val logTag = "OmniDeskCallAction"
     }
 }

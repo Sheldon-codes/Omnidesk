@@ -58,7 +58,9 @@ class OmniDeskMessagingService : FirebaseMessagingService() {
                     // surface has been accepted. Emitting this after a native
                     // failure used to make Flutter retry a rejected offer and
                     // produced duplicate presentation races.
-                    AndroidCallEventBridge.offerAvailable(callId)
+                    if (!OmniDeskTelecomManager.isManagedCall(applicationContext, callId)) {
+                        AndroidCallEventBridge.offerAvailable(callId)
+                    }
                 } catch (error: Throwable) {
                     IncomingCallStateStore.discardOffer(
                         applicationContext,

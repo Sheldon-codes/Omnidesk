@@ -79,6 +79,28 @@ object OmniDeskCallNotification {
         NotificationManagerCompat.from(context).cancel(notificationId(callId))
     }
 
+    fun showManagedAccountSetupRequired(context: Context) {
+        ensureChannels(context)
+        val openSettings = PendingIntent.getBroadcast(
+            context, 41877,
+            Intent(context, OmniDeskCallActionReceiver::class.java).setAction(
+                OmniDeskCallActionReceiver.openManagedAccountSettingsAction,
+            ),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(context, incomingChannel)
+            .setSmallIcon(android.R.drawable.sym_action_call)
+            .setContentTitle("Enable OmniDesk system calling")
+            .setContentText("Open Android calling-account settings to receive calls on this device.")
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .addAction(0, "Open settings", openSettings)
+            .build()
+        try { NotificationManagerCompat.from(context).notify(41877, notification) }
+        catch (_: SecurityException) { Log.w("OmniDeskCall", "Call-account setup notification permission is unavailable") }
+    }
+
     private fun action(context: Context, callId: String, action: String): PendingIntent {
         val intent = Intent(context, OmniDeskCallActionReceiver::class.java).apply {
             this.action = action

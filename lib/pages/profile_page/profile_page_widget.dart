@@ -1,5 +1,7 @@
 import 'dart:ui' show ImageFilter, lerpDouble;
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -9,6 +11,8 @@ import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../models/auth/auth_models.dart';
 import '../../services/auth_session_controller.dart';
 import '../../services/calls/webview_call_media_service.dart';
+import '../../services/calls/native_call_service.dart';
+import '../../services/calls/device_installation_service.dart';
 import 'profile_page_model.dart';
 
 export 'profile_page_model.dart';
@@ -106,6 +110,8 @@ class ProfilePageWidget extends ConsumerWidget {
                                 isActive: ticketRouting.isActive == true,
                               ),
                       ),
+                      if (defaultTargetPlatform == TargetPlatform.android)
+                        _ManagedCallingTile(theme: theme, ref: ref),
                     ],
                   ),
                   if (presence.failure != null)
@@ -324,6 +330,170 @@ class ProfilePageWidget extends ConsumerWidget {
     if (approved == true) {
       await ref.read(authSessionControllerProvider.notifier).logout();
     }
+  }
+}
+
+class _ManagedCallingTile extends StatefulWidget {
+  const _ManagedCallingTile({required this.theme, required this.ref});
+  final FlutterFlowTheme theme;
+  final WidgetRef ref;
+
+  @override
+  State<_ManagedCallingTile> createState() => _ManagedCallingTileState();
+}
+
+class _ManagedCallingTileState extends State<_ManagedCallingTile>
+    with WidgetsBindingObserver {
+  bool _selected = false;
+  bool _accountEnabled = false;
+  bool _accountStatusKnown = false;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refresh();
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final status =
+          await MethodChannelNativeCallService().managedCallingStatus();
+      if (!mounted) return;
+      setState(() {
+        _selected = status['selected'] == true;
+        _accountEnabled = status['accountEnabled'] == true;
+        _accountStatusKnown = status['accountStatusKnown'] == true;
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _toggle(bool enabled) async {
+    setState(() => _loading = true);
+    try {
+      if (enabled) {
+        final granted = await widget.ref
+            .read(webViewCallMediaServiceProvider)
+            .requestMicrophonePermission();
+        if (!granted) {
+          if (mounted) setState(() => _loading = false);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Microphone access is required for calls.'),
+              ),
+            );
+          }
+          return;
+        }
+        final session = widget.ref.read(authSessionControllerProvider).session;
+        if (session == null) {
+          throw StateError('Sign in again before enabling system calling.');
+        }
+        final installationId = await widget.ref
+            .read(deviceInstallationServiceProvider)
+            .getOrCreateInstallationId();
+        await MethodChannelNativeCallService().syncManagedCallSession(
+          baseUrl: dotenv.env['API_BASE_URL'] ?? '',
+          accessToken: session.accessToken,
+          workspaceId: session.user.activeWorkspace?.id ?? '',
+          installationId: installationId,
+        );
+      }
+      final status = await MethodChannelNativeCallService()
+          .setManagedCallingEnabled(enabled);
+      if (!mounted) return;
+      setState(() {
+        _selected = status['selected'] == true;
+        _accountEnabled = status['accountEnabled'] == true;
+        _accountStatusKnown = status['accountStatusKnown'] == true;
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not prepare secure call account access.'),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitle = !_selected
+        ? 'Use Android’s system call screen for calls on this device'
+        : !_accountStatusKnown
+            ? 'Selected; verify OmniDesk is enabled in Android calling-account settings'
+            : _accountEnabled
+                ? 'Android system call screen is enabled'
+                : 'Enable OmniDesk in Android calling-account settings';
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(children: [
+        SizedBox(
+          width: 34,
+          height: 34,
+          child: Icon(Icons.phone_in_talk_outlined,
+              size: 22, color: widget.theme.primary),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Android system call screen',
+                style: widget.theme.bodyLarge.override(
+                    color: widget.theme.primaryText,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 2),
+            Text(subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: widget.theme.bodySmall
+                    .override(color: widget.theme.secondaryText)),
+            if (_selected && (!_accountStatusKnown || !_accountEnabled))
+              TextButton(
+                onPressed: _loading
+                    ? null
+                    : () async {
+                        await MethodChannelNativeCallService()
+                            .openManagedCallAccountSettings();
+                        await _refresh();
+                      },
+                child: const Text('Open calling-account settings'),
+              ),
+          ]),
+        ),
+        Semantics(
+          label: 'Use Android system call screen',
+          child: _loading
+              ? const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Switch.adaptive(value: _selected, onChanged: _toggle),
+        ),
+      ]),
+    );
   }
 }
 

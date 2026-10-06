@@ -24,6 +24,7 @@ class OmniDeskCallForegroundService : Service() {
     private lateinit var audio: AndroidCallAudioCoordinator
     private lateinit var peer: ATWebRTCSession
     private lateinit var media: ATNativeMediaCoordinator
+    private lateinit var managedInbound: ManagedInboundCallOrchestrator
     private val localBinder = LocalBinder()
 
     inner class LocalBinder : Binder() {
@@ -54,6 +55,9 @@ class OmniDeskCallForegroundService : Service() {
             serial.execute { audio.requestSpeaker(enabled, callback) }
         }
         fun releaseAudio() { serial.execute { audio.releaseMediaLease() } }
+        fun answerManagedInbound(callId: String) { managedInbound.answer(callId) }
+        fun managedCallDisconnected(callId: String) { managedInbound.onDisconnected(callId) }
+        fun managedCallDeclined(callId: String, reason: String) { managedInbound.decline(callId, reason) }
     }
 
     override fun onCreate() {
@@ -61,6 +65,7 @@ class OmniDeskCallForegroundService : Service() {
         audio = AndroidCallAudioCoordinator(serial, OmniDeskTelecomManager::requestSpeakerRoute)
         peer = ATWebRTCSession(applicationContext, serial, audio)
         media = ATNativeMediaCoordinator(serial, ::publish, peerConnection = peer)
+        managedInbound = ManagedInboundCallOrchestrator(applicationContext, serial, media)
         Log.i(logTag, "Native call runtime owner=foreground_service created")
     }
 
@@ -122,6 +127,7 @@ class OmniDeskCallForegroundService : Service() {
             Thread.currentThread().interrupt()
         }
         audio.release()
+        managedInbound.dispose()
         serial.shutdownNow()
         super.onDestroy()
     }
@@ -131,6 +137,7 @@ class OmniDeskCallForegroundService : Service() {
         history.addLast(event)
         while (history.size > 64) history.removeFirst()
         listeners.forEach { it(event) }
+        if (raw["type"] == "media_event") managedInbound.onMediaEvent(raw)
         if (registrationOnly && event["type"] == "snapshot") {
             val state = event["state"]?.toString() ?: "connecting"
             val text = when (state) {

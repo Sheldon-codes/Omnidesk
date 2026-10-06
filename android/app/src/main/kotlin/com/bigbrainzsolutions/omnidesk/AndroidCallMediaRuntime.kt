@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.util.Log
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -71,6 +72,46 @@ internal object AndroidCallMediaRuntime : AndroidCallMediaRuntimeBridge {
             bindIfNeeded(start = true)
         }
     }
+
+    fun startManagedInbound(context: Context, callId: String) {
+        val app = context.applicationContext
+        appContext = app
+        try {
+            OmniDeskCallForegroundService.startCallPreparation(app)
+            bindIfNeeded(start = true)
+            val current = synchronized(this) {
+                service ?: run { pending += { binder -> binder.answerManagedInbound(callId) }; null }
+            }
+            current?.answerManagedInbound(callId)
+        } catch (error: Throwable) {
+            OmniDeskTelecomManager.markFailed(app, callId, "call_service_start_failed")
+        }
+    }
+
+    fun managedCallDisconnected(callId: String) {
+        service?.let { binder ->
+            // Forward cleanup to the service-owned orchestration instance.
+            binder.managedCallDisconnected(callId)
+        }
+    }
+    fun managedCallDeclined(context: Context, callId: String, reason: String) {
+        val app = context.applicationContext
+        appContext = app
+        try {
+            OmniDeskCallForegroundService.startCallPreparation(app)
+            bindIfNeeded(start = true)
+            val current = synchronized(this) {
+                service ?: run { pending += { binder -> binder.managedCallDeclined(callId, reason) }; null }
+            }
+            current?.managedCallDeclined(callId, reason)
+        } catch (_: Throwable) {
+            Log.w("OmniDeskManagedCall", "Could not start managed decline handler callId=$callId")
+        }
+    }
+
+    fun setMuted(value: Boolean) { service?.setMuted(value) { } }
+    fun setHeld(value: Boolean) { service?.setHeld(value) { } }
+    fun sendDtmf(value: String) { service?.sendDtmf(value) { } }
 
     override fun answerIncoming(callSid: String, result: (Result<Unit>) -> Unit) {
         val current = service
