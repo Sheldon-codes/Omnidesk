@@ -10,6 +10,7 @@ import '../../../flutter_flow/flutter_flow_theme.dart';
 import '../conversation_room_page_model.dart';
 import 'conversation_media_widgets.dart';
 import 'whatsapp_chat_style.dart';
+import 'whatsapp_markdown_text.dart';
 
 enum MessageGroupPosition { single, first, middle, last }
 
@@ -205,7 +206,9 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
                         : const EdgeInsets.fromLTRB(9, 6, 8, 4),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: palette != null && _agent
+                          ? CrossAxisAlignment.end
+                          : CrossAxisAlignment.start,
                       children: [
                         if (widget.quoted case final quoted?)
                           _QuotedMessagePreview(
@@ -247,7 +250,9 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
                         ],
                         const SizedBox(height: 4),
                         Align(
-                          alignment: Alignment.bottomRight,
+                          alignment: _agent
+                              ? Alignment.bottomRight
+                              : Alignment.bottomLeft,
                           widthFactor: 1,
                           child: _MessageMetadata(
                             message: widget.message,
@@ -317,11 +322,7 @@ class _MessageContentRenderer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => switch (message.content) {
-        TextMessageContent(:final text) => Text(text,
-            style: TextStyle(
-                color: textColor,
-                fontSize: whatsAppStyle ? 16 : 14,
-                height: whatsAppStyle ? 1.3 : 1.35)),
+        TextMessageContent(:final text) => _text(context, text),
         final ImageMessageContent content => ConversationImageMessage(
             content: content,
             textColor: textColor,
@@ -368,6 +369,21 @@ class _MessageContentRenderer extends StatelessWidget {
           ),
         SystemMessageContent() => const SizedBox.shrink(),
       };
+
+  Widget _text(BuildContext context, String text) {
+    final style = TextStyle(
+      color: textColor,
+      fontSize: whatsAppStyle ? 16 : 14,
+      height: whatsAppStyle ? 1.3 : 1.35,
+    );
+    return whatsAppStyle
+        ? WhatsAppMarkdownText(
+            data: text,
+            style: style,
+            linkColor: WhatsAppChatPalette.of(context).link,
+          )
+        : Text(text, style: style);
+  }
 }
 
 class _QuotedMessagePreview extends StatelessWidget {
@@ -679,10 +695,9 @@ class _SystemEvent extends StatelessWidget {
               child: Padding(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                child: Text(
+                child: _markdownText(
                   content.text,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
+                  TextStyle(
                     color: palette.isDark
                         ? const Color(0xFFD1D7DB)
                         : const Color(0xFF54656F),
@@ -690,6 +705,7 @@ class _SystemEvent extends StatelessWidget {
                     height: 1.3,
                     fontWeight: FontWeight.w500,
                   ),
+                  centered: true,
                 ),
               ),
             ),
@@ -730,9 +746,15 @@ class _SystemEvent extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 4),
-              Text(content.text,
-                  style: TextStyle(
-                      color: palette.noteText, fontSize: 13, height: 1.35)),
+              _markdownText(
+                content.text,
+                TextStyle(
+                  color: palette.noteText,
+                  fontSize: 13,
+                  height: 1.35,
+                ),
+                linkColor: palette.accent,
+              ),
             ],
           ),
         ),
@@ -751,21 +773,42 @@ class _SystemEvent extends StatelessWidget {
           ],
           Flexible(
             flex: 3,
-            child: Text(content.text,
-                textAlign: TextAlign.center,
-                style: theme.bodySmall.override(
-                    fontFamily: theme.bodySmallFamily,
-                    color: palette?.muted ?? theme.secondaryText,
-                    fontSize: 10.5,
-                    fontWeight: content.emphasized
-                        ? FontWeight.w600
-                        : FontWeight.w400)),
+            child: _markdownText(
+              content.text,
+              theme.bodySmall.override(
+                fontFamily: theme.bodySmallFamily,
+                color: palette?.muted ?? theme.secondaryText,
+                fontSize: 10.5,
+                fontWeight:
+                    content.emphasized ? FontWeight.w600 : FontWeight.w400,
+              ),
+              centered: true,
+              linkColor: palette?.link,
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(child: Divider(color: theme.alternate)),
         ],
       ),
     );
+  }
+
+  Widget _markdownText(
+    String text,
+    TextStyle style, {
+    bool centered = false,
+    Color? linkColor,
+  }) {
+    if (whatsAppPalette == null) {
+      return Text(text,
+          textAlign: centered ? TextAlign.center : null, style: style);
+    }
+    final markdown = WhatsAppMarkdownText(
+      data: text,
+      style: style,
+      linkColor: linkColor ?? whatsAppPalette!.link,
+    );
+    return centered ? Center(child: markdown) : markdown;
   }
 }
 

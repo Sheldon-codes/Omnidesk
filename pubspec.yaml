@@ -93,6 +93,8 @@ dependencies:
   riverpod_annotation: ^4.0.0
   flutter_staggered_grid_view: ^0.7.0
   flutter_svg: ^2.0.10+1
+  flutter_markdown_plus: 1.0.12
+  markdown: 7.3.1
   file_picker: ^12.1.2
   flutter_html: ^3.0.0
   flutter_html_table: ^3.0.0
