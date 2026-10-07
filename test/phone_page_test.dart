@@ -163,7 +163,7 @@ void main() {
     expect(find.text('Search contacts'), findsNothing);
   });
 
-  testWidgets('Add contact stays in the header and keypad is Recents-only',
+  testWidgets('Contacts header has no add action and keypad is Recents-only',
       (tester) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -176,7 +176,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byTooltip('Add contact'), findsOneWidget);
+    expect(find.byTooltip('Add contact'), findsNothing);
     expect(find.byTooltip('Open keypad'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Open keypad'));
@@ -195,7 +195,7 @@ void main() {
     await tester.tap(find.text('Contacts'));
     await tester.pumpAndSettle();
     expect(find.byTooltip('Open keypad'), findsNothing);
-    expect(find.byTooltip('Add contact'), findsOneWidget);
+    expect(find.byTooltip('Add contact'), findsNothing);
   });
 
   testWidgets('dial pad hands a non-empty number to the global call session',

@@ -306,7 +306,7 @@ class PhonePageNotifier extends _$PhonePageNotifier {
       contacts: customerPage.customers
           .map(PhoneContact.fromCustomer)
           .toList(growable: false),
-      contactsLoading: customerPage.loading,
+      contactsLoading: !customerPage.hasLoaded || customerPage.loading,
       contactsRefreshing: customerPage.refreshing,
       contactsLoadingMore: customerPage.loadingMore,
       contactsHasMore: customerPage.hasMore,

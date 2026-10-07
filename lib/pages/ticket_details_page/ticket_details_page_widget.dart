@@ -667,11 +667,11 @@ class _TicketDetailsSkeleton extends StatelessWidget {
                   child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _skeletonBar(theme, 72, 11),
-                        const SizedBox(height: 10),
-                        _skeletonBar(theme, 260, 22),
-                        const SizedBox(height: 12),
-                        _skeletonBar(theme, 170, 12),
+                        _skeletonBar(theme, 72, 20),
+                        const SizedBox(height: 6),
+                        _skeletonBar(theme, 260, 28),
+                        const SizedBox(height: 9),
+                        _skeletonBar(theme, 170, 16),
                       ]))),
           SliverToBoxAdapter(
               child: _Section(
@@ -710,9 +710,11 @@ class _CustomerSkeleton extends StatelessWidget {
       const SizedBox(width: 12),
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _skeletonBar(t, 130, 14),
-        const SizedBox(height: 8),
+        const SizedBox(height: 3),
         _skeletonBar(t, 190, 11),
       ]),
+      const Spacer(),
+      OmniSkeleton(width: 20, height: 20, baseTint: t.alternate),
     ]);
   }
 }
@@ -724,11 +726,11 @@ class _DescriptionSkeleton extends StatelessWidget {
     final theme = FlutterFlowTheme.of(context);
     return ExcludeSemantics(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _skeletonBar(theme, double.infinity, 13),
+        _skeletonBar(theme, double.infinity, 16),
         const SizedBox(height: 9),
-        _skeletonBar(theme, double.infinity, 13),
+        _skeletonBar(theme, double.infinity, 16),
         const SizedBox(height: 9),
-        _skeletonBar(theme, 210, 13),
+        _skeletonBar(theme, 210, 16),
       ]),
     );
   }
@@ -740,11 +742,11 @@ class _DetailsSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ExcludeSemantics(
         child: Column(children: [
-          for (var i = 0; i < 5; i++) ...[
-            if (i > 0) const SizedBox(height: 13),
+          for (var i = 0; i < 7; i++) ...[
+            if (i > 0) const SizedBox(height: 12),
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              _skeletonBar(theme, 76, 11),
-              _skeletonBar(theme, 110, 12),
+              _skeletonBar(theme, 76, 16),
+              _skeletonBar(theme, 90, 16),
             ]),
           ],
         ]),
@@ -760,19 +762,22 @@ class _ActivitySkeleton extends StatelessWidget {
     return ExcludeSemantics(
       child: Column(children: [
         for (var i = 0; i < 3; i++) ...[
-          if (i > 0) Divider(height: 20, color: t.alternate),
+          if (i > 0) const SizedBox(height: 14),
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const OmniSkeleton(width: 28, height: 28, circle: true),
+            Padding(
+              padding: const EdgeInsets.only(top: 5),
+              child: const OmniSkeleton(width: 8, height: 8, circle: true),
+            ),
             const SizedBox(width: 10),
             Expanded(
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  _skeletonBar(t, 128, 13),
-                  const SizedBox(height: 8),
-                  _skeletonBar(t, double.infinity, 11),
-                  const SizedBox(height: 7),
-                  _skeletonBar(t, 84, 10),
+                  _skeletonBar(t, 128, 18),
+                  const SizedBox(height: 2),
+                  _skeletonBar(t, double.infinity, 16),
+                  const SizedBox(height: 2),
+                  _skeletonBar(t, 84, 16),
                 ])),
           ]),
         ],

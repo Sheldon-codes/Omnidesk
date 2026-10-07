@@ -72,7 +72,7 @@ class _NotificationsPageWidgetState
                 sliver: SliverList.builder(
                   itemCount: 6,
                   itemBuilder: (_, __) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    padding: const EdgeInsets.symmetric(vertical: 7),
                     child: Row(children: [
                       OmniSkeleton(
                           width: 40,
@@ -86,17 +86,12 @@ class _NotificationsPageWidgetState
                             children: [
                               OmniSkeleton(
                                   width: 188,
-                                  height: 13,
+                                  height: 18,
                                   baseTint: theme.alternate),
-                              const SizedBox(height: 8),
+                              const SizedBox(height: 3),
                               OmniSkeleton(
                                   width: 180,
-                                  height: 11,
-                                  baseTint: theme.alternate),
-                              const SizedBox(height: 7),
-                              OmniSkeleton(
-                                  width: 72,
-                                  height: 10,
+                                  height: 16,
                                   baseTint: theme.alternate),
                             ]),
                       ),

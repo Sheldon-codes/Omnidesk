@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:omnidesk_agent/models/auth/auth_models.dart';
 import 'package:omnidesk_agent/pages/customer_details_page/customer_details_page_widget.dart';
 import 'package:omnidesk_agent/pages/customer_editor_page/customer_editor_page_model.dart';
 import 'package:omnidesk_agent/pages/customers_page/customer_repository.dart';
 import 'package:omnidesk_agent/pages/customers_page/customers_page_widget.dart';
+import 'package:omnidesk_agent/services/auth_session_controller.dart';
 
 class _CustomersRepository implements CustomerRepository {
   final queries = <String>[];
@@ -61,6 +63,39 @@ class _CustomersRepository implements CustomerRepository {
 }
 
 void main() {
+  test('initial authenticated state starts the first customer request',
+      () async {
+    final repository = _CustomersRepository();
+    final container = ProviderContainer(overrides: [
+      customerRepositoryProvider.overrideWithValue(repository),
+      authSessionControllerProvider.overrideWithValue(
+        const AuthState(
+          status: AuthStatus.authenticated,
+          session: AuthSession(
+            accessToken: 'test-token',
+            tokenType: 'Bearer',
+            user: AuthUser(
+              id: 'agent-1',
+              name: 'Test Agent',
+              email: 'agent@example.com',
+              role: 'agent',
+              isSuperAdmin: false,
+              status: 'active',
+            ),
+          ),
+        ),
+      ),
+    ]);
+    addTearDown(container.dispose);
+
+    expect(container.read(customersPageProvider).loading, isFalse);
+    await container.read(customersPageProvider.notifier).load();
+
+    expect(repository.queries, [' :1:20'.trim()]);
+    expect(container.read(customersPageProvider).hasLoaded, isTrue);
+    expect(container.read(customersPageProvider).customers, hasLength(2));
+  });
+
   test('customers list loads pages into the shared customer cache', () async {
     final repository = _CustomersRepository();
     final container = ProviderContainer(overrides: [

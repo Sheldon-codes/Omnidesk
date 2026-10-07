@@ -565,9 +565,9 @@ class _DetailsSection extends StatelessWidget {
     }
     if (rows.isEmpty && loading) {
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _DetailSkeletonLine(theme: theme, width: 100),
-        const SizedBox(height: 14),
-        _DetailSkeletonLine(theme: theme, width: 160),
+        _DetailSkeletonLine(theme: theme, width: 100, height: 16),
+        const SizedBox(height: 3),
+        _DetailSkeletonLine(theme: theme, width: 160, height: 18),
       ]);
     }
     if (rows.isEmpty) {
@@ -623,14 +623,32 @@ class _TicketsSection extends StatelessWidget {
           if (i > 0) Divider(height: 1, color: theme.alternate),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              _DetailSkeletonLine(theme: theme, width: 82),
-              const SizedBox(height: 7),
-              _DetailSkeletonLine(theme: theme, width: 218),
-              const SizedBox(height: 7),
-              _DetailSkeletonLine(theme: theme, width: 156),
-            ]),
+            child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _DetailSkeletonLine(
+                      theme: theme, width: 18, height: 18, radius: 4),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _DetailSkeletonLine(
+                              theme: theme, width: 82, height: 16),
+                          const SizedBox(height: 3),
+                          _DetailSkeletonLine(
+                              theme: theme, width: 218, height: 18),
+                          const SizedBox(height: 3),
+                          _DetailSkeletonLine(
+                              theme: theme, width: 156, height: 16),
+                        ]),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 12, top: 2),
+                    child: _DetailSkeletonLine(
+                        theme: theme, width: 40, height: 16),
+                  ),
+                ]),
           ),
         ],
       ]);
@@ -678,15 +696,17 @@ class _ActivitySection extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Row(children: [
                 _DetailSkeletonLine(
-                    theme: theme, width: 30, height: 30, radius: 10),
+                    theme: theme, width: 18, height: 18, radius: 4),
                 const SizedBox(width: 12),
                 Expanded(
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                      _DetailSkeletonLine(theme: theme, width: 132),
-                      const SizedBox(height: 7),
-                      _DetailSkeletonLine(theme: theme, width: 196),
+                      _DetailSkeletonLine(
+                          theme: theme, width: 132, height: 18),
+                      const SizedBox(height: 3),
+                      _DetailSkeletonLine(
+                          theme: theme, width: 196, height: 16),
                     ])),
               ])),
         ],
@@ -1026,14 +1046,27 @@ class _ProfileSkeleton extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.center, children: [
           _DetailSkeletonLine(theme: theme, width: 64, height: 64, radius: 32),
           const SizedBox(height: 12),
-          _DetailSkeletonLine(theme: theme, width: 180, height: 22, radius: 6),
+          _DetailSkeletonLine(theme: theme, width: 180, height: 24, radius: 6),
           const SizedBox(height: 8),
           _DetailSkeletonLine(theme: theme, width: 210, height: 14),
           const SizedBox(height: 24),
-          for (var i = 0; i < 4; i++) ...[
-            _DetailSkeletonLine(theme: theme, width: 240, height: 14),
-            const SizedBox(height: 16),
-          ],
+          _DetailSkeletonLine(
+              theme: theme, width: double.infinity, height: 40, radius: 8),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < 3; i++) ...[
+                  _DetailSkeletonLine(theme: theme, width: 120, height: 16),
+                  const SizedBox(height: 3),
+                  _DetailSkeletonLine(theme: theme, width: 200, height: 18),
+                  if (i < 2) const SizedBox(height: 13),
+                ],
+              ],
+            ),
+          ),
         ]),
       );
 }

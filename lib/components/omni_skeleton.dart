@@ -32,7 +32,8 @@ class _OmniSkeletonState extends State<OmniSkeleton>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 1250),
+    // Slow, calm sweep: a soft band of light, never a sharp line.
+    duration: const Duration(milliseconds: 1600),
   );
   var _reduceMotion = true;
   var _loopRunning = false;
@@ -94,6 +95,9 @@ class _OmniSkeletonState extends State<OmniSkeleton>
       isDark ? theme.primaryText : theme.primaryBackground,
       isDark ? .24 : .78,
     )!;
+    // Feathered mid-stop so the band fades softly instead of drawing a hard
+    // bright line across the placeholder.
+    final midFeather = Color.lerp(base, highlight, .45)!;
     final radius = widget.circle
         ? BorderRadius.circular(
             widget.width > widget.height ? widget.width / 2 : widget.height / 2)
@@ -115,11 +119,14 @@ class _OmniSkeletonState extends State<OmniSkeleton>
               child: shape,
               builder: (context, child) => ShaderMask(
                 blendMode: BlendMode.srcATop,
+                // Wide, soft-feathered band (base → mid → highlight → mid →
+                // base) so the sweep reads as a diffuse shine rather than a
+                // narrow moving line, even on small placeholders.
                 shaderCallback: (bounds) => LinearGradient(
-                  begin: Alignment(-1.8 + 3.6 * _controller.value, -.15),
-                  end: Alignment(-.8 + 3.6 * _controller.value, .15),
-                  colors: [base, highlight, base],
-                  stops: const [.34, .5, .66],
+                  begin: Alignment(-1.6 + 3.2 * _controller.value, -.2),
+                  end: Alignment(-.4 + 3.2 * _controller.value, .2),
+                  colors: [base, midFeather, highlight, midFeather, base],
+                  stops: const [.0, .32, .5, .68, 1.0],
                 ).createShader(bounds),
                 child: child,
               ),

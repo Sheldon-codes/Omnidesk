@@ -24,13 +24,10 @@ class EmailPageWidget extends ConsumerStatefulWidget {
 class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
-  final _scrollController = ScrollController();
-  bool _fabExtended = true;
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_handleScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         ref.read(emailStoreProvider.notifier).loadFolder(
@@ -40,21 +37,10 @@ class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
     });
   }
 
-  void _handleScroll() {
-    final extended =
-        _scrollController.hasClients && _scrollController.offset < 20;
-    if (extended != _fabExtended && mounted) {
-      setState(() => _fabExtended = extended);
-    }
-  }
-
   @override
   void dispose() {
     _searchController.dispose();
     _searchFocusNode.dispose();
-    _scrollController
-      ..removeListener(_handleScroll)
-      ..dispose();
     super.dispose();
   }
 
@@ -86,39 +72,12 @@ class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
 
     return Scaffold(
       backgroundColor: theme.primaryBackground,
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 180),
-        transitionBuilder: (child, animation) => FadeTransition(
-          opacity: animation,
-          child: ScaleTransition(scale: animation, child: child),
-        ),
-        child: _fabExtended
-            ? FloatingActionButton.extended(
-                key: const ValueKey('compose-extended'),
-                tooltip: 'Compose email',
-                onPressed: () => context.push('/email/compose'),
-                backgroundColor: theme.primary,
-                foregroundColor: Colors.white,
-                icon: const Icon(IconsaxPlusLinear.edit),
-                label: const Text('Compose'),
-              )
-            : FloatingActionButton(
-                key: const ValueKey('compose-collapsed'),
-                tooltip: 'Compose email',
-                onPressed: () => context.push('/email/compose'),
-                backgroundColor: theme.primary,
-                foregroundColor: Colors.white,
-                child: const Icon(IconsaxPlusLinear.edit),
-              ),
-      ),
       body: RefreshIndicator(
         onRefresh: () => ref.read(emailStoreProvider.notifier).refresh(
               state.folder,
               query: state.query,
             ),
         child: CustomScrollView(
-          controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverPersistentHeader(
@@ -129,7 +88,6 @@ class _EmailPageWidgetState extends ConsumerState<EmailPageWidget> {
                 subtitle: state.subtitle,
                 searchActive: state.searchActive,
                 onSearch: state.searchActive ? _closeSearch : _openSearch,
-                onCompose: () => context.push('/email/compose'),
               ),
             ),
             SliverPersistentHeader(
@@ -242,7 +200,6 @@ class _EmailHeaderDelegate extends SliverPersistentHeaderDelegate {
     required this.subtitle,
     required this.searchActive,
     required this.onSearch,
-    required this.onCompose,
   });
 
   final FlutterFlowTheme theme;
@@ -250,7 +207,6 @@ class _EmailHeaderDelegate extends SliverPersistentHeaderDelegate {
   final String subtitle;
   final bool searchActive;
   final VoidCallback onSearch;
-  final VoidCallback onCompose;
 
   static const toolbarHeight = 56.0;
   static const expandedContentHeight = 65.0;
@@ -304,20 +260,6 @@ class _EmailHeaderDelegate extends SliverPersistentHeaderDelegate {
                   color: theme.secondaryText,
                   fontWeight: FontWeight.w500,
                 ),
-              ),
-            ),
-          ),
-          Positioned(
-            top: topPadding,
-            right: 52,
-            height: toolbarHeight,
-            child: IconButton(
-              tooltip: 'Compose email',
-              onPressed: onCompose,
-              icon: Icon(
-                IconsaxPlusLinear.edit,
-                color: theme.primaryText,
-                size: 21,
               ),
             ),
           ),
@@ -518,16 +460,16 @@ class _EmailRowSkeleton extends StatelessWidget {
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const OmniSkeleton(width: 124, height: 13),
-                    const SizedBox(height: 7),
-                    const OmniSkeleton(width: 210, height: 13),
-                    const SizedBox(height: 7),
+                    const OmniSkeleton(width: 124, height: 18),
+                    const SizedBox(height: 3),
+                    const OmniSkeleton(width: 210, height: 18),
+                    const SizedBox(height: 3),
                     OmniSkeleton(
-                        width: 170, height: 11, baseTint: theme.alternate),
+                        width: 170, height: 16, baseTint: theme.alternate),
                   ]),
             ),
             const SizedBox(width: 12),
-            OmniSkeleton(width: 34, height: 10, baseTint: theme.alternate),
+            OmniSkeleton(width: 34, height: 16, baseTint: theme.alternate),
           ]),
         ),
         Divider(height: 1, color: theme.alternate),

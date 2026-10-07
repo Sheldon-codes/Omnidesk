@@ -277,18 +277,33 @@ class HomePageWidget extends ConsumerWidget {
                       for (var i = 0; i < 3; i++) ...[
                         if (i > 0) Divider(height: 1, color: theme.alternate),
                         Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          padding: const EdgeInsets.symmetric(vertical: 11),
                           child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                OmniSkeleton(
-                                    width: 220,
-                                    height: 13,
-                                    baseTint: theme.alternate),
-                                const SizedBox(height: 8),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    OmniSkeleton(
+                                        width: 220,
+                                        height: 18,
+                                        baseTint: theme.alternate),
+                                    OmniSkeleton(
+                                        width: 56,
+                                        height: 16,
+                                        baseTint: theme.alternate),
+                                  ],
+                                ),
+                                const SizedBox(height: 2),
                                 OmniSkeleton(
                                     width: 150,
-                                    height: 11,
+                                    height: 16,
+                                    baseTint: theme.alternate),
+                                const SizedBox(height: 2),
+                                OmniSkeleton(
+                                    width: 150,
+                                    height: 16,
                                     baseTint: theme.alternate),
                               ]),
                         ),
@@ -485,7 +500,7 @@ class _ChannelCell extends StatelessWidget {
               children: [
                 loading
                     ? OmniSkeleton(
-                        width: 38, height: 22, baseTint: theme.alternate)
+                        width: 40, height: 28, baseTint: theme.alternate)
                     : Text(
                         value,
                         style: theme.headlineSmall.copyWith(
@@ -498,7 +513,7 @@ class _ChannelCell extends StatelessWidget {
             ),
             const SizedBox(height: 2),
             if (loading)
-              OmniSkeleton(width: 116, height: 11, baseTint: theme.alternate)
+              OmniSkeleton(width: 116, height: 16, baseTint: theme.alternate)
             else
               Text(
                 label,
@@ -507,7 +522,7 @@ class _ChannelCell extends StatelessWidget {
             if (loading || overdueLabel != null) ...[
               const SizedBox(height: 2),
               if (loading)
-                OmniSkeleton(width: 84, height: 10, baseTint: theme.alternate)
+                OmniSkeleton(width: 84, height: 16, baseTint: theme.alternate)
               else
                 Text(
                   overdueLabel!,

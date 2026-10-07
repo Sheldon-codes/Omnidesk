@@ -111,7 +111,6 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
                         searchActive: state.searchActive,
                         onSearch:
                             state.searchActive ? _closeSearch : _openSearch,
-                        onAddContact: () => context.push('/customers/new'),
                       ),
                     ),
                     SliverPersistentHeader(
@@ -293,12 +292,18 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _SkeletonBar(theme: theme, widthFactor: .46, height: 14),
-                      const SizedBox(height: 8),
-                      _SkeletonBar(theme: theme, widthFactor: .7, height: 11),
+                      _SkeletonBar(theme: theme, widthFactor: .46, height: 18),
+                      const SizedBox(height: 3),
+                      _SkeletonBar(theme: theme, widthFactor: .7, height: 16),
                     ],
                   ),
                 ),
+                const SizedBox(width: 10),
+                OmniSkeleton(
+                    width: 34,
+                    height: 34,
+                    circle: true,
+                    baseTint: theme.alternate),
               ]),
             ),
           ),
@@ -447,7 +452,6 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
     required this.subtitle,
     required this.searchActive,
     required this.onSearch,
-    required this.onAddContact,
   });
 
   static const _toolbarHeight = 56.0;
@@ -458,7 +462,6 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
   final String subtitle;
   final bool searchActive;
   final VoidCallback onSearch;
-  final VoidCallback onAddContact;
 
   @override
   double get minExtent => topPadding + _toolbarHeight;
@@ -508,14 +511,6 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
                     color: theme.primaryText,
                     size: 22,
                   ),
-                ),
-                IconButton(
-                  tooltip: 'Add contact',
-                  constraints:
-                      const BoxConstraints(minWidth: 44, minHeight: 44),
-                  onPressed: onAddContact,
-                  icon: Icon(IconsaxPlusBroken.user_add,
-                      color: theme.primaryText, size: 22),
                 ),
               ],
             ),
@@ -586,8 +581,7 @@ class _PhoneHeaderDelegate extends SliverPersistentHeaderDelegate {
       oldDelegate.topPadding != topPadding ||
       oldDelegate.subtitle != subtitle ||
       oldDelegate.searchActive != searchActive ||
-      oldDelegate.onSearch != onSearch ||
-      oldDelegate.onAddContact != onAddContact;
+      oldDelegate.onSearch != onSearch;
 }
 
 class _PhoneTabsDelegate extends SliverPersistentHeaderDelegate {
@@ -1507,25 +1501,33 @@ class _ContactSkeletonRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ExcludeSemantics(
-        child: Padding(
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 74),
           padding: const EdgeInsets.symmetric(vertical: 10),
           child: Row(
             children: [
               OmniSkeleton(
-                width: 46,
-                height: 46,
-                borderRadius: BorderRadius.circular(14),
+                width: 44,
+                height: 44,
+                circle: true,
               ),
-              const SizedBox(width: 13),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _SkeletonBar(theme: theme, widthFactor: .55, height: 13),
-                    const SizedBox(height: 8),
-                    _SkeletonBar(theme: theme, widthFactor: .4, height: 10),
+                    _SkeletonBar(theme: theme, widthFactor: .55, height: 18),
+                    const SizedBox(height: 3),
+                    _SkeletonBar(theme: theme, widthFactor: .4, height: 16),
                   ],
                 ),
+              ),
+              const SizedBox(width: 10),
+              OmniSkeleton(
+                width: 34,
+                height: 34,
+                circle: true,
+                baseTint: theme.alternate,
               ),
             ],
           ),
@@ -1602,12 +1604,18 @@ class _CallHistorySkeleton extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _SkeletonBar(theme: theme, widthFactor: .46, height: 14),
-                      const SizedBox(height: 8),
-                      _SkeletonBar(theme: theme, widthFactor: .7, height: 11),
+                      _SkeletonBar(theme: theme, widthFactor: .46, height: 18),
+                      const SizedBox(height: 3),
+                      _SkeletonBar(theme: theme, widthFactor: .7, height: 16),
                     ],
                   ),
                 ),
+                const SizedBox(width: 10),
+                OmniSkeleton(
+                    width: 34,
+                    height: 34,
+                    circle: true,
+                    baseTint: theme.alternate),
               ],
             ),
           ),

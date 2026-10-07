@@ -23,7 +23,7 @@ void main() {
         of: find.byType(OmniSkeleton),
         matching: find.byType(ColoredBox),
       ));
-      expect(fill.color.opacity, 1);
+      expect(fill.color.a, 1);
       expect(
           fill.color,
           isNot(Theme.of(tester.element(find.byType(Scaffold)))

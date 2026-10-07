@@ -62,6 +62,10 @@ class _EmailComposerPageWidgetState
 
   String get _draftKey =>
       emailDraftKey(threadId: widget.threadId, mode: widget.mode);
+  bool get _isDisallowedMode =>
+      widget.threadId == null ||
+      widget.mode == EmailComposerMode.newMessage ||
+      widget.mode == EmailComposerMode.forward;
   String get _draftAttachmentKey {
     final user = ref.read(authSessionControllerProvider).session?.user;
     final scope = user == null
@@ -84,9 +88,11 @@ class _EmailComposerPageWidgetState
     _subject = TextEditingController();
     _editor.addListener(_scheduleSave);
     _subject.addListener(_scheduleSave);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _restoreDraft();
-    });
+    if (!_isDisallowedMode) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _restoreDraft();
+      });
+    }
   }
 
   @override
@@ -299,6 +305,11 @@ class _EmailComposerPageWidgetState
       );
 
   Future<void> _send() async {
+    final thread = _thread;
+    if (_isDisallowedMode || thread == null) {
+      return _snack(
+          'You can reply to an existing email, but cannot start one.');
+    }
     final recipients = _dedupeAddresses(_to);
     final plain = _editor.document.toPlainText().trim();
     final attachmentsReady = _attachments.every(
@@ -318,28 +329,13 @@ class _EmailComposerPageWidgetState
     if (!attachmentsReady) {
       return _snack('Remove or retry unavailable attachments');
     }
-    final thread = _thread;
-    if (thread == null && _attachments.isNotEmpty) {
-      return _snack('Attachments are not supported for new emails yet');
-    }
     setState(() => _sending = true);
     try {
-      if (thread == null) {
-        await ref.read(emailStoreProvider.notifier).createRemote(
-              to: recipients.first.address,
-              customerName: recipients.first.name,
-              subject: _subject.text.trim().isEmpty
-                  ? '(No subject)'
-                  : _subject.text.trim(),
-              message: plain,
-            );
-      } else {
-        await ref.read(emailStoreProvider.notifier).reply(
-              thread.id,
-              plain,
-              attachment: _attachments.isEmpty ? null : _attachments.first,
-            );
-      }
+      await ref.read(emailStoreProvider.notifier).reply(
+            thread.id,
+            plain,
+            attachment: _attachments.isEmpty ? null : _attachments.first,
+          );
     } catch (error) {
       if (mounted) {
         setState(() => _sending = false);
@@ -358,6 +354,47 @@ class _EmailComposerPageWidgetState
   @override
   Widget build(BuildContext context) {
     final theme = FlutterFlowTheme.of(context);
+    if (_isDisallowedMode) {
+      return Scaffold(
+        backgroundColor: theme.primaryBackground,
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.email_outlined,
+                      color: theme.secondaryText, size: 36),
+                  const SizedBox(height: 14),
+                  Text(
+                    'New emails are disabled',
+                    style: theme.titleMedium.copyWith(
+                      color: theme.primaryText,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Open an existing email thread to reply or edit a saved reply.',
+                    style: theme.bodyMedium.copyWith(
+                      color: theme.secondaryText,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton(
+                    onPressed: context.pop,
+                    child: const Text('Back'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     if (_loadingDraft) {
       return Scaffold(
         backgroundColor: theme.primaryBackground,

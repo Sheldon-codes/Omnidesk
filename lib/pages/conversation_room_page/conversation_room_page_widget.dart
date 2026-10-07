@@ -1857,7 +1857,11 @@ class _MessageTimeline extends StatelessWidget {
                   alignment: Alignment.centerLeft,
                   width: 142,
                   height: 38,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(15),
+                      topRight: Radius.circular(15),
+                      bottomLeft: Radius.circular(4),
+                      bottomRight: Radius.circular(15)),
                 ),
                 const SizedBox(height: 6),
                 _TimelineSkeletonBubble(
@@ -1865,7 +1869,11 @@ class _MessageTimeline extends StatelessWidget {
                   alignment: Alignment.centerLeft,
                   width: 192,
                   height: 44,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(4),
+                      topRight: Radius.circular(15),
+                      bottomLeft: Radius.circular(4),
+                      bottomRight: Radius.circular(15)),
                 ),
               ]),
             );
@@ -1880,7 +1888,17 @@ class _MessageTimeline extends StatelessWidget {
                   : Alignment.centerRight,
               width: loadingIndex.isEven ? 148 : 186,
               height: loadingIndex.isEven ? 42 : 52,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: loadingIndex.isEven
+                  ? const BorderRadius.only(
+                      topLeft: Radius.circular(15),
+                      topRight: Radius.circular(15),
+                      bottomLeft: Radius.circular(4),
+                      bottomRight: Radius.circular(15))
+                  : const BorderRadius.only(
+                      topLeft: Radius.circular(15),
+                      topRight: Radius.circular(15),
+                      bottomLeft: Radius.circular(15),
+                      bottomRight: Radius.circular(4)),
               withAvatar: loadingIndex.isEven,
             );
           }
@@ -2289,7 +2307,7 @@ class _ConversationTimelineSkeleton extends StatelessWidget {
             children: [
               Center(
                   child:
-                      _RoomSkeletonShape(color: base, width: 52, height: 10)),
+                      _RoomSkeletonShape(color: base, width: 76, height: 24)),
               const SizedBox(height: 14),
               _TimelineSkeletonBubble(
                 color: base,
@@ -2386,7 +2404,7 @@ class _ConversationRoomSkeleton extends StatelessWidget {
                   child: Row(children: [
                     const SizedBox(width: 48),
                     _RoomSkeletonShape(
-                        color: base, width: 36, height: 36, round: true),
+                        color: base, width: 34, height: 34, round: true),
                     const SizedBox(width: 10),
                     Expanded(
                         child: Column(
@@ -2394,10 +2412,10 @@ class _ConversationRoomSkeleton extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                           _RoomSkeletonShape(
-                              color: base, width: 126, height: 13),
-                          const SizedBox(height: 7),
+                              color: base, width: 126, height: 18),
+                          const SizedBox(height: 3),
                           _RoomSkeletonShape(
-                              color: base, width: 90, height: 10),
+                              color: base, width: 90, height: 15),
                         ])),
                     const SizedBox(width: 48),
                   ]),
@@ -2420,8 +2438,8 @@ class _ConversationRoomSkeleton extends StatelessWidget {
                           Center(
                             child: _RoomSkeletonShape(
                               color: base,
-                              width: 44,
-                              height: 10,
+                              width: 76,
+                              height: 24,
                             ),
                           ),
                           const SizedBox(height: 14),
@@ -2493,14 +2511,14 @@ class _ConversationRoomSkeleton extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(8, 7, 10, 9),
                 child: Row(children: [
                   _RoomSkeletonShape(
-                      color: base, width: 44, height: 44, round: true),
+                      color: base, width: 48, height: 48, round: true),
                   const SizedBox(width: 4),
                   Expanded(
                     child: _RoomSkeletonShape(
                       color: base,
                       width: double.infinity,
                       height: 44,
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(22),
                     ),
                   ),
                   const SizedBox(width: 7),

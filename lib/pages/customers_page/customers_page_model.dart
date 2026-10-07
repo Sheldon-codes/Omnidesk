@@ -82,7 +82,10 @@ class CustomersPageNotifier extends _$CustomersPageNotifier {
       });
     });
     ref.onDispose(() => _activeRequest?.cancel('Customer page disposed.'));
-    return CustomersPageState(loading: auth.isAuthenticated);
+    // Keep the initial state idle: the page's post-frame load() starts the
+    // request. Marking this true here makes load() mistake an unstarted fetch
+    // for an in-flight one when auth was already restored at provider build.
+    return const CustomersPageState();
   }
 
   void _handleScopeChange(AuthState auth) {
@@ -155,7 +158,13 @@ class CustomersPageNotifier extends _$CustomersPageNotifier {
     _activeRequest = cancelToken;
     final requestGeneration = ++_generation;
     final query = state.search;
-    if (initial && !state.refreshing) state = state.copyWith(error: null);
+    if (initial) {
+      state = state.copyWith(
+        loading: state.customers.isEmpty,
+        refreshing: state.customers.isNotEmpty,
+        error: null,
+      );
+    }
     try {
       final result = await ref.read(customerRepositoryProvider).list(
             search: query,

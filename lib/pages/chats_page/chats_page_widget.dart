@@ -1157,21 +1157,31 @@ class _ConversationRowSkeleton extends StatelessWidget {
     final theme = FlutterFlowTheme.of(context);
     final color = theme.alternate.withValues(alpha: .55);
     return ExcludeSemantics(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 78),
+        padding: const EdgeInsets.symmetric(vertical: 10),
         child: Row(children: [
-          OmniSkeleton(width: 46, height: 46, circle: true, baseTint: color),
-          const SizedBox(width: 12),
+          OmniSkeleton(width: 42, height: 42, circle: true, baseTint: color),
+          const SizedBox(width: 10),
           Expanded(
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                _SkeletonBar(color: color, width: 120, height: 13),
-                const SizedBox(height: 9),
-                _SkeletonBar(color: color, width: 160, height: 11),
+                _SkeletonBar(color: color, width: 120, height: 18),
+                const SizedBox(height: 3),
+                _SkeletonBar(color: color, width: 160, height: 16),
               ])),
-          const SizedBox(width: 12),
-          _SkeletonBar(color: color, width: 28, height: 10),
+          const SizedBox(width: 10),
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _SkeletonBar(color: color, width: 28, height: 15),
+              const SizedBox(height: 7),
+              OmniSkeleton(
+                  width: 22, height: 22, circle: true, baseTint: color),
+            ],
+          ),
         ]),
       ),
     );

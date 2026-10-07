@@ -431,10 +431,10 @@ class _CustomerSkeletonRow extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                 _SkeletonBlock(width: 154, height: 14, radius: 5),
-                const SizedBox(height: 8),
-                _SkeletonBlock(width: 140, height: 11, radius: 5),
+                const SizedBox(height: 3),
+                _SkeletonBlock(width: 140, height: 16, radius: 5),
               ])),
-          _SkeletonBlock(width: 45, height: 10, radius: 5),
+          _SkeletonBlock(width: 45, height: 15, radius: 5),
           const SizedBox(width: 14),
           Icon(IconsaxPlusBroken.arrow_right_3,
               size: 17, color: theme.alternate),

@@ -180,7 +180,6 @@ class _EmailThreadPageWidgetState extends ConsumerState<EmailThreadPageWidget> {
               theme: theme,
               onReply: () => _openComposer(EmailComposerMode.reply),
               onReplyAll: () => _openComposer(EmailComposerMode.replyAll),
-              onForward: () => _openComposer(EmailComposerMode.forward),
             ),
           ],
         ),
@@ -196,7 +195,7 @@ class _EmailThreadPageWidgetState extends ConsumerState<EmailThreadPageWidget> {
     final uri = Uri.tryParse(raw);
     if (uri == null) return;
     if (uri.scheme == 'mailto') {
-      context.push('/email/compose?to=${Uri.encodeComponent(uri.path)}');
+      _snack('New emails are disabled. Reply from an existing email thread.');
       return;
     }
     if (uri.scheme == 'tel') {
@@ -575,14 +574,10 @@ class _AttachmentRow extends StatelessWidget {
 
 class _ReplyActions extends StatelessWidget {
   const _ReplyActions(
-      {required this.theme,
-      required this.onReply,
-      required this.onReplyAll,
-      required this.onForward});
+      {required this.theme, required this.onReply, required this.onReplyAll});
   final FlutterFlowTheme theme;
   final VoidCallback onReply;
   final VoidCallback onReplyAll;
-  final VoidCallback onForward;
   @override
   Widget build(BuildContext context) => SafeArea(
       top: false,
@@ -602,10 +597,6 @@ class _ReplyActions extends StatelessWidget {
               tooltip: 'Reply all',
               onPressed: onReplyAll,
               icon: const Icon(Icons.reply_all_outlined)),
-          IconButton(
-              tooltip: 'Forward',
-              onPressed: onForward,
-              icon: const Icon(Icons.forward_outlined))
         ]),
       ));
 }
@@ -631,7 +622,7 @@ class _EmailThreadSkeleton extends StatelessWidget {
           child: ExcludeSemantics(
             child: Column(children: [
               SizedBox(
-                height: 56,
+                height: 62,
                 child: Row(children: [
                   IconButton(
                     tooltip: 'Back',
@@ -641,67 +632,85 @@ class _EmailThreadSkeleton extends StatelessWidget {
                   const SizedBox(width: 8),
                   OmniSkeleton(
                       width: 150, height: 14, baseTint: theme.alternate),
+                  const Spacer(),
+                  OmniSkeleton(
+                      width: 24, height: 24, baseTint: theme.alternate),
+                  const SizedBox(width: 16),
                 ]),
               ),
               Expanded(
                 child: ListView(padding: const EdgeInsets.all(20), children: [
                   OmniSkeleton(
-                      width: 220, height: 22, baseTint: theme.alternate),
-                  const SizedBox(height: 10),
+                      width: 220, height: 24, baseTint: theme.alternate),
+                  const SizedBox(height: 4),
                   OmniSkeleton(
-                      width: 120, height: 11, baseTint: theme.alternate),
+                      width: 120, height: 16, baseTint: theme.alternate),
                   const SizedBox(height: 22),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: theme.secondaryBackground,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: theme.alternate),
-                    ),
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+                  Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
                           OmniSkeleton(
-                              width: 142,
-                              height: 13,
+                              width: 34,
+                              height: 34,
+                              circle: true,
                               baseTint: theme.alternate),
-                          const SizedBox(height: 10),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  OmniSkeleton(
+                                      width: 142,
+                                      height: 13,
+                                      baseTint: theme.alternate),
+                                  const SizedBox(height: 10),
+                                  OmniSkeleton(
+                                      width: 186,
+                                      height: 11,
+                                      baseTint: theme.alternate),
+                                ]),
+                          ),
+                          const SizedBox(width: 12),
                           OmniSkeleton(
-                              width: 186,
-                              height: 11,
-                              baseTint: theme.alternate),
-                          const SizedBox(height: 20),
-                          for (var index = 0; index < 5; index++) ...[
-                            OmniSkeleton(
-                              width: index == 4 ? 154 : double.infinity,
-                              height: 12,
-                              baseTint: theme.alternate,
-                            ),
-                            if (index < 4) const SizedBox(height: 9),
-                          ],
+                              width: 20, height: 20, baseTint: theme.alternate),
                         ]),
-                  ),
+                        const SizedBox(height: 20),
+                        for (var index = 0; index < 5; index++) ...[
+                          OmniSkeleton(
+                            width: index == 4 ? 154 : double.infinity,
+                            height: 16,
+                            baseTint: theme.alternate,
+                          ),
+                          if (index < 4) const SizedBox(height: 4),
+                        ],
+                      ]),
                 ]),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
                 child: Row(children: [
                   Expanded(
                     child: OmniSkeleton(
                       width: double.infinity,
-                      height: 44,
+                      height: 46,
                       borderRadius: BorderRadius.circular(12),
                       baseTint: theme.alternate,
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OmniSkeleton(
-                      width: double.infinity,
-                      height: 44,
-                      borderRadius: BorderRadius.circular(12),
-                      baseTint: theme.alternate,
-                    ),
+                  const SizedBox(width: 8),
+                  OmniSkeleton(
+                    width: 40,
+                    height: 40,
+                    borderRadius: BorderRadius.circular(10),
+                    baseTint: theme.alternate,
+                  ),
+                  const SizedBox(width: 8),
+                  OmniSkeleton(
+                    width: 40,
+                    height: 40,
+                    borderRadius: BorderRadius.circular(10),
+                    baseTint: theme.alternate,
                   ),
                 ]),
               ),

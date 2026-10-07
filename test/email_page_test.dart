@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omnidesk_agent/pages/email_page/email_page_widget.dart';
+import 'package:omnidesk_agent/pages/email_page/email_composer_page_widget.dart';
 
 void main() {
   test('Email provider exposes folders and composes search with selection', () {
@@ -43,7 +44,7 @@ void main() {
     expect(find.text('Sent'), findsOneWidget);
     expect(find.text('Starred'), findsOneWidget);
     expect(find.text('Archived'), findsOneWidget);
-    expect(find.byTooltip('Compose email'), findsNWidgets(2));
+    expect(find.byTooltip('Compose email'), findsNothing);
     expect(find.text('accounts@bigbrainz.co.ke'), findsOneWidget);
     expect(find.text('DGKSL-386'), findsOneWidget);
 
@@ -72,6 +73,34 @@ void main() {
     await tester.drag(find.byType(CustomScrollView), const Offset(0, -500));
     await tester.pumpAndSettle();
     expect(find.text('Compose'), findsNothing);
-    expect(find.byTooltip('Compose email'), findsNWidgets(2));
+    expect(find.byTooltip('Compose email'), findsNothing);
+  });
+
+  testWidgets('direct new-email composer entry is blocked', (tester) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(home: EmailComposerPageWidget()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('New emails are disabled'), findsOneWidget);
+    expect(
+        find.text(
+            'Open an existing email thread to reply or edit a saved reply.'),
+        findsOneWidget);
+    expect(find.text('Send'), findsNothing);
+  });
+
+  testWidgets('email list does not offer a new-message action', (tester) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(home: EmailPageWidget()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Compose email'), findsNothing);
+    expect(find.text('Compose'), findsNothing);
   });
 }
