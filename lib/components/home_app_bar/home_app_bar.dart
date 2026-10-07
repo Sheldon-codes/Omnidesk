@@ -226,6 +226,9 @@ class _NotificationBell extends StatelessWidget {
             child: IconButton(
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(),
+              tooltip: unreadCount > 0
+                  ? 'Notifications, ${unreadCount > 9 ? '9+' : unreadCount} unread'
+                  : 'Notifications',
               icon: Image.asset(
                 'assets/images/notification.png',
                 width: 22,
@@ -242,17 +245,32 @@ class _NotificationBell extends StatelessWidget {
           ),
           if (unreadCount > 0)
             Positioned(
-              top: 8,
-              right: 8,
-              child: Container(
-                width: 9,
-                height: 9,
-                decoration: BoxDecoration(
-                  color: theme.error,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: theme.primaryBackground,
-                    width: 1.5,
+              top: 3,
+              right: 2,
+              child: IgnorePointer(
+                child: Container(
+                  constraints:
+                      const BoxConstraints(minWidth: 18, minHeight: 18),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    color: theme.error,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: theme.primaryBackground,
+                      width: 1.5,
+                    ),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    unreadCount > 9 ? '9+' : '$unreadCount',
+                    textAlign: TextAlign.center,
+                    style: theme.labelSmall.override(
+                      fontFamily: theme.labelSmallFamily,
+                      color: theme.primaryBackground,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      lineHeight: 1,
+                    ),
                   ),
                 ),
               ),
