@@ -9,6 +9,7 @@ import '../../../components/user_avatar/user_avatar.dart';
 import '../../../flutter_flow/flutter_flow_theme.dart';
 import '../conversation_room_page_model.dart';
 import 'conversation_media_widgets.dart';
+import 'whatsapp_chat_style.dart';
 
 enum MessageGroupPosition { single, first, middle, last }
 
@@ -21,6 +22,7 @@ class ConversationMessageBubble extends StatefulWidget {
     required this.customerInitial,
     this.customerAvatarUrl,
     required this.theme,
+    this.whatsAppPalette,
     required this.audioController,
     required this.canReply,
     required this.highlighted,
@@ -39,6 +41,7 @@ class ConversationMessageBubble extends StatefulWidget {
   final String customerInitial;
   final String? customerAvatarUrl;
   final FlutterFlowTheme theme;
+  final WhatsAppChatPalette? whatsAppPalette;
   final ConversationAudioController audioController;
   final bool canReply;
   final bool highlighted;
@@ -87,7 +90,12 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
   @override
   Widget build(BuildContext context) {
     if (widget.message.content case final SystemMessageContent content) {
-      return _SystemEvent(content: content, theme: widget.theme);
+      return _SystemEvent(
+        content: content,
+        theme: widget.theme,
+        whatsAppPalette: widget.whatsAppPalette,
+        sentAt: widget.message.sentAt,
+      );
     }
     final bubble = _buildBubble(context);
     return Padding(
@@ -138,11 +146,14 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
   }
 
   Widget _buildBubble(BuildContext context) {
-    final color =
-        _agent ? widget.theme.primary : widget.theme.primaryBackground;
-    final textColor =
-        _agent ? widget.theme.primaryBackground : widget.theme.primaryText;
+    final palette = widget.whatsAppPalette;
+    final color = palette == null
+        ? (_agent ? widget.theme.primary : widget.theme.primaryBackground)
+        : (_agent ? palette.outgoingBubble : palette.incomingBubble);
+    final textColor = palette?.text ??
+        (_agent ? widget.theme.primaryBackground : widget.theme.primaryText);
     final showAvatar = !_agent &&
+        palette == null &&
         (widget.groupPosition == MessageGroupPosition.single ||
             widget.groupPosition == MessageGroupPosition.last);
     return Row(
@@ -150,7 +161,7 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
           _agent ? MainAxisAlignment.end : MainAxisAlignment.start,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        if (!_agent)
+        if (!_agent && palette == null)
           SizedBox(
             width: 32,
             child: showAvatar
@@ -164,22 +175,36 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
           ),
         ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: math.min(MediaQuery.sizeOf(context).width * .78, 340),
+            maxWidth: math.min(
+                MediaQuery.sizeOf(context).width *
+                    (palette == null ? .78 : .84),
+                340),
           ),
           child: Stack(
             clipBehavior: Clip.none,
             children: [
               Material(
                 color: color,
-                borderRadius: _bubbleRadius(_agent, widget.groupPosition),
+                borderRadius: _bubbleRadius(
+                  _agent,
+                  widget.groupPosition,
+                  whatsAppStyle: palette != null,
+                ),
                 child: InkWell(
                   onTap: widget.message.delivery == MessageDelivery.failed
                       ? () => widget.onRetry(widget.message)
                       : null,
-                  borderRadius: _bubbleRadius(_agent, widget.groupPosition),
+                  borderRadius: _bubbleRadius(
+                    _agent,
+                    widget.groupPosition,
+                    whatsAppStyle: palette != null,
+                  ),
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 8, 9, 6),
+                    padding: palette == null
+                        ? const EdgeInsets.fromLTRB(10, 8, 9, 6)
+                        : const EdgeInsets.fromLTRB(9, 6, 8, 4),
                     child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         if (widget.quoted case final quoted?)
@@ -201,6 +226,7 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
                         _MessageContentRenderer(
                           message: widget.message,
                           textColor: textColor,
+                          whatsAppStyle: palette != null,
                           audioController: widget.audioController,
                           onLocation: widget.onLocation,
                           onContact: widget.onContact,
@@ -210,10 +236,10 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
                           ClipRRect(
                             borderRadius: BorderRadius.circular(3),
                             child: LinearProgressIndicator(
-                              value: widget.message.uploadProgress!.clamp(0.0, 1.0),
+                              value: widget.message.uploadProgress!
+                                  .clamp(0.0, 1.0),
                               minHeight: 3,
-                              backgroundColor:
-                                  textColor.withValues(alpha: .18),
+                              backgroundColor: textColor.withValues(alpha: .18),
                               valueColor: AlwaysStoppedAnimation<Color>(
                                   textColor.withValues(alpha: .85)),
                             ),
@@ -222,12 +248,15 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
                         const SizedBox(height: 4),
                         Align(
                           alignment: Alignment.bottomRight,
+                          widthFactor: 1,
                           child: _MessageMetadata(
                             message: widget.message,
                             textColor: textColor,
-                            readColor: _agent
-                                ? widget.theme.secondary
-                                : widget.theme.primary,
+                            readColor: palette?.readReceipt ??
+                                (_agent
+                                    ? widget.theme.secondary
+                                    : widget.theme.primary),
+                            whatsAppStyle: palette != null,
                           ),
                         ),
                       ],
@@ -235,6 +264,21 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
                   ),
                 ),
               ),
+              if (palette != null &&
+                  (widget.groupPosition == MessageGroupPosition.single ||
+                      widget.groupPosition == MessageGroupPosition.last))
+                Positioned(
+                  bottom: 0,
+                  left: _agent ? null : -6,
+                  right: _agent ? -6 : null,
+                  child: CustomPaint(
+                    size: const Size(8, 11),
+                    painter: _WhatsAppBubbleTailPainter(
+                      color: color,
+                      outgoing: _agent,
+                    ),
+                  ),
+                ),
               if (widget.message.reactions.isNotEmpty)
                 Positioned(
                   right: _agent ? 8 : null,
@@ -243,6 +287,7 @@ class _ConversationMessageBubbleState extends State<ConversationMessageBubble> {
                   child: _ReactionSummary(
                     reactions: widget.message.reactions,
                     theme: widget.theme,
+                    whatsAppPalette: palette,
                     onTap: (emoji) => widget.onReaction(widget.message, emoji),
                   ),
                 ),
@@ -258,12 +303,14 @@ class _MessageContentRenderer extends StatelessWidget {
   const _MessageContentRenderer({
     required this.message,
     required this.textColor,
+    required this.whatsAppStyle,
     required this.audioController,
     required this.onLocation,
     required this.onContact,
   });
   final ConversationMessage message;
   final Color textColor;
+  final bool whatsAppStyle;
   final ConversationAudioController audioController;
   final ValueChanged<LocationMessageContent> onLocation;
   final ValueChanged<ContactMessageContent> onContact;
@@ -271,7 +318,10 @@ class _MessageContentRenderer extends StatelessWidget {
   @override
   Widget build(BuildContext context) => switch (message.content) {
         TextMessageContent(:final text) => Text(text,
-            style: TextStyle(color: textColor, fontSize: 14, height: 1.35)),
+            style: TextStyle(
+                color: textColor,
+                fontSize: whatsAppStyle ? 16 : 14,
+                height: whatsAppStyle ? 1.3 : 1.35)),
         final ImageMessageContent content => ConversationImageMessage(
             content: content,
             textColor: textColor,
@@ -283,10 +333,15 @@ class _MessageContentRenderer extends StatelessWidget {
         final AudioMessageContent content => ConversationAudioMessage(
             content: content,
             textColor: textColor,
-            controller: audioController),
+            controller: audioController,
+            whatsAppPalette:
+                whatsAppStyle ? WhatsAppChatPalette.of(context) : null),
         final DocumentMessageContent content => ConversationDocumentMessage(
             content: content,
             textColor: textColor,
+            whatsAppPalette:
+                whatsAppStyle ? WhatsAppChatPalette.of(context) : null,
+            isOutgoing: message.sender == MessageSender.agent,
             onOpen: () => openBundledDocument(content)),
         final LocationMessageContent content => ConversationLocationMessage(
             content: content,
@@ -404,8 +459,8 @@ class _QuotedFallbackPreview extends StatelessWidget {
             color: textColor.withValues(alpha: .09),
             borderRadius: BorderRadius.circular(7),
             border: Border(
-              left: BorderSide(
-                  color: textColor.withValues(alpha: .65), width: 2),
+              left:
+                  BorderSide(color: textColor.withValues(alpha: .65), width: 2),
             ),
           ),
           child: Column(
@@ -479,10 +534,12 @@ class _MessageMetadata extends StatelessWidget {
     required this.message,
     required this.textColor,
     required this.readColor,
+    required this.whatsAppStyle,
   });
   final ConversationMessage message;
   final Color textColor;
   final Color readColor;
+  final bool whatsAppStyle;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -490,7 +547,8 @@ class _MessageMetadata extends StatelessWidget {
         children: [
           Text(DateFormat('HH:mm').format(message.sentAt),
               style: TextStyle(
-                  color: textColor.withValues(alpha: .66), fontSize: 9.5)),
+                  color: textColor.withValues(alpha: .72),
+                  fontSize: whatsAppStyle ? 11 : 9.5)),
           if (message.sender == MessageSender.agent) ...[
             const SizedBox(width: 3),
             _DeliveryIcon(
@@ -524,8 +582,8 @@ class _DeliveryIcon extends StatelessWidget {
           Icon(Icons.done_all_rounded, size: 13, color: color),
         MessageDelivery.read =>
           Icon(Icons.done_all_rounded, size: 13, color: readColor),
-        MessageDelivery.failed =>
-          Icon(Icons.error_outline_rounded, size: 13, color: readColor),
+        MessageDelivery.failed => Icon(Icons.error_outline_rounded,
+            size: 13, color: const Color(0xFFEA4335)),
         MessageDelivery.none => const SizedBox.shrink(),
       };
 }
@@ -534,18 +592,25 @@ class _ReactionSummary extends StatelessWidget {
   const _ReactionSummary({
     required this.reactions,
     required this.theme,
+    this.whatsAppPalette,
     required this.onTap,
   });
   final List<MessageReaction> reactions;
   final FlutterFlowTheme theme;
+  final WhatsAppChatPalette? whatsAppPalette;
   final ValueChanged<String> onTap;
 
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
-          color: theme.primaryBackground,
-          border: Border.all(color: theme.alternate),
+          color: whatsAppPalette == null
+              ? theme.primaryBackground
+              : whatsAppPalette!.isDark
+                  ? const Color(0xFF202C33)
+                  : Colors.white,
+          border:
+              Border.all(color: whatsAppPalette?.divider ?? theme.alternate),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
@@ -560,6 +625,7 @@ class _ReactionSummary extends StatelessWidget {
                     '${reaction.emoji}${reaction.count > 1 ? ' ${reaction.count}' : ''}',
                     style: TextStyle(
                       fontSize: 12,
+                      color: whatsAppPalette?.text,
                       fontWeight: reaction.reactedByAgent
                           ? FontWeight.w700
                           : FontWeight.w400,
@@ -573,60 +639,188 @@ class _ReactionSummary extends StatelessWidget {
 }
 
 class _SystemEvent extends StatelessWidget {
-  const _SystemEvent({required this.content, required this.theme});
+  const _SystemEvent({
+    required this.content,
+    required this.theme,
+    this.whatsAppPalette,
+    required this.sentAt,
+  });
   final SystemMessageContent content;
   final FlutterFlowTheme theme;
+  final WhatsAppChatPalette? whatsAppPalette;
+  final DateTime sentAt;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
-        child: Row(
-          children: [
-            Expanded(child: Divider(color: theme.alternate)),
-            const SizedBox(width: 10),
-            if (content.emphasized) ...[
-              Icon(IconsaxPlusBroken.ticket,
-                  size: 13, color: theme.secondaryText),
-              const SizedBox(width: 5),
-            ],
-            Flexible(
-              flex: 3,
-              child: Text(content.text,
-                  textAlign: TextAlign.center,
-                  style: theme.bodySmall.override(
-                      fontFamily: theme.bodySmallFamily,
-                      color: theme.secondaryText,
-                      fontSize: 10.5,
-                      fontWeight: content.emphasized
-                          ? FontWeight.w600
-                          : FontWeight.w400)),
+  Widget build(BuildContext context) {
+    final palette = whatsAppPalette;
+    if (palette != null && content.emphasized) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 20),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.sizeOf(context).width * .82,
             ),
-            const SizedBox(width: 10),
-            Expanded(child: Divider(color: theme.alternate)),
-          ],
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: palette.isDark
+                    ? const Color(0xFF202C33)
+                    : const Color(0xFFF7F8FA),
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black
+                        .withValues(alpha: palette.isDark ? .18 : .08),
+                    blurRadius: 3,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                child: Text(
+                  content.text,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: palette.isDark
+                        ? const Color(0xFFD1D7DB)
+                        : const Color(0xFF54656F),
+                    fontSize: 12,
+                    height: 1.3,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       );
+    }
+    if (palette != null && !content.emphasized) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 26),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: palette.note,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: palette.noteText.withValues(alpha: .35), width: .8),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.lock_outline_rounded,
+                      size: 13, color: palette.noteText),
+                  const SizedBox(width: 5),
+                  Text('Internal note · only agents see this',
+                      style: TextStyle(
+                          color: palette.noteText,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  Text(DateFormat('HH:mm').format(sentAt),
+                      style: TextStyle(
+                          color: palette.noteText.withValues(alpha: .72),
+                          fontSize: 10)),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(content.text,
+                  style: TextStyle(
+                      color: palette.noteText, fontSize: 13, height: 1.35)),
+            ],
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
+      child: Row(
+        children: [
+          Expanded(child: Divider(color: theme.alternate)),
+          const SizedBox(width: 10),
+          if (content.emphasized) ...[
+            Icon(IconsaxPlusBroken.ticket,
+                size: 13, color: theme.secondaryText),
+            const SizedBox(width: 5),
+          ],
+          Flexible(
+            flex: 3,
+            child: Text(content.text,
+                textAlign: TextAlign.center,
+                style: theme.bodySmall.override(
+                    fontFamily: theme.bodySmallFamily,
+                    color: palette?.muted ?? theme.secondaryText,
+                    fontSize: 10.5,
+                    fontWeight: content.emphasized
+                        ? FontWeight.w600
+                        : FontWeight.w400)),
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Divider(color: theme.alternate)),
+        ],
+      ),
+    );
+  }
 }
 
-BorderRadius _bubbleRadius(bool agent, MessageGroupPosition position) {
-  const large = Radius.circular(15);
+BorderRadius _bubbleRadius(bool agent, MessageGroupPosition position,
+    {bool whatsAppStyle = false}) {
+  final large = Radius.circular(whatsAppStyle ? 8 : 15);
   const small = Radius.circular(4);
   return switch ((agent, position)) {
-    (true, MessageGroupPosition.single) => const BorderRadius.only(
+    (true, MessageGroupPosition.single) => BorderRadius.only(
         topLeft: large, topRight: large, bottomLeft: large, bottomRight: small),
-    (false, MessageGroupPosition.single) => const BorderRadius.only(
+    (false, MessageGroupPosition.single) => BorderRadius.only(
         topLeft: large, topRight: large, bottomLeft: small, bottomRight: large),
-    (true, MessageGroupPosition.first) => const BorderRadius.only(
+    (true, MessageGroupPosition.first) => BorderRadius.only(
         topLeft: large, topRight: large, bottomLeft: large, bottomRight: small),
-    (true, MessageGroupPosition.middle) => const BorderRadius.only(
+    (true, MessageGroupPosition.middle) => BorderRadius.only(
         topLeft: large, topRight: small, bottomLeft: large, bottomRight: small),
-    (true, MessageGroupPosition.last) => const BorderRadius.only(
+    (true, MessageGroupPosition.last) => BorderRadius.only(
         topLeft: large, topRight: small, bottomLeft: large, bottomRight: small),
-    (false, MessageGroupPosition.first) => const BorderRadius.only(
+    (false, MessageGroupPosition.first) => BorderRadius.only(
         topLeft: large, topRight: large, bottomLeft: small, bottomRight: large),
-    (false, MessageGroupPosition.middle) => const BorderRadius.only(
+    (false, MessageGroupPosition.middle) => BorderRadius.only(
         topLeft: small, topRight: large, bottomLeft: small, bottomRight: large),
-    (false, MessageGroupPosition.last) => const BorderRadius.only(
+    (false, MessageGroupPosition.last) => BorderRadius.only(
         topLeft: small, topRight: large, bottomLeft: small, bottomRight: large),
   };
+}
+
+class _WhatsAppBubbleTailPainter extends CustomPainter {
+  const _WhatsAppBubbleTailPainter(
+      {required this.color, required this.outgoing});
+
+  final Color color;
+  final bool outgoing;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Drawn for the outgoing side (bubble edge at x = 2); incoming is mirrored.
+    canvas.save();
+    if (!outgoing) {
+      canvas
+        ..translate(size.width, 0)
+        ..scale(-1, 1);
+    }
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(2.2, 0)
+      ..cubicTo(2.2, size.height - 4.5, 4.5, size.height - 1.2, size.width,
+          size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(path, Paint()..color = color);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _WhatsAppBubbleTailPainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.outgoing != outgoing;
 }

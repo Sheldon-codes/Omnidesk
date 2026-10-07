@@ -2,12 +2,16 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../components/call_experience/call_session_controller.dart';
 import '../../components/user_avatar/user_avatar.dart';
@@ -23,6 +27,11 @@ import 'widget_live_store.dart';
 import 'widgets/conversation_composer.dart';
 import 'widgets/conversation_media_widgets.dart';
 import 'widgets/conversation_message_bubble.dart';
+import 'widgets/whatsapp_attachment_panel.dart';
+import 'widgets/whatsapp_chat_style.dart';
+import 'widgets/whatsapp_day_pill.dart';
+import 'widgets/whatsapp_jump_to_latest.dart';
+import 'widgets/whatsapp_message_actions.dart';
 
 export 'conversation_room_page_model.dart';
 
@@ -56,6 +65,7 @@ class _ConversationRoomPageWidgetState
   final _composerFocusNode = FocusNode();
   final _scrollController = ScrollController();
   final _audioController = ConversationAudioController();
+  final _imagePicker = ImagePicker();
   final _messageKeys = <String, GlobalKey>{};
   WhatsAppThreadController? _liveStore;
   WidgetChatThreadController? _widgetLiveStore;
@@ -67,11 +77,21 @@ class _ConversationRoomPageWidgetState
   bool _initialJumpDone = false;
   String? _jumpForConversation;
 
+  // WhatsApp thread chrome.
+  final _timelineKey = GlobalKey();
+  bool _attachPanelOpen = false;
+  double _keyboardHeight = 300;
+  bool _showJumpToLatest = false;
+  int _newWhileAway = 0;
+  DateTime? _lastSeenAt;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _composerController.addListener(_scheduleTyping);
+    _composerFocusNode.addListener(_onComposerFocus);
+    _scrollController.addListener(_onScrollChanged);
     if (_isLiveWhatsApp) {
       _liveStore = ref.read(whatsAppThreadsProvider.notifier);
     } else if (_isLiveWidget) {
@@ -149,11 +169,212 @@ class _ConversationRoomPageWidgetState
     _highlightTimer?.cancel();
     _typingTimer?.cancel();
     _composerController.removeListener(_scheduleTyping);
+    _composerFocusNode.removeListener(_onComposerFocus);
+    _scrollController.removeListener(_onScrollChanged);
     _composerController.dispose();
     _composerFocusNode.dispose();
     _scrollController.dispose();
     _audioController.dispose();
     super.dispose();
+  }
+
+  // ---- WhatsApp thread helpers -------------------------------------------
+
+  void _onComposerFocus() {
+    if (_composerFocusNode.hasFocus && _attachPanelOpen && mounted) {
+      setState(() => _attachPanelOpen = false);
+    }
+  }
+
+  void _onScrollChanged() {
+    if (!_isLiveWhatsApp || !mounted || !_scrollController.hasClients) return;
+    final after = _scrollController.position.extentAfter;
+    final show = after > 420;
+    final clearCount = after < 40 && _newWhileAway != 0;
+    if (show != _showJumpToLatest || clearCount) {
+      setState(() {
+        _showJumpToLatest = show;
+        if (after < 40) _newWhileAway = 0;
+      });
+    }
+  }
+
+  void _closeAttachPanel() {
+    if (_attachPanelOpen && mounted) setState(() => _attachPanelOpen = false);
+  }
+
+  /// "+" opens the grid in place of the keyboard; the keyboard icon swaps back.
+  void _toggleAttachPanel() {
+    if (_attachPanelOpen) {
+      setState(() => _attachPanelOpen = false);
+      _composerFocusNode.requestFocus();
+    } else {
+      _composerFocusNode.unfocus();
+      setState(() => _attachPanelOpen = true);
+    }
+  }
+
+  /// Day of the first message whose bottom edge is below the top of the list.
+  /// Drives the pinned day pill.
+  DateTime? _topVisibleDate(ConversationThread thread) {
+    final list = _timelineKey.currentContext?.findRenderObject();
+    if (list is! RenderBox || !list.attached) return null;
+    final top = list.localToGlobal(Offset.zero).dy;
+    for (final message in thread.messages) {
+      final box = _messageKeys[message.id]?.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.attached) continue;
+      if (box.localToGlobal(Offset.zero).dy + box.size.height > top + 4) {
+        return message.sentAt;
+      }
+    }
+    return null;
+  }
+
+  /// Keep this list aligned with the live reply/media contract.
+  List<WhatsAppAttachmentItem> _attachmentItems(ConversationThread thread) {
+    final capabilities = thread.capabilities;
+    return [
+      if (capabilities.canSendImages || capabilities.canSendVideo)
+        WhatsAppAttachmentItem(
+          label: 'Photos',
+          icon: Icons.photo_library_rounded,
+          iconColor: const Color(0xFF4D97E4),
+          onTap: () => _pickLivePhotos(thread),
+        ),
+      if (capabilities.canSendImages)
+        WhatsAppAttachmentItem(
+          label: 'Camera',
+          icon: Icons.camera_alt_rounded,
+          iconColor: const Color(0xFFE6E6E6),
+          onTap: () => _captureLivePhoto(thread),
+        ),
+      if (capabilities.canSendLocations)
+        WhatsAppAttachmentItem(
+          label: 'Location',
+          icon: Icons.location_on_rounded,
+          iconColor: const Color(0xFF00C99A),
+          onTap: () => _shareLiveLocation(thread),
+        ),
+      if (capabilities.canSendContacts)
+        WhatsAppAttachmentItem(
+          label: 'Contact',
+          icon: Icons.person_rounded,
+          iconColor: const Color(0xFFCDD4D8),
+          onTap: () => _shareLiveContact(thread),
+        ),
+      if (capabilities.canSendDocuments)
+        WhatsAppAttachmentItem(
+          label: 'Document',
+          icon: Icons.insert_drive_file_rounded,
+          iconColor: const Color(0xFF1B9CF2),
+          onTap: () => _pickLiveAttachment(thread),
+        ),
+    ];
+  }
+
+  Future<void> _openWhatsAppMessageActions(
+    ConversationThread thread,
+    ConversationMessage message,
+  ) async {
+    final palette = WhatsAppChatPalette.of(context);
+    final key = _messageKeys[message.id];
+    if (key == null) return;
+    final snapshot = await captureWhatsAppMessage(context, key);
+    if (snapshot == null) return;
+    try {
+      if (!mounted) return;
+      await showWhatsAppMessageActions(
+        context,
+        palette: palette,
+        snapshot: snapshot,
+        outgoing: message.sender == MessageSender.agent,
+        // Live WhatsApp has no reactions in this app, so the reaction bar is
+        // omitted. Pass reactions: const ['👍', '❤️', '😂', '😮', '😢', '🙏']
+        // and onReact once the backend supports them.
+        actions: [
+          if (thread.capabilities.canReply)
+            WhatsAppMessageAction(
+              label: 'Reply',
+              icon: Icons.reply_rounded,
+              onTap: () => _startReply(message),
+            ),
+          if (message.content case final TextMessageContent content)
+            WhatsAppMessageAction(
+              label: 'Copy',
+              icon: Icons.copy_rounded,
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: content.text));
+                _showSnack('Message copied');
+              },
+            ),
+          WhatsAppMessageAction(
+            label: 'Info',
+            icon: Icons.info_outline_rounded,
+            onTap: () => _showMessageInfo(message),
+          ),
+        ],
+      );
+    } finally {
+      snapshot.image.dispose();
+    }
+  }
+
+  void _showMessageInfo(ConversationMessage message) {
+    final palette = WhatsAppChatPalette.of(context);
+    final agent = message.sender == MessageSender.agent;
+    final status = switch (message.delivery) {
+      MessageDelivery.sending => 'Sending',
+      MessageDelivery.sent => 'Sent',
+      MessageDelivery.delivered => 'Delivered',
+      MessageDelivery.read => 'Read',
+      MessageDelivery.failed => 'Failed to send',
+      MessageDelivery.none => agent ? 'Sent' : 'Received',
+    };
+    Widget row(String label, String value) => Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 78,
+                child: Text(label,
+                    style: TextStyle(color: palette.muted, fontSize: 14)),
+              ),
+              Expanded(
+                child: Text(value,
+                    style: TextStyle(color: palette.text, fontSize: 14)),
+              ),
+            ],
+          ),
+        );
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor:
+            palette.isDark ? const Color(0xFF1F1F1F) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Message info',
+            style: TextStyle(
+                color: palette.text,
+                fontSize: 17,
+                fontWeight: FontWeight.w600)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            row('Sent by', agent ? 'You' : 'Customer'),
+            row('Time', DateFormat('d MMM y, HH:mm').format(message.sentAt)),
+            row('Status', status),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            style: TextButton.styleFrom(foregroundColor: palette.accent),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _scrollToLatest() {
@@ -275,6 +496,26 @@ class _ConversationRoomPageWidgetState
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  void _startConversationCall(ChatConversation conversation) {
+    final phone = conversation.contactIdentifier?.trim();
+    if (phone == null || phone.isEmpty) {
+      _showSnack('No phone number is available for this contact.');
+      return;
+    }
+    final started = ref
+        .read(callSessionControllerProvider.notifier)
+        .startOutgoing(CallParty(
+          customerId: conversation.customerId,
+          displayName: conversation.name,
+          phoneNumber: phone,
+          avatar: conversation.avatar,
+        ));
+    if (!started) {
+      _showSnack(ref.read(callSessionControllerProvider).failureMessage ??
+          'Call already in progress');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final localThread =
@@ -307,6 +548,8 @@ class _ConversationRoomPageWidgetState
             widgetInboxThread)
         : localThread;
     final theme = FlutterFlowTheme.of(context);
+    final whatsAppPalette =
+        _isLiveWhatsApp ? WhatsAppChatPalette.of(context) : null;
     if (_isLive &&
         (liveState?.error != null || widgetLiveState?.error != null) &&
         thread == null) {
@@ -332,7 +575,10 @@ class _ConversationRoomPageWidgetState
     final timelineLoading = _isLive && thread != null && threadLoading;
     if (showSkeleton) {
       return _ConversationRoomSkeleton(
-          theme: theme, knownThread: inboxThread ?? widgetInboxThread);
+        theme: theme,
+        knownThread: inboxThread ?? widgetInboxThread,
+        whatsAppPalette: whatsAppPalette,
+      );
     }
     if (thread == null) return _NotFound(theme: theme);
 
@@ -362,10 +608,29 @@ class _ConversationRoomPageWidgetState
                 (m) => m[widget.conversationId]?.thread?.messages.length ?? 0),
         (prev, next) {
       if (!mounted || next <= (prev ?? 0)) return;
+      final liveMessages = _isLiveWhatsApp
+          ? ref
+              .read(whatsAppThreadsProvider)[widget.conversationId]
+              ?.thread
+              ?.messages
+          : null;
+      final previousSeenAt = _lastSeenAt;
+      if (liveMessages != null && liveMessages.isNotEmpty) {
+        _lastSeenAt = liveMessages.last.sentAt;
+      }
       if (!_scrollController.hasClients) return;
       final pos = _scrollController.position;
       if (pos.extentAfter < 320) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToLatest());
+      } else if (liveMessages != null && previousSeenAt != null) {
+        // Only customer messages newer than the last one we had count; older
+        // pages being prepended never do.
+        final fresh = liveMessages
+            .where((m) =>
+                m.sender == MessageSender.customer &&
+                m.sentAt.isAfter(previousSeenAt))
+            .length;
+        if (fresh > 0) setState(() => _newWhileAway += fresh);
       }
     });
     // Pin to the latest message the moment the first batch renders.
@@ -396,36 +661,170 @@ class _ConversationRoomPageWidgetState
         }
       });
     }
-    return Scaffold(
-      backgroundColor: theme.primaryBackground,
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    if (keyboardInset > 100) _keyboardHeight = keyboardInset;
+    final messageTimeline = _MessageTimeline(
+      thread: thread,
+      isLoading: timelineLoading,
+      controller: _scrollController,
+      theme: theme,
+      whatsAppPalette: whatsAppPalette,
+      audioController: _audioController,
+      messageKeys: _messageKeys,
+      highlightedMessageId: _highlightedMessageId,
+      onLoadOlder: _isLive
+          ? () {}
+          : () => ref
+              .read(conversationStoreProvider.notifier)
+              .loadOlderMessages(conversation.id),
+      onReply: _startReply,
+      onQuoteTap: (messageId) => _jumpToMessage(thread, messageId),
+      onLongPress: (message) => _openMessageActions(thread, message),
+      onReaction: (message, emoji) {
+        if (_isLive) {
+          _showSnack('Reactions are not available for this channel');
+          return;
+        }
+        ref
+            .read(conversationStoreProvider.notifier)
+            .addReaction(conversation.id, message.id, emoji);
+      },
+      onRetry: (message) {
+        if (_isLiveWhatsApp) {
+          unawaited(ref
+              .read(whatsAppThreadsProvider.notifier)
+              .retry(conversation.id, message.id));
+          _showSnack('Retrying queued message');
+          return;
+        }
+        if (_isLiveWidget) {
+          unawaited(ref
+              .read(widgetChatThreadsProvider.notifier)
+              .retry(conversation.id, message.id));
+          _showSnack('Retrying message');
+          return;
+        }
+        ref
+            .read(conversationStoreProvider.notifier)
+            .retryMessage(conversation.id, message.id);
+        _showSnack('Message queued to retry');
+      },
+      onLocation: (_) => _showSnack('Map integration coming later'),
+      onContact: (content) {
+        if (content.customerId case final customerId?) {
+          context.push('/customers/$customerId');
+        } else {
+          _showSnack('Add contact coming soon');
+        }
+      },
+    );
+    final Widget timelineContent = timelineLoading && thread.messages.isEmpty
+        ? _ConversationTimelineSkeleton(
+            theme: theme,
+            whatsAppPalette: whatsAppPalette,
+          )
+        : whatsAppPalette == null
+            ? ColoredBox(
+                color: theme.secondaryBackground,
+                child: messageTimeline,
+              )
+            : Stack(
+                fit: StackFit.expand,
+                children: [
+                  RepaintBoundary(
+                    child: WhatsAppWallpaper(palette: whatsAppPalette),
+                  ),
+                  Listener(
+                    onPointerDown: (_) => _closeAttachPanel(),
+                    child: KeyedSubtree(
+                      key: _timelineKey,
+                      child: messageTimeline,
+                    ),
+                  ),
+                  WhatsAppDayPill(
+                    controller: _scrollController,
+                    palette: whatsAppPalette,
+                    topVisibleDate: () => _topVisibleDate(thread),
+                  ),
+                  WhatsAppJumpToLatestButton(
+                    visible: _showJumpToLatest,
+                    count: _newWhileAway,
+                    palette: whatsAppPalette,
+                    onTap: _scrollToLatest,
+                  ),
+                ],
+              );
+    final room = Scaffold(
+      backgroundColor: whatsAppPalette?.chrome ?? theme.primaryBackground,
       resizeToAvoidBottomInset: true,
+      appBar: whatsAppPalette == null
+          ? null
+          : PreferredSize(
+              preferredSize: const Size.fromHeight(64),
+              child: Container(
+                color: whatsAppPalette.chrome,
+                child: SafeArea(
+                  bottom: false,
+                  child: SizedBox(
+                    height: 64,
+                    child: _RoomHeader(
+                      thread: thread,
+                      theme: theme,
+                      whatsAppPalette: whatsAppPalette,
+                      onBack: () => context.pop(),
+                      onOpenCustomer: conversation.customerId == null
+                          ? null
+                          : () => context
+                              .push('/customers/${conversation.customerId}'),
+                      onActions: () => _openActions(thread),
+                      onCall:
+                          conversation.contactIdentifier?.trim().isNotEmpty ==
+                                  true
+                              ? () => _startConversationCall(conversation)
+                              : null,
+                    ),
+                  ),
+                ),
+              ),
+            ),
       body: SafeArea(
+        top: whatsAppPalette == null,
+        bottom: whatsAppPalette == null,
         child: Column(
           children: [
-            _RoomHeader(
-              thread: thread,
-              theme: theme,
-              onBack: () => context.pop(),
-              onOpenCustomer: conversation.customerId == null
-                  ? null
-                  : () => context.push('/customers/${conversation.customerId}'),
-              onActions: () => _openActions(thread),
-            ),
+            if (whatsAppPalette == null)
+              _RoomHeader(
+                thread: thread,
+                theme: theme,
+                onBack: () => context.pop(),
+                onOpenCustomer: conversation.customerId == null
+                    ? null
+                    : () =>
+                        context.push('/customers/${conversation.customerId}'),
+                onActions: () => _openActions(thread),
+                onCall:
+                    conversation.contactIdentifier?.trim().isNotEmpty == true
+                        ? () => _startConversationCall(conversation)
+                        : null,
+              ),
             if (degraded)
               Container(
                 width: double.infinity,
-                color: theme.secondaryBackground,
+                color: whatsAppPalette?.chrome ?? theme.secondaryBackground,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 child: Text(
                   'Reconnecting — new messages may be delayed',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: theme.secondaryText, fontSize: 11),
+                  style: TextStyle(
+                      color: whatsAppPalette?.muted ?? theme.secondaryText,
+                      fontSize: 11),
                 ),
               ),
             if (typing != null)
               Container(
                 width: double.infinity,
+                color: whatsAppPalette?.chrome,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 child: Row(
@@ -433,7 +832,8 @@ class _ConversationRoomPageWidgetState
                     SizedBox(
                       width: 28,
                       height: 14,
-                      child: _TypingDots(color: theme.primary),
+                      child: _TypingDots(
+                          color: whatsAppPalette?.accent ?? theme.primary),
                     ),
                     const SizedBox(width: 6),
                     Expanded(
@@ -443,81 +843,20 @@ class _ConversationRoomPageWidgetState
                             : '${typing.displayName ?? 'Another agent'} is typing…',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style:
-                            TextStyle(color: theme.secondaryText, fontSize: 11),
+                        style: TextStyle(
+                            color:
+                                whatsAppPalette?.muted ?? theme.secondaryText,
+                            fontSize: 11),
                       ),
                     ),
                   ],
                 ),
               ),
-            Expanded(
-              child: ColoredBox(
-                color: theme.secondaryBackground,
-                child: timelineLoading && thread.messages.isEmpty
-                    ? _ConversationTimelineSkeleton(theme: theme)
-                    : _MessageTimeline(
-                        thread: thread,
-                        isLoading: timelineLoading,
-                        controller: _scrollController,
-                        theme: theme,
-                        audioController: _audioController,
-                        messageKeys: _messageKeys,
-                        highlightedMessageId: _highlightedMessageId,
-                        onLoadOlder: _isLive
-                            ? () {}
-                            : () => ref
-                                .read(conversationStoreProvider.notifier)
-                                .loadOlderMessages(conversation.id),
-                        onReply: _startReply,
-                        onQuoteTap: (messageId) =>
-                            _jumpToMessage(thread, messageId),
-                        onLongPress: (message) =>
-                            _openMessageActions(thread, message),
-                        onReaction: (message, emoji) {
-                          if (_isLive) {
-                            _showSnack(
-                                'Reactions are not available for this channel');
-                            return;
-                          }
-                          ref
-                              .read(conversationStoreProvider.notifier)
-                              .addReaction(conversation.id, message.id, emoji);
-                        },
-                        onRetry: (message) {
-                          if (_isLiveWhatsApp) {
-                            unawaited(ref
-                                .read(whatsAppThreadsProvider.notifier)
-                                .retry(conversation.id, message.id));
-                            _showSnack('Retrying queued message');
-                            return;
-                          }
-                          if (_isLiveWidget) {
-                            unawaited(ref
-                                .read(widgetChatThreadsProvider.notifier)
-                                .retry(conversation.id, message.id));
-                            _showSnack('Retrying message');
-                            return;
-                          }
-                          ref
-                              .read(conversationStoreProvider.notifier)
-                              .retryMessage(conversation.id, message.id);
-                          _showSnack('Message queued to retry');
-                        },
-                        onLocation: (_) =>
-                            _showSnack('Map integration coming later'),
-                        onContact: (content) {
-                          if (content.customerId case final customerId?) {
-                            context.push('/customers/$customerId');
-                          } else {
-                            _showSnack('Add contact coming soon');
-                          }
-                        },
-                      ),
-              ),
-            ),
+            Expanded(child: timelineContent),
             if (resolved)
               ResolvedConversationComposer(
                 theme: theme,
+                whatsAppPalette: whatsAppPalette,
                 onReopen: () => _reopen(thread),
               )
             else
@@ -525,16 +864,50 @@ class _ConversationRoomPageWidgetState
                 controller: _composerController,
                 focusNode: _composerFocusNode,
                 theme: theme,
+                whatsAppPalette: whatsAppPalette,
+                onSavedReplies: _isLiveWhatsApp ? _insertTemplate : null,
+                attachPanelOpen: _attachPanelOpen,
+                bottomSafeArea: !_attachPanelOpen,
                 replyingTo: _replyingTo,
                 onCancelReply: () => setState(() => _replyingTo = null),
-                onAttach: () => _openAttachments(thread),
+                onAttach: () => _isLiveWhatsApp
+                    ? _toggleAttachPanel()
+                    : _openAttachments(thread),
                 onSend: () => _send(thread),
                 canAttach: thread.capabilities.canSendImages ||
                     thread.capabilities.canSendVideo ||
-                    thread.capabilities.canSendDocuments,
+                    thread.capabilities.canSendDocuments ||
+                    thread.capabilities.canSendLocations ||
+                    thread.capabilities.canSendContacts,
+              ),
+            if (whatsAppPalette != null && _attachPanelOpen && !resolved)
+              WhatsAppAttachmentPanel(
+                palette: whatsAppPalette,
+                height: (_keyboardHeight - MediaQuery.paddingOf(context).bottom)
+                    .clamp(220.0, 420.0)
+                    .toDouble(),
+                items: _attachmentItems(thread),
               ),
           ],
         ),
+      ),
+    );
+    if (whatsAppPalette == null) return room;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle(
+        statusBarColor: whatsAppPalette.chrome,
+        statusBarIconBrightness:
+            whatsAppPalette.isDark ? Brightness.light : Brightness.dark,
+        systemNavigationBarColor: whatsAppPalette.chrome,
+        systemNavigationBarIconBrightness:
+            whatsAppPalette.isDark ? Brightness.light : Brightness.dark,
+      ),
+      child: PopScope(
+        canPop: !_attachPanelOpen,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _closeAttachPanel();
+        },
+        child: room,
       ),
     );
   }
@@ -566,23 +939,7 @@ class _ConversationRoomPageWidgetState
                   title: const Text('Call customer'),
                   onTap: () {
                     Navigator.pop(sheetContext);
-                    final started = ref
-                        .read(callSessionControllerProvider.notifier)
-                        .startOutgoing(CallParty(
-                          customerId: conversation.customerId,
-                          displayName: conversation.name,
-                          phoneNumber:
-                              conversation.contactIdentifier ?? 'Unknown',
-                          avatar: conversation.avatar,
-                        ));
-                    if (!started) {
-                      _showSnack(
-                        ref
-                                .read(callSessionControllerProvider)
-                                .failureMessage ??
-                            'Call already in progress',
-                      );
-                    }
+                    _startConversationCall(conversation);
                   },
                 ),
               if (_isLiveWhatsApp)
@@ -802,6 +1159,9 @@ class _ConversationRoomPageWidgetState
     ConversationThread thread,
     ConversationMessage message,
   ) async {
+    if (_isLiveWhatsApp) {
+      return _openWhatsAppMessageActions(thread, message);
+    }
     final theme = FlutterFlowTheme.of(context);
     await showDialog<void>(
       context: context,
@@ -1008,22 +1368,135 @@ class _ConversationRoomPageWidgetState
 
   Future<void> _pickLiveAttachment(ConversationThread thread) async {
     try {
-      final picked = await FilePicker.pickFile();
+      if (_attachPanelOpen) setState(() => _attachPanelOpen = false);
+      final result = await FilePicker.pickFiles();
+      final picked = result.firstOrNull;
       final path = picked?.path;
       if (path == null || path.isEmpty) return;
-      await ref.read(whatsAppThreadsProvider.notifier).send(
-            thread.conversation.id,
-            _composerController.text.trim(),
-            replyToId: _replyingTo?.id,
-            attachment: File(path),
-          );
-      _composerController.clear();
-      _composerFocusNode.unfocus();
-      if (mounted) setState(() => _replyingTo = null);
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToLatest());
+      await _sendLiveAttachment(thread, File(path));
     } catch (_) {
       if (mounted) _showSnack('Attachment could not be sent. Try again.');
     }
+  }
+
+  Future<void> _pickLivePhotos(ConversationThread thread) async {
+    try {
+      _closeAttachPanel();
+      final files = await _imagePicker.pickMultipleMedia();
+      if (files.isEmpty) return;
+      for (final file in files) {
+        await _sendLiveAttachment(thread, File(file.path));
+      }
+    } catch (_) {
+      if (mounted) _showSnack('Selected media could not be sent. Try again.');
+    }
+  }
+
+  Future<void> _captureLivePhoto(ConversationThread thread) async {
+    try {
+      _closeAttachPanel();
+      final file = await _imagePicker.pickImage(source: ImageSource.camera);
+      if (file == null) return;
+      await _sendLiveAttachment(thread, File(file.path));
+    } catch (_) {
+      if (mounted) _showSnack('Camera media could not be sent. Try again.');
+    }
+  }
+
+  Future<void> _shareLiveLocation(ConversationThread thread) async {
+    try {
+      _closeAttachPanel();
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        if (mounted) _showSnack('Turn on Location Services, then try again.');
+        return;
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          _showSnack(permission == LocationPermission.deniedForever
+              ? 'Allow location access in Settings to share a location.'
+              : 'Location permission is needed to share your location.');
+        }
+        return;
+      }
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          timeLimit: Duration(seconds: 15),
+        ),
+      );
+      final mapUrl = Uri.https('maps.google.com', '/', {
+        'q': '${position.latitude},${position.longitude}',
+      });
+      final message = 'My location: $mapUrl';
+      await ref.read(whatsAppThreadsProvider.notifier).send(
+            thread.conversation.id,
+            message,
+            replyToId: _replyingTo?.id,
+          );
+      _finishLiveAttachmentSend();
+    } catch (_) {
+      if (mounted) _showSnack('Could not get your location. Try again.');
+    }
+  }
+
+  Future<void> _shareLiveContact(ConversationThread thread) async {
+    try {
+      _closeAttachPanel();
+      final permission = await FlutterContacts.permissions.request(
+        PermissionType.read,
+      );
+      if (permission.name != 'granted' && permission.name != 'limited') {
+        if (mounted) {
+          _showSnack('Allow contact access to choose a contact to share.');
+        }
+        return;
+      }
+      final contact = await FlutterContacts.native.showPicker(
+        properties: const {
+          ContactProperty.name,
+          ContactProperty.phone,
+          ContactProperty.email
+        },
+      );
+      if (contact == null) return;
+      final vCard = FlutterContacts.vCard.export(contact);
+      final directory = await getTemporaryDirectory();
+      final safeName = (contact.displayName ?? 'contact')
+          .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
+          .replaceAll(RegExp(r'^_+|_+$'), '');
+      final file = File(
+        '${directory.path}/contact_${DateTime.now().microsecondsSinceEpoch}_${safeName.isEmpty ? 'card' : safeName}.vcf',
+      );
+      await file.writeAsString(vCard, flush: true);
+      await _sendLiveAttachment(thread, file);
+    } catch (_) {
+      if (mounted) _showSnack('Contact card could not be shared. Try again.');
+    }
+  }
+
+  Future<void> _sendLiveAttachment(
+    ConversationThread thread,
+    File file,
+  ) async {
+    await ref.read(whatsAppThreadsProvider.notifier).send(
+          thread.conversation.id,
+          _composerController.text.trim(),
+          replyToId: _replyingTo?.id,
+          attachment: file,
+        );
+    _finishLiveAttachmentSend();
+  }
+
+  void _finishLiveAttachmentSend() {
+    _composerController.clear();
+    _composerFocusNode.unfocus();
+    if (mounted) setState(() => _replyingTo = null);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToLatest());
   }
 
   Future<void> _openDemoMediaPicker(ConversationThread thread) async {
@@ -1126,19 +1599,122 @@ class _RoomHeader extends StatelessWidget {
   const _RoomHeader({
     required this.thread,
     required this.theme,
+    this.whatsAppPalette,
     required this.onBack,
     required this.onOpenCustomer,
     required this.onActions,
+    this.onCall,
   });
   final ConversationThread thread;
   final FlutterFlowTheme theme;
+  final WhatsAppChatPalette? whatsAppPalette;
   final VoidCallback onBack;
   final VoidCallback? onOpenCustomer;
   final VoidCallback onActions;
+  final VoidCallback? onCall;
 
   @override
   Widget build(BuildContext context) {
     final item = thread.conversation;
+    if (whatsAppPalette case final palette?) {
+      return Material(
+        color: palette.chrome,
+        child: Container(
+          height: 64,
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          decoration: BoxDecoration(
+            color: palette.chrome,
+            border: Border(
+              bottom: BorderSide(color: palette.divider, width: .8),
+            ),
+          ),
+          child: Row(
+            children: [
+              Semantics(
+                button: true,
+                label: 'Back to chats',
+                child: IconButton(
+                  onPressed: onBack,
+                  icon: Icon(Icons.arrow_back_rounded,
+                      color: palette.text, size: 24),
+                ),
+              ),
+              Expanded(
+                child: InkWell(
+                  onTap: onOpenCustomer,
+                  child: Row(
+                    children: [
+                      UserAvatar(
+                        imageUrl: item.avatarUrl,
+                        initials: item.avatar ?? item.initials,
+                        radius: 17,
+                        backgroundColor: palette.isDark
+                            ? const Color(0xFF33434C)
+                            : const Color(0xFFD7E4E8),
+                        foregroundColor: palette.text,
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              item.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.text,
+                                fontSize: 16,
+                                height: 1.1,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'WhatsApp',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.muted,
+                                fontSize: 12,
+                                height: 1.1,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (onCall != null)
+                Semantics(
+                  button: true,
+                  label: 'Call customer',
+                  child: IconButton(
+                    onPressed: onCall,
+                    tooltip: 'Call customer',
+                    icon: Icon(Icons.call_outlined,
+                        color: palette.text, size: 23),
+                  ),
+                ),
+              Semantics(
+                button: true,
+                label: 'Conversation actions',
+                child: IconButton(
+                  onPressed: onActions,
+                  tooltip: 'Conversation actions',
+                  icon: Icon(Icons.more_vert_rounded,
+                      color: palette.text, size: 23),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Container(
       height: 68,
       padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -1220,6 +1796,7 @@ class _MessageTimeline extends StatelessWidget {
     required this.isLoading,
     required this.controller,
     required this.theme,
+    this.whatsAppPalette,
     required this.audioController,
     required this.messageKeys,
     required this.highlightedMessageId,
@@ -1237,6 +1814,7 @@ class _MessageTimeline extends StatelessWidget {
   final bool isLoading;
   final ScrollController controller;
   final FlutterFlowTheme theme;
+  final WhatsAppChatPalette? whatsAppPalette;
   final ConversationAudioController audioController;
   final Map<String, GlobalKey> messageKeys;
   final String? highlightedMessageId;
@@ -1261,7 +1839,11 @@ class _MessageTimeline extends StatelessWidget {
       },
       child: ListView.builder(
         controller: controller,
-        padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+        padding: EdgeInsets.fromLTRB(
+            whatsAppPalette == null ? 14 : 8,
+            whatsAppPalette == null ? 8 : 2,
+            whatsAppPalette == null ? 14 : 8,
+            12),
         itemCount: items.length +
             (thread.isLoadingOlderMessages ? 1 : 0) +
             (isLoading ? 2 : 0),
@@ -1304,7 +1886,8 @@ class _MessageTimeline extends StatelessWidget {
           }
           final item = items[contentIndex];
           if (item case _DateItem(:final date)) {
-            return _TimelineDate(date: date, theme: theme);
+            return _TimelineDate(
+                date: date, theme: theme, whatsAppPalette: whatsAppPalette);
           }
           final messageItem = item as _MessageItem;
           final message = messageItem.message;
@@ -1313,7 +1896,8 @@ class _MessageTimeline extends StatelessWidget {
               : thread.messages
                   .where((item) => item.id == message.replyToId)
                   .firstOrNull;
-          return KeyedSubtree(
+          // RepaintBoundary so the long-press menu can lift an exact snapshot.
+          return RepaintBoundary(
             key: messageKeys.putIfAbsent(message.id, GlobalKey.new),
             child: ConversationMessageBubble(
               message: message,
@@ -1322,6 +1906,7 @@ class _MessageTimeline extends StatelessWidget {
               customerInitial: thread.conversation.initials,
               customerAvatarUrl: thread.conversation.avatarUrl,
               theme: theme,
+              whatsAppPalette: whatsAppPalette,
               audioController: audioController,
               canReply: thread.capabilities.canReply,
               highlighted: highlightedMessageId == message.id,
@@ -1392,22 +1977,68 @@ class _MessageItem {
 }
 
 class _TimelineDate extends StatelessWidget {
-  const _TimelineDate({required this.date, required this.theme});
+  const _TimelineDate({
+    required this.date,
+    required this.theme,
+    this.whatsAppPalette,
+  });
   final DateTime date;
   final FlutterFlowTheme theme;
+  final WhatsAppChatPalette? whatsAppPalette;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+  Widget build(BuildContext context) {
+    final palette = whatsAppPalette;
+    if (palette != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 9),
         child: Center(
-          child: Text(
-            DateUtils.isSameDay(date, DateTime(2026, 8, 29))
-                ? 'Today'
-                : DateFormat('MMM d').format(date),
-            style: theme.bodySmall.override(
-                fontFamily: theme.bodySmallFamily,
-                color: theme.secondaryText,
-                fontSize: 10.5),
+          child: WhatsAppDayChip(
+            label: whatsAppDayLabel(date),
+            palette: palette,
+          ),
+        ),
+      );
+    }
+    return _legacy(context);
+  }
+
+  Widget _legacy(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+            decoration: whatsAppPalette == null
+                ? null
+                : BoxDecoration(
+                    color: whatsAppPalette!.isDark
+                        ? const Color(0xFF182229)
+                        : Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: const [
+                      BoxShadow(
+                          color: Color(0x160B141A),
+                          blurRadius: 1,
+                          offset: Offset(0, 1)),
+                    ],
+                  ),
+            child: Text(
+              DateUtils.isSameDay(
+                      date,
+                      whatsAppPalette == null
+                          ? DateTime(2026, 8, 29)
+                          : DateTime.now())
+                  ? 'Today'
+                  : DateFormat('MMM d').format(date),
+              style: theme.bodySmall.override(
+                  fontFamily: theme.bodySmallFamily,
+                  color: whatsAppPalette == null
+                      ? theme.secondaryText
+                      : whatsAppPalette!.isDark
+                          ? const Color(0xFFD1D7DB)
+                          : whatsAppPalette!.text,
+                  fontSize: 11),
+            ),
           ),
         ),
       );
@@ -1631,71 +2262,99 @@ class _NotFound extends StatelessWidget {
 /// header. Keeping the surrounding header and composer live prevents a visual
 /// flash back to a full-page skeleton on every navigation.
 class _ConversationTimelineSkeleton extends StatelessWidget {
-  const _ConversationTimelineSkeleton({required this.theme});
+  const _ConversationTimelineSkeleton({
+    required this.theme,
+    this.whatsAppPalette,
+  });
   final FlutterFlowTheme theme;
+  final WhatsAppChatPalette? whatsAppPalette;
 
   @override
   Widget build(BuildContext context) {
-    final base = theme.alternate;
-    return ExcludeSemantics(
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
-        children: [
-          Center(child: _RoomSkeletonShape(color: base, width: 52, height: 10)),
-          const SizedBox(height: 14),
-          _TimelineSkeletonBubble(
-            color: base,
-            alignment: Alignment.centerLeft,
-            width: 158,
-            height: 50,
-            withAvatar: true,
-            borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(15),
-                topRight: Radius.circular(15),
-                bottomLeft: Radius.circular(4),
-                bottomRight: Radius.circular(15)),
+    final base = whatsAppPalette == null
+        ? theme.alternate
+        : whatsAppPalette!.isDark
+            ? const Color(0xFF35434A)
+            : const Color(0xFFD8D5D0);
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (whatsAppPalette != null)
+          RepaintBoundary(
+            child: WhatsAppWallpaper(palette: whatsAppPalette!),
           ),
-          const SizedBox(height: 3),
-          _TimelineSkeletonBubble(
-            color: base,
-            alignment: Alignment.centerLeft,
-            width: 212,
-            height: 62,
-            borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(4),
-                topRight: Radius.circular(15),
-                bottomLeft: Radius.circular(4),
-                bottomRight: Radius.circular(15)),
+        ExcludeSemantics(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+            children: [
+              Center(
+                  child:
+                      _RoomSkeletonShape(color: base, width: 52, height: 10)),
+              const SizedBox(height: 14),
+              _TimelineSkeletonBubble(
+                color: base,
+                alignment: Alignment.centerLeft,
+                width: 158,
+                height: 50,
+                withAvatar: whatsAppPalette == null,
+                borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(15),
+                    topRight: Radius.circular(15),
+                    bottomLeft: Radius.circular(4),
+                    bottomRight: Radius.circular(15)),
+              ),
+              const SizedBox(height: 3),
+              _TimelineSkeletonBubble(
+                color: base,
+                alignment: Alignment.centerLeft,
+                width: 212,
+                height: 62,
+                borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(4),
+                    topRight: Radius.circular(15),
+                    bottomLeft: Radius.circular(4),
+                    bottomRight: Radius.circular(15)),
+              ),
+              const SizedBox(height: 14),
+              _TimelineSkeletonBubble(
+                color: base,
+                alignment: Alignment.centerRight,
+                width: 174,
+                height: 54,
+                borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(15),
+                    topRight: Radius.circular(15),
+                    bottomLeft: Radius.circular(15),
+                    bottomRight: Radius.circular(4)),
+              ),
+            ],
           ),
-          const SizedBox(height: 14),
-          _TimelineSkeletonBubble(
-            color: base,
-            alignment: Alignment.centerRight,
-            width: 174,
-            height: 54,
-            borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(15),
-                topRight: Radius.circular(15),
-                bottomLeft: Radius.circular(15),
-                bottomRight: Radius.circular(4)),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
 
 class _ConversationRoomSkeleton extends StatelessWidget {
-  const _ConversationRoomSkeleton({required this.theme, this.knownThread});
+  const _ConversationRoomSkeleton({
+    required this.theme,
+    this.knownThread,
+    this.whatsAppPalette,
+  });
 
   final FlutterFlowTheme theme;
   final ConversationThread? knownThread;
+  final WhatsAppChatPalette? whatsAppPalette;
 
   @override
   Widget build(BuildContext context) {
-    final base = theme.alternate;
+    final base = whatsAppPalette == null
+        ? theme.alternate
+        : whatsAppPalette!.isDark
+            ? const Color(0xFF35434A)
+            : const Color(0xFFD8D5D0);
     return Scaffold(
-      backgroundColor: theme.primaryBackground,
+      backgroundColor: whatsAppPalette?.chrome ?? theme.primaryBackground,
       body: SafeArea(
         child: ExcludeSemantics(
           child: Column(
@@ -1704,6 +2363,7 @@ class _ConversationRoomSkeleton extends StatelessWidget {
                 _RoomHeader(
                   thread: thread,
                   theme: theme,
+                  whatsAppPalette: whatsAppPalette,
                   onBack: () => context.pop(),
                   onOpenCustomer: thread.conversation.customerId == null
                       ? null
@@ -1714,11 +2374,14 @@ class _ConversationRoomSkeleton extends StatelessWidget {
                 )
               else
                 Container(
-                  height: 68,
+                  height: whatsAppPalette == null ? 68 : 64,
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   decoration: BoxDecoration(
-                    color: theme.primaryBackground,
-                    border: Border(bottom: BorderSide(color: theme.alternate)),
+                    color: whatsAppPalette?.chrome ?? theme.primaryBackground,
+                    border: Border(
+                        bottom: BorderSide(
+                            color:
+                                whatsAppPalette?.divider ?? theme.alternate)),
                   ),
                   child: Row(children: [
                     const SizedBox(width: 48),
@@ -1740,79 +2403,92 @@ class _ConversationRoomSkeleton extends StatelessWidget {
                   ]),
                 ),
               Expanded(
-                child: ColoredBox(
-                  color: theme.secondaryBackground,
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
-                    children: [
-                      Center(
-                        child: _RoomSkeletonShape(
-                          color: base,
-                          width: 44,
-                          height: 10,
-                        ),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (whatsAppPalette != null)
+                      RepaintBoundary(
+                        child: WhatsAppWallpaper(palette: whatsAppPalette!),
                       ),
-                      const SizedBox(height: 14),
-                      _TimelineSkeletonBubble(
-                        color: base,
-                        alignment: Alignment.centerLeft,
-                        width: 154,
-                        height: 48,
-                        withAvatar: true,
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(15),
-                          topRight: Radius.circular(15),
-                          bottomLeft: Radius.circular(4),
-                          bottomRight: Radius.circular(15),
-                        ),
+                    ColoredBox(
+                      color: whatsAppPalette == null
+                          ? theme.secondaryBackground
+                          : Colors.transparent,
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+                        children: [
+                          Center(
+                            child: _RoomSkeletonShape(
+                              color: base,
+                              width: 44,
+                              height: 10,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          _TimelineSkeletonBubble(
+                            color: base,
+                            alignment: Alignment.centerLeft,
+                            width: 154,
+                            height: 48,
+                            withAvatar: whatsAppPalette == null,
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(15),
+                              topRight: Radius.circular(15),
+                              bottomLeft: Radius.circular(4),
+                              bottomRight: Radius.circular(15),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          _TimelineSkeletonBubble(
+                            color: base,
+                            alignment: Alignment.centerLeft,
+                            width: 202,
+                            height: 64,
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(4),
+                              topRight: Radius.circular(15),
+                              bottomLeft: Radius.circular(4),
+                              bottomRight: Radius.circular(15),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          _TimelineSkeletonBubble(
+                            color: base,
+                            alignment: Alignment.centerRight,
+                            width: 178,
+                            height: 55,
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(15),
+                              topRight: Radius.circular(15),
+                              bottomLeft: Radius.circular(15),
+                              bottomRight: Radius.circular(4),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          _TimelineSkeletonBubble(
+                            color: base,
+                            alignment: Alignment.centerRight,
+                            width: 112,
+                            height: 46,
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(15),
+                              topRight: Radius.circular(4),
+                              bottomLeft: Radius.circular(15),
+                              bottomRight: Radius.circular(4),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 2),
-                      _TimelineSkeletonBubble(
-                        color: base,
-                        alignment: Alignment.centerLeft,
-                        width: 202,
-                        height: 64,
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(4),
-                          topRight: Radius.circular(15),
-                          bottomLeft: Radius.circular(4),
-                          bottomRight: Radius.circular(15),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      _TimelineSkeletonBubble(
-                        color: base,
-                        alignment: Alignment.centerRight,
-                        width: 178,
-                        height: 55,
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(15),
-                          topRight: Radius.circular(15),
-                          bottomLeft: Radius.circular(15),
-                          bottomRight: Radius.circular(4),
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      _TimelineSkeletonBubble(
-                        color: base,
-                        alignment: Alignment.centerRight,
-                        width: 112,
-                        height: 46,
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(15),
-                          topRight: Radius.circular(4),
-                          bottomLeft: Radius.circular(15),
-                          bottomRight: Radius.circular(4),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
               Container(
                 decoration: BoxDecoration(
-                  color: theme.primaryBackground,
-                  border: Border(top: BorderSide(color: theme.alternate)),
+                  color: whatsAppPalette?.chrome ?? theme.primaryBackground,
+                  border: Border(
+                      top: BorderSide(
+                          color: whatsAppPalette?.divider ?? theme.alternate)),
                 ),
                 padding: const EdgeInsets.fromLTRB(8, 7, 10, 9),
                 child: Row(children: [

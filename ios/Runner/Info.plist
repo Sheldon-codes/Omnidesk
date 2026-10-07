@@ -27,9 +27,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>OmniDesk uses the camera when you attach a photo or video to an email.</string>
+	<string>OmniDesk uses the camera only when you choose to attach a photo or video to a support conversation.</string>
 	<key>NSContactsUsageDescription</key>
-	<string>OmniDesk uses your contacts when you choose to find, match, or add a customer from your device contacts.</string>
+	<string>OmniDesk accesses contacts only when you choose a contact to share in a support conversation or use contact matching.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>OmniDesk uses your location only when you choose to share a location in a customer conversation or support request.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
@@ -37,7 +37,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>OmniDesk uses the microphone to handle a live support call when you answer or place one.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>OmniDesk uses your photo library when you attach media to an email.</string>
+	<string>OmniDesk accesses your selected photo or video only when you choose to attach it to a support conversation.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

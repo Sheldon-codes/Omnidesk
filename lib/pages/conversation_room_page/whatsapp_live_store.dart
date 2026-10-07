@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:mime/mime.dart';
 
 import '../../services/api_service.dart';
 import '../../services/auth_session_controller.dart';
@@ -380,11 +381,11 @@ class WhatsAppRepository {
       if (durationSecs != null) 'duration': durationSecs,
     };
     if (attachment != null) {
-      final bytes = await attachment.readAsBytes();
-      if (bytes.lengthInBytes > maxMediaBytes) {
+      if (await attachment.length() > maxMediaBytes) {
         throw const ApiClientException(
             message: 'Attachment is larger than 15 MB. Choose a smaller file.');
       }
+      final bytes = await attachment.readAsBytes();
       body['media_data'] = base64Encode(bytes);
       body['media_type'] = _mimeType(attachment.path);
       body['media_filename'] = attachment.uri.pathSegments.last;
@@ -466,18 +467,10 @@ class WhatsAppRepository {
 
   String _mimeType(String path) {
     final lower = path.toLowerCase();
-    if (lower.endsWith('.png')) return 'image/png';
-    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
-      return 'image/jpeg';
-    }
-    if (lower.endsWith('.pdf')) return 'application/pdf';
-    if (lower.endsWith('.mp4')) return 'video/mp4';
-    if (lower.endsWith('.mp3')) return 'audio/mpeg';
     if (lower.endsWith('.ogg') || lower.endsWith('.opus')) {
       return 'audio/ogg; codecs=opus';
     }
-    if (lower.endsWith('.m4a')) return 'audio/mp4';
-    return 'application/octet-stream';
+    return lookupMimeType(path) ?? 'application/octet-stream';
   }
 }
 
@@ -1122,22 +1115,17 @@ class WhatsAppThreadController
   }) {
     ConversationMessageContent content;
     if (attachment != null) {
-      final lower = attachment.path.toLowerCase();
-      if (lower.endsWith('.png') ||
-          lower.endsWith('.jpg') ||
-          lower.endsWith('.jpeg')) {
+      final mimeType = _mimeFor(attachment.path);
+      if (mimeType.startsWith('image/')) {
         content = ImageMessageContent(
             assetPath: attachment.path, caption: text.isEmpty ? null : text);
-      } else if (lower.endsWith('.mp4')) {
+      } else if (mimeType.startsWith('video/')) {
         content = VideoMessageContent(
             assetPath: attachment.path,
             thumbnailAssetPath: attachment.path,
             duration: Duration(seconds: durationSecs ?? 0),
             caption: text.isEmpty ? null : text);
-      } else if (lower.endsWith('.ogg') ||
-          lower.endsWith('.opus') ||
-          lower.endsWith('.m4a') ||
-          lower.endsWith('.mp3')) {
+      } else if (mimeType.startsWith('audio/')) {
         content = AudioMessageContent(
             assetPath: attachment.path,
             duration: Duration(seconds: durationSecs ?? 0),
@@ -1164,13 +1152,10 @@ class WhatsAppThreadController
 
   String _mimeFor(String path) {
     final lower = path.toLowerCase();
-    if (lower.endsWith('.png')) return 'image/png';
-    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
-      return 'image/jpeg';
+    if (lower.endsWith('.ogg') || lower.endsWith('.opus')) {
+      return 'audio/ogg; codecs=opus';
     }
-    if (lower.endsWith('.pdf')) return 'application/pdf';
-    if (lower.endsWith('.mp4')) return 'video/mp4';
-    return 'application/octet-stream';
+    return lookupMimeType(path) ?? 'application/octet-stream';
   }
 
   Future<void> _deliver(String localId,

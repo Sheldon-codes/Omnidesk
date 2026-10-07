@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
 import '../conversation_room_page_model.dart';
+import 'whatsapp_chat_style.dart';
 
 class ConversationAudioController extends ChangeNotifier {
   final AudioPlayer _player = AudioPlayer();
@@ -125,65 +126,64 @@ class ConversationVideoMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final remoteThumb =
-        isRemoteConversationMedia(content.thumbnailAssetPath);
+    final remoteThumb = isRemoteConversationMedia(content.thumbnailAssetPath);
     return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Semantics(
-            button: true,
-            label: 'Play video, ${formatChatDuration(content.duration)}',
-            child: GestureDetector(
-              onTap: onOpen,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(11),
-                child: AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      if (remoteThumb)
-                        CachedNetworkImage(
-                          imageUrl: content.thumbnailAssetPath,
-                          fit: BoxFit.cover,
-                          placeholder: (_, __) => _MediaLoading(
-                              color: textColor, label: 'Loading video…'),
-                          errorWidget: (_, __, ___) =>
-                              _MediaError(color: textColor),
-                        )
-                      else
-                        Image.asset(content.thumbnailAssetPath,
-                            fit: BoxFit.cover, cacheWidth: 900),
-                      ColoredBox(color: Colors.black.withValues(alpha: .16)),
-                      const Center(
-                        child: Icon(Icons.play_circle_fill_rounded,
-                            color: Colors.white, size: 52),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          button: true,
+          label: 'Play video, ${formatChatDuration(content.duration)}',
+          child: GestureDetector(
+            onTap: onOpen,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(11),
+              child: AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (remoteThumb)
+                      CachedNetworkImage(
+                        imageUrl: content.thumbnailAssetPath,
+                        fit: BoxFit.cover,
+                        placeholder: (_, __) => _MediaLoading(
+                            color: textColor, label: 'Loading video…'),
+                        errorWidget: (_, __, ___) =>
+                            _MediaError(color: textColor),
+                      )
+                    else
+                      Image.asset(content.thumbnailAssetPath,
+                          fit: BoxFit.cover, cacheWidth: 900),
+                    ColoredBox(color: Colors.black.withValues(alpha: .16)),
+                    const Center(
+                      child: Icon(Icons.play_circle_fill_rounded,
+                          color: Colors.white, size: 52),
+                    ),
+                    Positioned(
+                      right: 8,
+                      bottom: 7,
+                      child: Text(
+                        formatChatDuration(content.duration),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            shadows: [Shadow(blurRadius: 4)]),
                       ),
-                      Positioned(
-                        right: 8,
-                        bottom: 7,
-                        child: Text(
-                          formatChatDuration(content.duration),
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              shadows: [Shadow(blurRadius: 4)]),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ),
           ),
-          if (content.caption case final caption?) ...[
-            const SizedBox(height: 8),
-            Text(caption,
-                style: TextStyle(color: textColor, fontSize: 14, height: 1.35)),
-          ],
+        ),
+        if (content.caption case final caption?) ...[
+          const SizedBox(height: 8),
+          Text(caption,
+              style: TextStyle(color: textColor, fontSize: 14, height: 1.35)),
         ],
-      );
+      ],
+    );
   }
 }
 
@@ -221,11 +221,13 @@ class ConversationAudioMessage extends StatelessWidget {
     required this.content,
     required this.textColor,
     required this.controller,
+    this.whatsAppPalette,
   });
 
   final AudioMessageContent content;
   final Color textColor;
   final ConversationAudioController controller;
+  final WhatsAppChatPalette? whatsAppPalette;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -249,51 +251,76 @@ class ConversationAudioMessage extends StatelessWidget {
                     : (position.inMilliseconds /
                             content.duration.inMilliseconds)
                         .clamp(0.0, 1.0);
-                return Row(
-                  children: [
-                    Semantics(
-                      button: true,
-                      label: playing
-                          ? 'Pause voice message'
-                          : 'Play voice message',
-                      child: IconButton(
-                        onPressed: () => controller.toggle(content.assetPath),
-                        visualDensity: VisualDensity.compact,
-                        icon: Icon(
-                          playing
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-                          color: textColor,
-                          size: 28,
+                final palette = whatsAppPalette;
+                final waveformColor = palette?.isDark == true
+                    ? const Color(0xFFB8C7CE)
+                    : (palette?.accent ?? textColor);
+                return SizedBox(
+                  width: palette == null ? null : 252,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (palette != null) ...[
+                        Container(
+                          width: 31,
+                          height: 31,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: palette.isDark
+                                ? const Color(0xFF33434C)
+                                : const Color(0xFFC7E7C1),
+                          ),
+                          alignment: Alignment.center,
+                          child: Icon(Icons.mic_rounded,
+                              size: 17, color: palette.accent),
+                        ),
+                        const SizedBox(width: 4),
+                      ],
+                      Semantics(
+                        button: true,
+                        label: playing
+                            ? 'Pause voice message'
+                            : 'Play voice message',
+                        child: IconButton(
+                          onPressed: () => controller.toggle(content.assetPath),
+                          visualDensity: VisualDensity.compact,
+                          icon: Icon(
+                            playing
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                            color: palette?.accent ?? textColor,
+                            size: 28,
+                          ),
                         ),
                       ),
-                    ),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SizedBox(
-                            height: 30,
-                            child: CustomPaint(
-                              painter: _WaveformPainter(
-                                samples: content.waveform,
-                                progress: progress,
-                                color: textColor,
+                      if (palette != null) const SizedBox(width: 2),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(
+                              height: 30,
+                              child: CustomPaint(
+                                painter: _WaveformPainter(
+                                  samples: content.waveform,
+                                  progress: progress,
+                                  color: waveformColor,
+                                ),
                               ),
                             ),
-                          ),
-                          Text(
-                            active && position > Duration.zero
-                                ? '${formatChatDuration(position)} / ${formatChatDuration(content.duration)}'
-                                : formatChatDuration(content.duration),
-                            style: TextStyle(
-                                color: textColor.withValues(alpha: .76),
-                                fontSize: 10),
-                          ),
-                        ],
+                            Text(
+                              active && position > Duration.zero
+                                  ? '${formatChatDuration(position)} / ${formatChatDuration(content.duration)}'
+                                  : formatChatDuration(content.duration),
+                              style: TextStyle(
+                                  color: textColor.withValues(alpha: .76),
+                                  fontSize: 10),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 );
               },
             ),
@@ -308,38 +335,88 @@ class ConversationDocumentMessage extends StatelessWidget {
     required this.content,
     required this.textColor,
     required this.onOpen,
+    this.whatsAppPalette,
+    this.isOutgoing = false,
   });
   final DocumentMessageContent content;
   final Color textColor;
   final VoidCallback onOpen;
+  final WhatsAppChatPalette? whatsAppPalette;
+  final bool isOutgoing;
+
+  String get _fileType {
+    final extension = content.fileName.split('.').last.toLowerCase();
+    if (content.fileName.contains('.') && extension.length <= 5) {
+      return extension.toUpperCase();
+    }
+    final mimeSubtype = content.mimeType.split('/').last.split(';').first;
+    return mimeSubtype.toUpperCase();
+  }
+
+  String get _fileDetails {
+    final size = content.sizeLabel.trim();
+    final type = _fileType;
+    final normalizedMime = content.mimeType.toLowerCase();
+    final mimeType = normalizedMime.contains('/')
+        ? normalizedMime.split('/').last.split(';').first.toUpperCase()
+        : normalizedMime.toUpperCase();
+    final sizeLooksLikeMeasurement = RegExp(
+      r'^\d+(?:\.\d+)?\s?(?:B|KB|MB|GB|TB)$',
+      caseSensitive: false,
+    ).hasMatch(size);
+    if (!sizeLooksLikeMeasurement ||
+        size.toUpperCase() == type ||
+        size.toUpperCase() == mimeType) {
+      return type;
+    }
+    return '$size · $type';
+  }
 
   @override
   Widget build(BuildContext context) => Semantics(
         button: true,
-        label: 'Open ${content.fileName}',
+        label:
+            '${isRemoteConversationMedia(content.assetPath) ? 'Download and open' : 'Open'} ${content.fileName}',
         child: InkWell(
           onTap: onOpen,
           borderRadius: BorderRadius.circular(10),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Row(
-              children: [
-                Container(
-                  width: 42,
-                  height: 48,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: textColor.withValues(alpha: .28)),
-                    borderRadius: BorderRadius.circular(7),
+          child: Container(
+            padding: whatsAppPalette == null
+                ? const EdgeInsets.symmetric(vertical: 2)
+                : const EdgeInsets.all(8),
+            decoration: whatsAppPalette == null
+                ? null
+                : BoxDecoration(
+                    color: isOutgoing
+                        ? whatsAppPalette!.outgoingAttachment
+                        : whatsAppPalette!.incomingAttachment,
+                    borderRadius: BorderRadius.circular(9),
                   ),
-                  child: Text(content.mimeType.toUpperCase(),
-                      style: TextStyle(
-                          color: textColor,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700)),
-                ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (whatsAppPalette == null)
+                  Container(
+                    width: 42,
+                    height: 48,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      border:
+                          Border.all(color: textColor.withValues(alpha: .28)),
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                    child: Text(_fileType,
+                        style: TextStyle(
+                            color: textColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700)),
+                  )
+                else
+                  _WhatsAppDocumentIcon(
+                      extension: _fileType, palette: whatsAppPalette!),
                 const SizedBox(width: 10),
-                Expanded(
+                Flexible(
+                  fit: FlexFit.loose,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -351,18 +428,89 @@ class ConversationDocumentMessage extends StatelessWidget {
                               fontSize: 13,
                               fontWeight: FontWeight.w600)),
                       const SizedBox(height: 2),
-                      Text(content.description,
+                      Text(
+                          whatsAppPalette == null
+                              ? content.description
+                              : _fileDetails,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                               color: textColor.withValues(alpha: .72),
                               fontSize: 11)),
                     ],
                   ),
                 ),
-                Icon(IconsaxPlusBroken.document_download,
-                    color: textColor.withValues(alpha: .72), size: 19),
+                if (whatsAppPalette == null)
+                  Icon(IconsaxPlusBroken.document_download,
+                      color: textColor.withValues(alpha: .72), size: 19)
+                else
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: whatsAppPalette!.accent, width: 1.4),
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(
+                      isRemoteConversationMedia(content.assetPath)
+                          ? Icons.arrow_downward_rounded
+                          : Icons.open_in_new_rounded,
+                      color: whatsAppPalette!.accent,
+                      size: 19,
+                    ),
+                  ),
               ],
             ),
           ),
+        ),
+      );
+}
+
+class _WhatsAppDocumentIcon extends StatelessWidget {
+  const _WhatsAppDocumentIcon({
+    required this.extension,
+    required this.palette,
+  });
+
+  final String extension;
+  final WhatsAppChatPalette palette;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: 38,
+        height: 46,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Icon(Icons.insert_drive_file_rounded,
+                color: palette.isDark
+                    ? const Color(0xFF89969C)
+                    : const Color(0xFFB6C2C7),
+                size: 38),
+            Positioned(
+              bottom: 7,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                decoration: BoxDecoration(
+                  color: palette.isDark
+                      ? const Color(0xFF52616A)
+                      : const Color(0xFF7B8A90),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+                child: Text(
+                  extension.length > 5 ? extension.substring(0, 5) : extension,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 7,
+                    height: 1.1,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       );
 }
