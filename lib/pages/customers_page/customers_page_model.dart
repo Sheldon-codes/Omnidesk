@@ -74,20 +74,19 @@ class CustomersPageNotifier extends _$CustomersPageNotifier {
 
   @override
   CustomersPageState build() {
-    final authenticated =
-        ref.read(authSessionControllerProvider).isAuthenticated;
+    final auth = ref.read(authSessionControllerProvider);
+    _sessionScope = _scopeFor(auth);
     ref.listen<AuthState>(authSessionControllerProvider, (_, next) {
       Future.microtask(() {
         if (ref.mounted) _handleScopeChange(next);
       });
-    }, fireImmediately: true);
+    });
     ref.onDispose(() => _activeRequest?.cancel('Customer page disposed.'));
-    return CustomersPageState(loading: authenticated);
+    return CustomersPageState(loading: auth.isAuthenticated);
   }
 
   void _handleScopeChange(AuthState auth) {
-    final scope =
-        '${auth.session?.user.id ?? 'anonymous'}:${auth.session?.user.activeWorkspace?.id ?? 'none'}';
+    final scope = _scopeFor(auth);
     if (scope == _sessionScope) return;
     final query = state.search;
     _sessionScope = scope;
@@ -98,6 +97,9 @@ class CustomersPageNotifier extends _$CustomersPageNotifier {
       unawaited(_fetch(page: 1, replace: true, initial: true));
     }
   }
+
+  String _scopeFor(AuthState auth) =>
+      '${auth.session?.user.id ?? 'anonymous'}:${auth.session?.user.activeWorkspace?.id ?? 'none'}';
 
   Future<void> load() async {
     if (state.loading || state.hasLoaded) return;

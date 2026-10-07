@@ -169,6 +169,11 @@ class PhonePageState {
     this.dialedNumber = '',
     this.recents = const [],
     this.contacts = const [],
+    this.contactsLoading = false,
+    this.contactsRefreshing = false,
+    this.contactsLoadingMore = false,
+    this.contactsHasMore = false,
+    this.contactsError,
     this.historyLoading = false,
     this.historyRefreshing = false,
     this.historyLoadingMore = false,
@@ -183,6 +188,11 @@ class PhonePageState {
   final String dialedNumber;
   final List<PhoneRecent> recents;
   final List<PhoneContact> contacts;
+  final bool contactsLoading;
+  final bool contactsRefreshing;
+  final bool contactsLoadingMore;
+  final bool contactsHasMore;
+  final String? contactsError;
   final bool historyLoading;
   final bool historyRefreshing;
   final bool historyLoadingMore;
@@ -191,7 +201,9 @@ class PhonePageState {
 
   String get subtitle => tab == PhoneTab.recents
       ? 'Call history'
-      : '${contacts.length} ${contacts.length == 1 ? 'contact' : 'contacts'}';
+      : contactsLoading && contacts.isEmpty
+          ? 'Contacts'
+          : '${contacts.length} ${contacts.length == 1 ? 'contact' : 'contacts'}';
 
   PhoneContact? get matchedContact {
     final normalized = _digitsOnly(dialedNumber);
@@ -251,6 +263,11 @@ class PhonePageState {
         dialedNumber: dialedNumber ?? this.dialedNumber,
         recents: recents,
         contacts: contacts,
+        contactsLoading: contactsLoading,
+        contactsRefreshing: contactsRefreshing,
+        contactsLoadingMore: contactsLoadingMore,
+        contactsHasMore: contactsHasMore,
+        contactsError: contactsError,
         historyLoading: historyLoading ?? this.historyLoading,
         historyRefreshing: historyRefreshing ?? this.historyRefreshing,
         historyLoadingMore: historyLoadingMore ?? this.historyLoadingMore,
@@ -275,6 +292,7 @@ class PhonePageNotifier extends _$PhonePageNotifier {
   @override
   PhonePageState build() {
     final callHistory = ref.watch(callLogStoreProvider);
+    final customerPage = ref.watch(customersPageProvider);
     final interaction = _interactionState;
     return PhonePageState(
       tab: interaction?.tab ?? PhoneTab.recents,
@@ -285,10 +303,14 @@ class PhonePageNotifier extends _$PhonePageNotifier {
       recents: callHistory.records
           .map(PhoneRecent.fromCallLog)
           .toList(growable: false),
-      contacts: ref
-          .watch(customers.customersStoreProvider)
+      contacts: customerPage.customers
           .map(PhoneContact.fromCustomer)
           .toList(growable: false),
+      contactsLoading: customerPage.loading,
+      contactsRefreshing: customerPage.refreshing,
+      contactsLoadingMore: customerPage.loadingMore,
+      contactsHasMore: customerPage.hasMore,
+      contactsError: customerPage.error,
       historyLoading: callHistory.loading,
       historyRefreshing: callHistory.refreshing,
       historyLoadingMore: callHistory.loadingMore,

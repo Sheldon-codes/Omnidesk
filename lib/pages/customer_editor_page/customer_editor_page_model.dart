@@ -55,10 +55,24 @@ class CustomerRecord {
 
 @Riverpod(keepAlive: true)
 class CustomersStore extends _$CustomersStore {
+  String? _scope;
+
   @override
   List<CustomerRecord> build() {
-    ref.watch(authSessionControllerProvider);
+    _scope = _scopeFor(ref.read(authSessionControllerProvider));
+    ref.listen<AuthState>(authSessionControllerProvider, (_, next) {
+      final nextScope = _scopeFor(next);
+      if (nextScope == _scope) return;
+      _scope = nextScope;
+      state = const [];
+    });
     return const [];
+  }
+
+  String _scopeFor(AuthState auth) {
+    final user = auth.session?.user;
+    if (user == null) return 'anonymous';
+    return '${user.id}:${user.activeWorkspace?.id ?? 'none'}';
   }
 
   CustomerRecord? findById(String id) =>

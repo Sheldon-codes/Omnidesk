@@ -15,6 +15,7 @@ import '../../flutter_flow/flutter_flow_theme.dart';
 import '../../services/calls/call_log_store.dart';
 import '../customer_details_page/customer_details_page_widget.dart';
 import '../customer_editor_page/customer_editor_page_model.dart';
+import '../customers_page/customers_page_model.dart' as customers;
 import 'phone_dial_pad_widget.dart';
 import 'phone_page_model.dart';
 
@@ -80,13 +81,21 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
               onCall: () => _handleDialCall(context),
             )
           : RefreshIndicator(
-              onRefresh: ref.read(callLogStoreProvider.notifier).refresh,
+              onRefresh: state.tab == PhoneTab.contacts
+                  ? ref.read(customers.customersPageProvider.notifier).refresh
+                  : ref.read(callLogStoreProvider.notifier).refresh,
               child: NotificationListener<ScrollNotification>(
                 onNotification: (notification) {
-                  if (state.tab == PhoneTab.recents &&
-                      state.historyHasMore &&
-                      notification.metrics.extentAfter < 200) {
-                    ref.read(callLogStoreProvider.notifier).loadMore();
+                  if (notification.metrics.extentAfter < 200) {
+                    if (state.tab == PhoneTab.recents && state.historyHasMore) {
+                      unawaited(
+                          ref.read(callLogStoreProvider.notifier).loadMore());
+                    } else if (state.tab == PhoneTab.contacts &&
+                        state.contactsHasMore) {
+                      unawaited(ref
+                          .read(customers.customersPageProvider.notifier)
+                          .loadMore());
+                    }
                   }
                   return false;
                 },
@@ -303,15 +312,34 @@ class _PhonePageWidgetState extends ConsumerState<PhonePageWidget> {
   ) {
     final items = state.filteredContacts;
     if (items.isEmpty) {
-      return [_EmptyResults(theme: theme, label: 'No contacts found')];
+      if (state.contactsLoading) {
+        return [_ContactLoadingSliver(theme: theme)];
+      }
+      if (state.contactsError != null) {
+        return [_ContactErrorSliver(theme: theme)];
+      }
+      return [
+        _EmptyResults(
+          theme: theme,
+          label: state.query.trim().isEmpty
+              ? 'No contacts yet'
+              : 'No matching contacts',
+          description: state.query.trim().isEmpty
+              ? 'Customers in this workspace will appear here.'
+              : 'Try another name, email, or phone number.',
+        ),
+      ];
     }
 
     return [
       SliverPadding(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
         sliver: SliverList.builder(
-          itemCount: items.length,
+          itemCount: items.length + (state.contactsLoadingMore ? 3 : 0),
           itemBuilder: (context, index) {
+            if (index >= items.length) {
+              return _ContactSkeletonRow(theme: theme);
+            }
             final contact = items[index];
             return _PhoneSwipeRow(
               key: ValueKey('contact-${contact.identifier}'),
@@ -1416,6 +1444,90 @@ class _SwipeAction extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ),
+      );
+}
+
+class _ContactLoadingSliver extends StatelessWidget {
+  const _ContactLoadingSliver({required this.theme});
+  final FlutterFlowTheme theme;
+
+  @override
+  Widget build(BuildContext context) => SliverPadding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+        sliver: SliverList.builder(
+          itemCount: 7,
+          itemBuilder: (_, __) => _ContactSkeletonRow(theme: theme),
+        ),
+      );
+}
+
+class _ContactErrorSliver extends ConsumerWidget {
+  const _ContactErrorSliver({required this.theme});
+  final FlutterFlowTheme theme;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(28, 46, 28, 20),
+          child: Column(
+            children: [
+              Icon(Icons.error_outline_rounded,
+                  color: theme.secondaryText, size: 24),
+              const SizedBox(height: 10),
+              Text(
+                'Could not load contacts',
+                style: theme.bodyMedium.copyWith(
+                  color: theme.primaryText,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Check your connection and try again.',
+                textAlign: TextAlign.center,
+                style: theme.bodySmall.copyWith(color: theme.secondaryText),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => unawaited(
+                    ref.read(customers.customersPageProvider.notifier).retry()),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
+class _ContactSkeletonRow extends StatelessWidget {
+  const _ContactSkeletonRow({required this.theme});
+  final FlutterFlowTheme theme;
+
+  @override
+  Widget build(BuildContext context) => ExcludeSemantics(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(
+            children: [
+              OmniSkeleton(
+                width: 46,
+                height: 46,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _SkeletonBar(theme: theme, widthFactor: .55, height: 13),
+                    const SizedBox(height: 8),
+                    _SkeletonBar(theme: theme, widthFactor: .4, height: 10),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       );
