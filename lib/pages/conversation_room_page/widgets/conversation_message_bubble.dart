@@ -716,46 +716,57 @@ class _SystemEvent extends StatelessWidget {
     if (palette != null && !content.emphasized) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 26),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          decoration: BoxDecoration(
-            color: palette.note,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-                color: palette.noteText.withValues(alpha: .35), width: .8),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.lock_outline_rounded,
-                      size: 13, color: palette.noteText),
-                  const SizedBox(width: 5),
-                  Text('Internal note · only agents see this',
-                      style: TextStyle(
-                          color: palette.noteText,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600)),
-                  const Spacer(),
-                  Text(DateFormat('HH:mm').format(sentAt),
-                      style: TextStyle(
-                          color: palette.noteText.withValues(alpha: .72),
-                          fontSize: 10)),
-                ],
+        child: Align(
+          alignment: Alignment.center,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.sizeOf(context).width * .82,
+            ),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: palette.note,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                    color: palette.noteText.withValues(alpha: .35), width: .8),
               ),
-              const SizedBox(height: 4),
-              _markdownText(
-                content.text,
-                TextStyle(
-                  color: palette.noteText,
-                  fontSize: 13,
-                  height: 1.35,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.lock_outline_rounded,
+                            size: 13, color: palette.noteText),
+                        const SizedBox(width: 5),
+                        Text('Internal note · only agents see this',
+                            style: TextStyle(
+                                color: palette.noteText,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(width: 12),
+                        Text(DateFormat('HH:mm').format(sentAt),
+                            style: TextStyle(
+                                color: palette.noteText.withValues(alpha: .72),
+                                fontSize: 10)),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    _markdownText(
+                      content.text,
+                      TextStyle(
+                        color: palette.noteText,
+                        fontSize: 13,
+                        height: 1.35,
+                      ),
+                      linkColor: palette.accent,
+                    ),
+                  ],
                 ),
-                linkColor: palette.accent,
               ),
-            ],
+            ),
           ),
         ),
       );
@@ -808,7 +819,13 @@ class _SystemEvent extends StatelessWidget {
       style: style,
       linkColor: linkColor ?? whatsAppPalette!.link,
     );
-    return centered ? Center(child: markdown) : markdown;
+    return centered
+        ? Align(
+            alignment: Alignment.center,
+            widthFactor: 1,
+            child: markdown,
+          )
+        : markdown;
   }
 }
 
